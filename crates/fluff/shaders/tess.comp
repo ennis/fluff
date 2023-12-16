@@ -1,0 +1,98 @@
+#version 460
+#pragma include <common.glsl>
+
+uniform mat4 MVP;
+uniform float strokeWidth;
+uniform int baseCurve;    // base offset into curves[]
+
+// A range of control points in the controlPoints buffer that describes a single curve.
+struct CurveRef {
+    // Start of the curve in the buffer
+    //
+    // Specified in control points, so multiply by 3 to get the index into the buffer.
+    int start;
+    // Number of control points.
+    //
+    // The number of segments is (size - 1) / 3.
+    int size;
+};
+
+layout(std430,binding=0) buffer ControlPointsBuffer {
+    float controlPoints[];       // 3x3xN+1 where N is the number of segments
+};
+
+layout(std430,binding=1) buffer CurveBuffer {
+    CurveRef curves[];        // (start,end) indices into controlPoints
+};
+
+layout(std430,binding=2) buffer TessBuffer {
+    vec2 tessellation[];
+};
+
+// Write offset into the tessellation buffer.
+// This is bound to a buffer containing a DrawArraysIndirectCommand struct.
+// Adjust offset so that it matches the "count" field of DrawArraysIndirectCommand
+layout(binding=0, offset=0) uniform atomic_uint vertexCount;
+
+layout(local_size_x = 1) in;
+
+/////////////////////////////////////////////////////////////////////
+vec2 projectCP(vec3 cp)
+{
+    vec4 p = MVP * vec4(cp, 1.0);
+    return p.xy / p.w;
+}
+
+vec3 loadCP(int index)
+{
+    return vec3(
+        controlPoints[index * 3 + 0],
+        controlPoints[index * 3 + 1],
+        controlPoints[index * 3 + 2]);
+}
+
+const int CURVE_SUBDIVISIONS = 6;
+
+void main()
+{
+    CurveRef curve = curves[baseCurve + gl_GlobalInvocationID.x];
+    int numSegments = (curve.size - 1) / 3;
+    int numVerts = numSegments * CURVE_SUBDIVISIONS * 2 * 3;        // number of emitted triangle vertices
+    uint writeOffset = atomicCounterAdd(vertexCount, numVerts);
+
+    for (int i = 0; i < numSegments; ++i) {
+        // The patch vertices (control points)
+        vec2 p0 = projectCP(loadCP(curve.start + i*3 + 0));
+        vec2 p1 = projectCP(loadCP(curve.start + i*3 + 1));
+        vec2 p2 = projectCP(loadCP(curve.start + i*3 + 2));
+        vec2 p3 = projectCP(loadCP(curve.start + i*3 + 3));
+        Bezier b = Bezier(p0, p1, p2, p3);
+
+        vec2 p = bezier3(b, 0.0);
+        vec2 t = normalize(bezier3Tangent(b, 0.0));
+        vec2 n = vec2(-t.y, t.x);
+        vec2 ppn0 = p0 + n * strokeWidth;
+        vec2 pmn0 = p0 - n * strokeWidth;
+
+        for (int j = 1; j < CURVE_SUBDIVISIONS; ++j) {
+            float u = float(j) / float(CURVE_SUBDIVISIONS - 1);   // -1 to +1, may extend "outside" the curve
+            vec2 p = bezier3(b, u);
+            vec2 t = normalize(bezier3Tangent(b, u));
+            vec2 n = vec2(-t.y, t.x);
+
+            vec2 ppn1 = p + n * strokeWidth;
+            vec2 pmn1 = p - n * strokeWidth;
+
+            // emit 2 triangles
+            tessellation[writeOffset++] = ppn0;
+            tessellation[writeOffset++] = ppn1;
+            tessellation[writeOffset++] = pmn0;
+            tessellation[writeOffset++] = pmn0;
+            tessellation[writeOffset++] = ppn1;
+            tessellation[writeOffset++] = pmn1;
+
+            ppn0 = ppn1;
+            pmn0 = pmn1;
+        }
+    }
+}

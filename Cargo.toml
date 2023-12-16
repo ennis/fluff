@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/fluff", "crates/houdinio"]
+resolver = "2"
+
+[workspace.dependencies]
+graal = { path = "../graal/graal" }
+openimageio = { path = "../openimageio-rs" }
+houdinio = { path = "crates/houdinio" }
+
+[profile.release]
+debug = true
+
