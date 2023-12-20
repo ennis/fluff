@@ -1,0 +1,137 @@
+#version 460 core
+#include "common.glsl"
+
+#extension GL_EXT_mesh_shader : require
+
+const int SAMPLE_COUNT = 32;
+
+//////////////////////////////////////////////////////////
+
+// A range of control points in the controlPoints buffer that describes a single curve.
+struct ControlPointRange {
+    int start;
+    int size;
+};
+
+//////////////////////////////////////////////////////////
+
+// Number of subdivisions per curve segment
+const int SUBDIV_COUNT = SAMPLE_COUNT - 1;
+
+// PARAMETERS
+
+// Position buffer
+layout(std430,set=0,binding=0) buffer ControlPointsPosition {
+    float position[];
+};
+
+layout(std430,set=0,binding=1) buffer CurveBuffer {
+    ControlPointRange curves[];
+};
+
+// Push constants
+layout(std140, push_constant) uniform PushConstants {
+    mat4 viewProjectionMatrix;
+    int baseCurve;
+    float strokeWidth;
+    int tilesCountX;
+    int tilesCountY;
+};
+
+// ------ INPUT ------
+
+// One thread per sample on the curve
+layout(local_size_x=SAMPLE_COUNT) in;
+
+// ------ OUTPUT ------
+
+// Output: triangle mesh tessellation of the curve
+// 2 vertices per sample, 2 triangles subdivision
+layout(max_vertices=SAMPLE_COUNT*2, max_primitives=SUBDIV_COUNT*2) out;
+layout(triangles) out;
+
+//layout(location=0) out Interpolants {
+    //vec3 position;
+    //uint meshletID;
+//} interp[];
+
+layout(location=0) flat out int out_curveIndex[];
+
+//////////////////////////////////////////////////////////
+
+
+vec2 loadCP(int i)
+{
+    vec4 p = vec4(position[i*3+0], position[i*3+1], position[i*3+2], 1.0);
+    vec4 proj = viewProjectionMatrix * p;
+    proj.y = -proj.y;
+    return proj.xy / proj.w;
+}
+
+// Load a bezier segment from an index into the control point buffer
+Bezier loadCubicSegment(int baseControlPoint, int segmentIndex) {
+    vec2 p0 = loadCP(baseControlPoint + segmentIndex*3 + 0);
+    vec2 p1 = loadCP(baseControlPoint + segmentIndex*3 + 1);
+    vec2 p2 = loadCP(baseControlPoint + segmentIndex*3 + 2);
+    vec2 p3 = loadCP(baseControlPoint + segmentIndex*3 + 3);
+    return Bezier(p0, p1, p2, p3);
+}
+
+//////////////////////////////////////////////////////////
+
+struct CurveSample {
+    vec2 p;
+    vec2 n;
+};
+shared CurveSample[SAMPLE_COUNT] s_curveSamples;
+
+void main()
+{
+    // One work group per curve segment
+    uint curveIndex = baseCurve + gl_WorkGroupID.x;
+    // One thread per sample on the curve
+    uint sampleIndex = gl_LocalInvocationID.x;
+
+    // TODO handle curves with more than one segment
+    Bezier curve = loadCubicSegment(curves[curveIndex].start, 0);
+    float t = float(sampleIndex) / float(SAMPLE_COUNT - 1);
+
+    vec2 position = bezier3(curve, t);
+    vec2 tangent = normalize(bezier3Tangent(curve, t));
+    vec2 normal = vec2(-tangent.y, tangent.x);
+
+    s_curveSamples[sampleIndex] = CurveSample(position, normal);
+    barrier();
+
+    if (sampleIndex == 0) {
+        SetMeshOutputsEXT(SAMPLE_COUNT*2, SUBDIV_COUNT*2);
+        CurveSample s0 = s_curveSamples[sampleIndex];
+        vec2 a = s0.p + s0.n * strokeWidth;
+        vec2 b = s0.p - s0.n * strokeWidth;
+        gl_MeshVerticesEXT[0].gl_Position = vec4(a, 0.0, 1.0);
+        gl_MeshVerticesEXT[1].gl_Position = vec4(b, 0.0, 1.0);
+        out_curveIndex[0] = int(curveIndex);
+        out_curveIndex[1] = int(curveIndex);
+    }
+
+    // Emit triangles for each subdivision
+    if (sampleIndex > 0) {
+        CurveSample s = s_curveSamples[sampleIndex];
+        vec2 c = s.p + s.n * strokeWidth;
+        vec2 d = s.p - s.n * strokeWidth;
+        gl_MeshVerticesEXT[sampleIndex*2 + 0].gl_Position = vec4(c, 0.0, 1.0);
+        gl_MeshVerticesEXT[sampleIndex*2 + 1].gl_Position = vec4(d, 0.0, 1.0);
+        out_curveIndex[sampleIndex*2 + 0] = int(curveIndex);
+        out_curveIndex[sampleIndex*2 + 1] = int(curveIndex);
+
+        // emit 2 triangles
+        // A--C
+        // | /|
+        // |/ |
+        // B--D
+        // ACB, BCD
+        uint vtx = (sampleIndex - 1) * 2;
+        gl_PrimitiveTriangleIndicesEXT[(sampleIndex-1)*2] = uvec3(vtx, vtx+2, vtx+1);
+        gl_PrimitiveTriangleIndicesEXT[(sampleIndex-1)*2+1] = uvec3(vtx+1, vtx+2, vtx+3);
+    }
+}

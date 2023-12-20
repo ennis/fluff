@@ -7,7 +7,7 @@ mod parser;
 
 pub use error::Error;
 use smol_str::SmolStr;
-use std::{fs, path::Path};
+use std::{fs, path::Path, slice};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -83,6 +83,25 @@ impl Geo {
     pub fn find_point_attribute(&self, name: &str) -> Option<&Attribute> {
         self.point_attributes.iter().find(|a| a.name == name)
     }
+
+    /// Returns the contents of the position attribute (`P`).
+    pub fn positions(&self) -> &[[f32; 3]] {
+        // The first attribute is always the position attribute.
+        // The fact that this is an f32 attribute is ensured by the loader.
+        let data = self.point_attributes[0].as_f32_slice().unwrap();
+        // TODO: replace with as_chunks once it's stable.
+        // SAFETY: the length is a multiple of 3, this is ensured by the loader.
+        let new_len = data.len() / 3;
+        unsafe { slice::from_raw_parts(data.as_ptr().cast(), new_len) }
+    }
+
+    /// Returns the position of of the given vertex.
+    pub fn vertex_position(&self, vertex_index: i32) -> [f32; 3] {
+        // The vertex is an index into the topology array, which gives us the index into the point attribute.
+        // The double indirection is because different vertices can share the same point.
+        let point = self.topology[vertex_index as usize] as usize;
+        self.positions()[point]
+    }
 }
 
 /// Bezier curve basis.
@@ -148,11 +167,7 @@ impl<'a> Iterator for BezierRunIter<'a> {
 
         self.index += 1;
 
-        Some(BezierRef {
-            vertices,
-            closed,
-            basis,
-        })
+        Some(BezierRef { vertices, closed, basis })
     }
 }
 
@@ -167,6 +182,7 @@ pub struct BezierRef<'a> {
     /// Vertices of the control points.
     ///
     /// They are indices into the `topology` vector.
+    /// They are i32 because that's what the loader produces, but they are always positive.
     pub vertices: &'a [i32],
     /// Whether the curve is closed.
     pub closed: bool,

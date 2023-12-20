@@ -1,8 +1,4 @@
 
-#define MAX_CONTROL_POINTS 128
-#define BEZIER_PROJECTION_LUT_SIZE 128
-
-
 struct Bezier {
     vec2 p0;
     vec2 p1;

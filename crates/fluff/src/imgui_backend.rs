@@ -1,16 +1,6 @@
-use std::{mem, path::Path};
-
-use graal::{
-    util::{DeviceExt, QueueExt},
-    vk, Arguments, Attachments, BufferUsage, ClearColorValue, ColorBlendEquation, ColorTargetState, DepthStencilState,
-    Device, FragmentOutputInterfaceDescriptor, FrontFace, GraphicsPipeline, GraphicsPipelineCreateInfo, Image,
-    ImageCreateInfo, ImageType, ImageUsage, ImageView, IndexType, MemoryLocation, PipelineBindPoint,
-    PipelineLayoutDescriptor, Point2D, PolygonMode, PreRasterizationShaders, PrimitiveTopology, Queue,
-    RasterizationState, Rect2D, SampledImage, Sampler, SamplerCreateInfo, ShaderCode, ShaderEntryPoint, ShaderSource,
-    Size2D, StaticArguments, StaticAttachments, StencilState, Vertex, VertexBufferDescriptor,
-    VertexBufferLayoutDescription, VertexInputAttributeDescription, VertexInputRate, VertexInputState,
-};
+use graal::prelude::*;
 use imgui::{internal::RawWrapper, DrawCmd, DrawCmdParams, DrawData, DrawIdx, TextureId, Textures};
+use std::{mem, path::Path};
 
 #[derive(Debug, Attachments)]
 struct ImguiAttachments<'a> {
@@ -55,9 +45,7 @@ impl Renderer {
         let pipeline = create_pipeline(queue.device());
         let font_texture = upload_font_texture(queue, ctx.fonts());
         ctx.set_renderer_name(Some(format!("fluff_imgui_backend {}", env!("CARGO_PKG_VERSION"))));
-        ctx.io_mut()
-            .backend_flags
-            .insert(imgui::BackendFlags::RENDERER_HAS_VTX_OFFSET);
+        ctx.io_mut().backend_flags.insert(imgui::BackendFlags::RENDERER_HAS_VTX_OFFSET);
         let sampler = queue.device().create_sampler(&SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
             min_filter: vk::Filter::LINEAR,
@@ -125,15 +113,12 @@ impl Renderer {
                 let vertex_data = draw_list.transmute_vtx_buffer::<ImguiDrawVert>();
                 let index_data = draw_list.idx_buffer();
 
-                let vertex_buffer = encoder.device().upload_array_buffer(
-                    "imgui vertex buffer",
-                    BufferUsage::VERTEX_BUFFER,
-                    vertex_data,
-                );
-                let index_buffer =
-                    encoder
-                        .device()
-                        .upload_array_buffer("imgui index buffer", BufferUsage::INDEX_BUFFER, index_data);
+                let vertex_buffer = encoder
+                    .device()
+                    .upload_array_buffer("imgui vertex buffer", BufferUsage::VERTEX_BUFFER, vertex_data);
+                let index_buffer = encoder
+                    .device()
+                    .upload_array_buffer("imgui index buffer", BufferUsage::INDEX_BUFFER, index_data);
 
                 encoder.bind_graphics_pipeline(&self.pipeline);
 
@@ -157,11 +142,7 @@ impl Renderer {
                                 (clip_rect[3] - clip_off[1]) * clip_scale[1],
                             ];
 
-                            if clip_rect[0] < fb_width
-                                && clip_rect[1] < fb_height
-                                && clip_rect[2] >= 0.0
-                                && clip_rect[3] >= 0.0
-                            {
+                            if clip_rect[0] < fb_width && clip_rect[1] < fb_height && clip_rect[2] >= 0.0 && clip_rect[3] >= 0.0 {
                                 let texture = self.lookup_texture(texture_id);
                                 let texture_view = texture.create_top_level_view();
 
@@ -173,13 +154,9 @@ impl Renderer {
                                 });
 
                                 // TODO: bind_index_buffer from typed slice
-                                encoder.bind_index_buffer(
-                                    IndexType::U16,
-                                    index_buffer.slice(idx_offset..(idx_offset + count)).any(),
-                                );
+                                encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(idx_offset..(idx_offset + count)).any());
 
-                                encoder
-                                    .bind_push_constants(PipelineBindPoint::Graphics, &ImguiPushConstants { matrix });
+                                encoder.bind_push_constants(PipelineBindPoint::Graphics, &ImguiPushConstants { matrix });
 
                                 encoder.set_scissor(
                                     clip_rect[0].floor() as i32,
@@ -192,9 +169,7 @@ impl Renderer {
                                 encoder.bind_arguments(
                                     0,
                                     &ImguiArguments {
-                                        tex: SampledImage {
-                                            image_view: &texture_view,
-                                        },
+                                        tex: SampledImage { image_view: &texture_view },
                                         sampler: &self.font_sampler,
                                     },
                                 );
@@ -283,6 +258,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             cull_mode: Default::default(),
             front_face: FrontFace::Clockwise,
             line_rasterization: Default::default(),
+            ..Default::default()
         },
         fragment_shader: ShaderEntryPoint {
             code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/imgui.frag"))),
@@ -306,7 +282,5 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
         },
     };
 
-    device
-        .create_graphics_pipeline(create_info)
-        .expect("failed to create pipeline")
+    device.create_graphics_pipeline(create_info).expect("failed to create pipeline")
 }

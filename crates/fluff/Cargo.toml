@@ -1,0 +1,22 @@
+[package]
+name = "fluff"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+winit = "0.29.3"
+obj = "0.10.2"
+glam = "0.24.2"
+inline-spirv = "0.1.4"
+regex = "1.10.2"
+imgui = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
+imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
+tracing-subscriber = { version = "0.2.17", features = ["fmt"] }
+rfd = "0.12.1"
+lyon = "1.0.1"
+
+openimageio = { workspace=true }
+graal = { workspace=true }
+houdinio = { workspace=true }

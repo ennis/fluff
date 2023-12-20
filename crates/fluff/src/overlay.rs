@@ -2,13 +2,7 @@
 use std::{f32::consts::TAU, mem, path::Path};
 
 use glam::{vec3, Mat4, Vec3};
-use graal::{
-    util::DeviceExt, BufferUsage, ColorBlendEquation, ColorTargetState, CompareOp, DepthStencilState, Device, Format,
-    FragmentOutputInterfaceDescriptor, FrontFace, GraphicsPipeline, GraphicsPipelineCreateInfo, IndexType, LineRasterization,
-    LineRasterizationMode, PipelineBindPoint, PipelineLayoutDescriptor, Point2D, PolygonMode, PreRasterizationShaders, PrimitiveTopology,
-    RasterizationState, Rect2D, RenderEncoder, ShaderCode, ShaderEntryPoint, ShaderSource, Size2D, StencilState, Vertex,
-    VertexBufferDescriptor, VertexBufferLayoutDescription, VertexInputAttributeDescription, VertexInputRate, VertexInputState,
-};
+use graal::prelude::*;
 
 use crate::camera_control::Camera;
 
@@ -292,6 +286,7 @@ fn compile_shaders(device: &Device, target_color_format: Format, target_depth_fo
             line_rasterization: LineRasterization {
                 mode: LineRasterizationMode::RectangularSmooth,
             },
+            ..Default::default()
         },
         fragment_shader: ShaderEntryPoint {
             code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/overlay.frag"))),

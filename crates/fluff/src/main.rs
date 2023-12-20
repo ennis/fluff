@@ -41,7 +41,7 @@ fn main() {
     platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default); // step 2
     let mut imgui_renderer = imgui_backend::Renderer::new(&mut queue, &mut imgui);
 
-    let mut last_frame = Instant::now();
+    let mut last_frame_time = Instant::now();
     let mut cursor_pos = DVec2::ZERO;
 
     // Run the event loop and forward events to the app
@@ -51,8 +51,8 @@ fn main() {
                 Event::NewEvents(_) => {
                     // other application-specific logic
                     let now = Instant::now();
-                    imgui.io_mut().update_delta_time(now - last_frame);
-                    last_frame = now;
+                    imgui.io_mut().update_delta_time(now - last_frame_time);
+                    last_frame_time = now;
                 }
                 Event::WindowEvent {
                     window_id,
@@ -60,18 +60,21 @@ fn main() {
                 } => {
                     platform.handle_event(imgui.io_mut(), &window, &event);
 
+                    let want_capture_mouse = imgui.io().want_capture_mouse;
+                    let want_capture_keyboard = imgui.io().want_capture_keyboard;
+
                     match window_event {
-                        WindowEvent::CursorMoved { position, device_id, .. } => {
+                        WindowEvent::CursorMoved { position, device_id, .. } if !want_capture_mouse => {
                             cursor_pos = dvec2(position.x, position.y);
                             app.cursor_moved(cursor_pos);
                         }
-                        WindowEvent::MouseInput { button, state, .. } => {
+                        WindowEvent::MouseInput { button, state, .. } if !want_capture_mouse => {
                             app.mouse_input(*button, cursor_pos, *state == winit::event::ElementState::Pressed);
                         }
-                        WindowEvent::KeyboardInput { event, .. } => {
+                        WindowEvent::KeyboardInput { event, .. } if !want_capture_keyboard => {
                             app.key_input(&event.logical_key, event.state == winit::event::ElementState::Pressed);
                         }
-                        WindowEvent::MouseWheel { delta, .. } => {
+                        WindowEvent::MouseWheel { delta, .. } if !want_capture_mouse => {
                             let delta = match delta {
                                 MouseScrollDelta::LineDelta(x, y) => *y as f64 * 20.0,
                                 MouseScrollDelta::PixelDelta(px) => px.y,

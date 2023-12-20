@@ -1,8 +1,10 @@
 use glam::{vec3, DVec2};
 use graal::{
-    Attachments, ClearColorValue, Device, Format, Image, ImageCreateInfo, ImageType, ImageUsage, ImageView, MemoryLocation, Point2D, Queue,
-    Rect2D, Size2D,
+    prelude::*, Buffer, ConservativeRasterizationMode, ImageSubresourceLayers, Point3D, ReadOnlyStorageBuffer, ReadWriteStorageBuffer,
+    ReadWriteStorageImage, Rect3D,
 };
+use std::{mem, path::Path};
+
 use houdinio::Geo;
 use winit::{
     event::MouseButton,
@@ -11,176 +13,178 @@ use winit::{
 
 use crate::{camera_control::CameraControl, overlay::OverlayRenderer, util::resolve_file_sequence};
 
-struct AnimFrame {
+/// Geometry loaded from a `frame####.geo` file.
+struct GeoFileData {
+    /// The #### in `frame####.geo`.
     index: usize,
     geometry: Geo,
 }
 
-pub struct App {
-    frames: Vec<AnimFrame>,
-    depth_buffer: Image,
-    depth_buffer_view: ImageView,
-    color_target_format: Format,
-    camera_control: CameraControl,
-    overlay: OverlayRenderer,
+/// 3D bezier control point.
+type ControlPoint = [f32; 3];
+
+/// Represents a range of control points in the position buffer.
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct ControlPointRange {
+    start: u32,
+    /// Number of control points in the range.
+    ///
+    /// Should be 3N+1 for cubic bezier curves.
+    count: u32,
 }
 
-type ControlPoint = [f32; 3];
+/// Represents a range of curves in the curve buffer.
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct CurveRange {
+    start: u32,
+    count: u32,
+}
+
+/// Information about a single animation frame.
+struct AnimationFrame {
+    /// Time of the frame in seconds.
+    time: f32,
+    /// Range of curves in the curve buffer.
+    curves: CurveRange,
+}
+
+struct AnimationData {
+    point_count: usize,
+    curve_count: usize,
+    frames: Vec<AnimationFrame>,
+    position_buffer: TypedBuffer<[ControlPoint]>,
+    curve_buffer: TypedBuffer<[ControlPointRange]>,
+}
 
 /// Converts bezier curve data from `.geo` files to a format that can be uploaded to the GPU.
 ///
 /// Curves are represented as follows:
-/// * control point buffer: contains the control points of curves, all flattened into a single linear buffer.
+/// * position buffer: contains the control points of curves, all flattened into a single linear buffer.
 /// * curve buffer: consists of (start, size) pairs, defining the start and number of CPs of each curve in the position buffer.
 /// * animation buffer: consists of (start, size) defining the start and number of curves in the curve buffer for each animation frame.
-fn convert_bezier_curves(geo: &Geo) {
-    /*let mut control_point_count = 0;
+fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> AnimationData {
+    let mut point_count = 0;
     let mut curve_count = 0;
 
     // Count the number of curves and control points
-    //for f in self.anim_frames.iter() {
-    for prim in f.geometry.primitives.iter() {
-        match prim {
-            Primitive::BezierRun(run) => {
-                match run.vertices {
-                    PrimVar::Uniform(ref u) => {
-                        // number of indices
-                        control_point_count += u.len() * run.count;
+    for f in geo_files.iter() {
+        for prim in f.geometry.primitives.iter() {
+            match prim {
+                houdinio::Primitive::BezierRun(run) => {
+                    match run.vertices {
+                        houdinio::PrimVar::Uniform(ref u) => {
+                            point_count += u.len() * run.count;
+                        }
+                        houdinio::PrimVar::Varying(ref v) => {
+                            point_count += v.iter().map(|v| v.len()).sum::<usize>();
+                        }
                     }
-                    PrimVar::Varying(ref v) => {
-                        control_point_count += v.iter().map(|v| v.len()).sum::<usize>();
-                    }
+                    curve_count += run.count;
                 }
-                curve_count += run.count;
             }
         }
     }
-    //point_count += f.geometry.point_count;
-    //}
 
     // Curve buffer: contains (start, end) pairs of curves in the point buffer
-    let curve_buffer_size = dbg!(curve_count * 8); // cp_count * sizeof(int2)
-    let curve_buffer = Buffer::new(
-        gl,
-        curve_buffer_size,
-        gl::DYNAMIC_STORAGE_BIT | gl::MAP_READ_BIT | gl::MAP_WRITE_BIT,
+
+    let position_buffer = device.create_array_buffer::<ControlPoint>(
+        "curve position buffer",
+        BufferUsage::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+        point_count,
     );
+    let curve_buffer =
+        device.create_array_buffer::<ControlPointRange>("curve buffer", BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
 
-    // Point buffer: contains positions of bezier control points
-    let point_buffer_size = dbg!(control_point_count * 3 * 4); // point_count * sizeof(float3)
-    let point_buffer = Buffer::new(
-        gl,
-        point_buffer_size,
-        gl::DYNAMIC_STORAGE_BIT | gl::MAP_READ_BIT | gl::MAP_WRITE_BIT,
-    );
-
-    // points are unlikely to be shared between different bezier curves, so we might as well skip the indexing
-
-    let mut frame_curve_data = vec![];
+    let mut frames = vec![];
 
     // write curves
     unsafe {
-        let curve_data = curve_buffer.map_mut(0, curve_buffer_size) as *mut [i32; 2];
-        let mut curve_ptr = 0;
-        let point_data = point_buffer.map_mut(0, point_buffer_size) as *mut f32;
+        let point_data = position_buffer.mapped_data().unwrap();
         let mut point_ptr = 0;
+        let curve_data = curve_buffer.mapped_data().unwrap();
+        let mut curve_ptr = 0;
 
-        for f in self.anim_frames.iter() {
+        for f in geo_files.iter() {
             let offset = curve_ptr;
-
-            let position_attr = f.geometry.find_point_attribute("P").expect("no position attribute");
-            assert_eq!(position_attr.size, 3);
-            let positions = position_attr
-                .as_f32_slice()
-                .expect("position attribute should be a float");
-            assert_eq!(positions.len(), f.geometry.point_count * 3);
-
-            let mut write_curve = |indices: &[i32]| {
-                let start = point_ptr;
-                for &index in indices.iter() {
-                    let index = f.geometry.topology[index as usize] as usize;
-                    *point_data.offset(point_ptr) = positions[index * 3];
-                    *point_data.offset(point_ptr + 1) = positions[index * 3 + 1];
-                    *point_data.offset(point_ptr + 2) = positions[index * 3 + 2];
-                    point_ptr += 3;
-                }
-                *curve_data.offset(curve_ptr) = [(start / 3) as i32, ((point_ptr - start) / 3) as i32];
-                curve_ptr += 1;
-            };
-
             for prim in f.geometry.primitives.iter() {
                 match prim {
-                    Primitive::BezierRun(run) => match run.vertices {
-                        PrimVar::Uniform(ref indices) => {
-                            // flatten instances
-                            for _ in 0..run.count {
-                                write_curve(indices);
+                    houdinio::Primitive::BezierRun(run) => {
+                        for curve in run.iter() {
+                            let start = point_ptr;
+                            for &vertex_index in curve.vertices.iter() {
+                                *point_data.offset(point_ptr) = f.geometry.vertex_position(vertex_index);
+                                point_ptr += 1;
                             }
+                            *curve_data.offset(curve_ptr) = ControlPointRange {
+                                start: start as u32,
+                                count: curve.vertices.len() as u32,
+                            };
+                            curve_ptr += 1;
                         }
-                        PrimVar::Varying(ref indices) => {
-                            for indices in indices.iter() {
-                                write_curve(indices);
-                            }
-                        }
-                    },
+                    }
                 }
             }
 
-            frame_curve_data.push(FrameCurveData {
-                offset,
-                num_curves: curve_ptr - offset,
-                num_control_points: 0,
+            frames.push(AnimationFrame {
+                time: 0.0, // TODO
+                curves: CurveRange {
+                    start: offset as u32,
+                    count: curve_ptr as u32 - offset as u32,
+                },
             });
         }
     }
 
-    curve_buffer.unmap();
-    point_buffer.unmap();
-
-    self.frame_curve_data = dbg!(frame_curve_data);
-    self.curve_buffer = Some(curve_buffer);
-    self.point_buffer = Some(point_buffer);*/
-}
-
-impl App {
-    fn load_geo(&mut self) {
-        use rfd::FileDialog;
-        let file = FileDialog::new().add_filter("Houdini JSON geometry", &["geo"]).pick_file();
-
-        if let Some(ref file) = file {
-            let file_sequence = match resolve_file_sequence(file) {
-                Ok(seq) => seq,
-                Err(err) => {
-                    eprintln!("Error: {}", err);
-                    return;
-                }
-            };
-
-            self.frames.clear();
-
-            for (frame_index, file_path) in file_sequence {
-                eprint!("Loading: `{}`...", file_path.display());
-                match Geo::load_json(file_path) {
-                    Ok(geometry) => {
-                        self.frames.push(AnimFrame {
-                            index: frame_index,
-                            geometry,
-                        });
-                        eprintln!("OK")
-                    }
-                    Err(err) => {
-                        eprintln!("Error: {}", err);
-                    }
-                }
-            }
-
-            //self.min_frame = self.anim_frames.iter().map(|a| a.frame).min().unwrap_or(0);
-            //self.max_frame = self.anim_frames.iter().map(|a| a.frame).max().unwrap_or(0);
-            //self.load_bezier_to_gpu();
-        }
+    AnimationData {
+        point_count,
+        curve_count,
+        frames,
+        position_buffer,
+        curve_buffer,
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const BIN_RAST_SAMPLE_COUNT: u32 = 32;
+const BIN_RAST_TILE_SIZE: u32 = 16;
+const BIN_RAST_MAX_CURVES_PER_TILE: usize = 16;
+
+type CurveIndex = u32;
+
+#[derive(Copy, Clone)]
+struct BinRastPushConstants {
+    view_proj: glam::Mat4,
+    /// Base index into the curve buffer.
+    base_curve: u32,
+    stroke_width: f32,
+    /// Number of tiles in the X direction.
+    tile_count_x: u32,
+    /// Number of tiles in the Y direction.
+    tile_count_y: u32,
+}
+
+#[derive(Copy, Clone)]
+struct BinRastTile {
+    curves: [CurveIndex; BIN_RAST_MAX_CURVES_PER_TILE],
+}
+
+#[derive(Arguments)]
+struct BinRastArguments<'a> {
+    #[argument(binding = 0)]
+    position_buffer: ReadOnlyStorageBuffer<'a, [ControlPoint]>,
+    #[argument(binding = 1)]
+    curve_buffer: ReadOnlyStorageBuffer<'a, [ControlPointRange]>,
+    #[argument(binding = 2)]
+    tiles_curve_count_image: ReadWriteStorageImage<'a>,
+    #[argument(binding = 3)]
+    tiles_buffer: ReadWriteStorageBuffer<'a, [BinRastTile]>,
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
     device.create_image(
         "depth buffer",
@@ -207,6 +211,217 @@ struct RenderAttachments<'a> {
     depth: &'a ImageView,
 }
 
+#[derive(Attachments)]
+struct BinRastAttachments<'a> {
+    #[attachment(depth, format=D32_SFLOAT)]
+    depth: &'a ImageView,
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Default)]
+struct Pipelines {
+    bin_rast_pipeline: Option<GraphicsPipeline>,
+}
+
+pub struct App {
+    // Keep a copy of the device so we don't have to pass it around everywhere.
+    device: Device,
+    depth_buffer: Image,
+    depth_buffer_view: ImageView,
+    color_target_format: Format,
+    camera_control: CameraControl,
+    overlay: OverlayRenderer,
+    pipelines: Pipelines,
+
+    animation: Option<AnimationData>,
+    bin_rast_stroke_width: f32,
+    bin_rast_current_frame: usize,
+
+    bin_rast_tiles_x: u32,
+    bin_rast_tiles_y: u32,
+    bin_rast_tile_curve_count_image: Image,
+    bin_rast_tile_buffer: TypedBuffer<[BinRastTile]>,
+}
+
+impl App {
+    fn reload_shaders(&mut self) {
+        fn check(name: &str, p: Result<GraphicsPipeline, graal::Error>) -> Option<GraphicsPipeline> {
+            match p {
+                Ok(p) => Some(p),
+                Err(err) => {
+                    eprintln!("Error creating `{name}`: {}", err);
+                    None
+                }
+            }
+        }
+
+        self.pipelines.bin_rast_pipeline = check(
+            "bin_rast_pipeline",
+            create_bin_rast_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
+        );
+    }
+
+    fn load_geo(&mut self) {
+        use rfd::FileDialog;
+        let file = FileDialog::new().add_filter("Houdini JSON geometry", &["geo"]).pick_file();
+
+        if let Some(ref file) = file {
+            let file_sequence = match resolve_file_sequence(file) {
+                Ok(seq) => seq,
+                Err(err) => {
+                    eprintln!("Error: {}", err);
+                    return;
+                }
+            };
+
+            let mut geo_files = vec![];
+            for (frame_index, file_path) in file_sequence {
+                eprint!("Loading: `{}`...", file_path.display());
+                match Geo::load_json(file_path) {
+                    Ok(geometry) => {
+                        geo_files.push(GeoFileData {
+                            index: frame_index,
+                            geometry,
+                        });
+                        eprintln!("OK")
+                    }
+                    Err(err) => {
+                        eprintln!("Error: {}", err);
+                    }
+                }
+            }
+            self.animation = Some(convert_animation_data(&self.device, &geo_files));
+        }
+    }
+
+    fn render_curves(&mut self, queue: &mut Queue, color_target: &Image, color_target_view: &ImageView) {
+        let Some(animation) = self.animation.as_ref() else {
+            return;
+        };
+        let Some(bin_rast_pipeline) = self.pipelines.bin_rast_pipeline.as_ref() else {
+            return;
+        };
+
+        let frame = &animation.frames[0];
+
+        let width = color_target_view.width();
+        let height = color_target_view.height();
+
+        let tile_count_x = (width + BIN_RAST_TILE_SIZE - 1) / BIN_RAST_TILE_SIZE;
+        let tile_count_y = (height + BIN_RAST_TILE_SIZE - 1) / BIN_RAST_TILE_SIZE;
+
+        if self.bin_rast_tiles_x != tile_count_x || self.bin_rast_tiles_y != tile_count_y {
+            self.bin_rast_tiles_x = tile_count_x;
+            self.bin_rast_tiles_y = tile_count_y;
+            self.bin_rast_tile_buffer = self.device.create_array_buffer(
+                "bin_rast_tile_buffer",
+                BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                tile_count_x as usize * tile_count_y as usize,
+            );
+
+            self.bin_rast_tile_curve_count_image = self.device.create_image(
+                "bin_rast_tile_curve_count",
+                &ImageCreateInfo {
+                    memory_location: MemoryLocation::GpuOnly,
+                    type_: ImageType::Image2D,
+                    usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+                    format: Format::R32_SINT,
+                    width: tile_count_x,
+                    height: tile_count_y,
+                    depth: 1,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: 1,
+                },
+            );
+        }
+
+        unsafe {
+            let mut cmdbuf = queue.create_command_buffer();
+
+            // Clear the tile curve count image and the tile buffer
+            {
+                let mut encoder = cmdbuf.begin_blit();
+                encoder.clear_image(&self.bin_rast_tile_curve_count_image, ClearColorValue::Uint([0, 0, 0, 0]));
+                encoder.fill_buffer(&self.bin_rast_tile_buffer.slice(..).any(), 0);
+            }
+
+            // Render the curves
+            {
+                let mut encoder = cmdbuf.begin_rendering(&RenderAttachments {
+                    color: &color_target_view,
+                    depth: &self.depth_buffer_view,
+                });
+
+                let bin_rast_tile_curve_count_image_view = self.bin_rast_tile_curve_count_image.create_top_level_view();
+                encoder.bind_graphics_pipeline(bin_rast_pipeline);
+                encoder.set_viewport(0.0, 0.0, tile_count_x as f32, tile_count_y as f32, 0.0, 1.0);
+                encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
+                encoder.bind_arguments(
+                    0,
+                    &BinRastArguments {
+                        position_buffer: animation.position_buffer.as_read_only_storage_buffer(),
+                        curve_buffer: animation.curve_buffer.as_read_only_storage_buffer(),
+                        tiles_curve_count_image: bin_rast_tile_curve_count_image_view.as_read_write_storage(),
+                        tiles_buffer: self.bin_rast_tile_buffer.as_read_write_storage_buffer(),
+                    },
+                );
+
+                encoder.bind_push_constants(&BinRastPushConstants {
+                    view_proj: self.camera_control.camera().view_projection(),
+                    base_curve: animation.frames[self.bin_rast_current_frame].curves.start,
+                    stroke_width: self.bin_rast_stroke_width,
+                    tile_count_x,
+                    tile_count_y,
+                });
+
+                encoder.draw_mesh_tasks(frame.curves.count, 1, 1);
+            }
+
+            {
+                let mut encoder = cmdbuf.begin_blit();
+                encoder.blit_image(
+                    &self.bin_rast_tile_curve_count_image,
+                    ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    Rect3D {
+                        min: Point3D { x: 0, y: 0, z: 0 },
+                        max: Point3D {
+                            x: tile_count_x as i32,
+                            y: tile_count_y as i32,
+                            z: 1,
+                        },
+                    },
+                    &color_target,
+                    ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    Rect3D {
+                        min: Point3D { x: 0, y: 0, z: 0 },
+                        max: Point3D {
+                            x: width as i32,
+                            y: height as i32,
+                            z: 1,
+                        },
+                    },
+                    vk::Filter::NEAREST,
+                );
+            }
+
+            queue.submit([cmdbuf]).expect("submit failed");
+        }
+    }
+}
+
 impl App {
     /// Initializes the application.
     ///
@@ -218,14 +433,47 @@ impl App {
         let depth_buffer_view = depth_buffer.create_top_level_view();
         let camera_control = CameraControl::new(width, height);
         let overlay_renderer = OverlayRenderer::new(device, color_target_format, depth_buffer.format());
-        App {
-            frames: vec![],
+        // DUMMY
+        let bin_rast_tile_buffer = device.create_array_buffer::<BinRastTile>(
+            "bin_rast_tile_buffer",
+            BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
+            MemoryLocation::GpuOnly,
+            1,
+        );
+        // DUMMY
+        let bin_rast_tile_curve_count_image = device.create_image(
+            "bin_rast_tile_curve_count",
+            &ImageCreateInfo {
+                memory_location: MemoryLocation::GpuOnly,
+                type_: ImageType::Image2D,
+                usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST,
+                format: Format::R32_SINT,
+                width: 1,
+                height: 1,
+                depth: 1,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: 1,
+            },
+        );
+        let mut app = App {
+            device: device.clone(),
+            animation: None,
             depth_buffer,
             depth_buffer_view,
             color_target_format,
             camera_control,
             overlay: overlay_renderer,
-        }
+            pipelines: Default::default(),
+            bin_rast_stroke_width: 0.001,
+            bin_rast_current_frame: 0,
+            bin_rast_tiles_x: 0,
+            bin_rast_tiles_y: 0,
+            bin_rast_tile_curve_count_image,
+            bin_rast_tile_buffer,
+        };
+        app.reload_shaders();
+        app
     }
 
     /// Called when the main window is resized.
@@ -254,16 +502,8 @@ impl App {
         self.camera_control.mouse_wheel(delta);
     }
 
-    pub fn reload_shaders(&mut self) {
-        // TODO
-    }
-
     pub fn ui(&mut self, ui: &mut imgui::Ui) -> bool {
-        //let mut open = true;
-        //ui.show_demo_window(&mut open);
-
         let mut quit = false;
-
         ui.main_menu_bar(|| {
             ui.menu("File", || {
                 if ui.menu_item("Load .geo...") {
@@ -275,6 +515,18 @@ impl App {
                 }
             });
         });
+
+        if let Some(ref animation) = self.animation {
+            ui.window("Animation").build(|| {
+                ui.slider("Stroke width", 0.001, 0.20, &mut self.bin_rast_stroke_width);
+                imgui::Drag::new("Frame")
+                    .display_format("Frame %d")
+                    .range(0, animation.frames.len() - 1)
+                    .build(ui, &mut self.bin_rast_current_frame);
+            });
+        }
+
+        ui.show_metrics_window(&mut true);
 
         quit
     }
@@ -294,20 +546,95 @@ impl App {
     }
 
     pub fn render(&mut self, queue: &mut Queue, image: &Image) {
-        self.overlay.set_camera(self.camera_control.camera());
-        self.draw_axes();
         let color_target_view = image.create_top_level_view();
-        let mut command_buffer = queue.create_command_buffer();
-        let mut encoder = command_buffer.begin_rendering(&RenderAttachments {
-            color: &color_target_view,
-            depth: &self.depth_buffer_view,
-        });
-        encoder.clear_color(0, ClearColorValue::Float([0.2, 0.4, 0.6, 1.0]));
-        encoder.clear_depth(1.0);
-        self.overlay.render(image.width(), image.height(), &mut encoder);
-        encoder.finish();
-        queue.submit([command_buffer]).expect("submit failed");
+
+        // Clear attachments
+        {
+            let mut command_buffer = queue.create_command_buffer();
+            let mut encoder = command_buffer.begin_rendering(&RenderAttachments {
+                color: &color_target_view,
+                depth: &self.depth_buffer_view,
+            });
+            encoder.clear_color(0, ClearColorValue::Float([0.2, 0.4, 0.6, 1.0]));
+            encoder.clear_depth(1.0);
+            encoder.finish();
+            queue.submit([command_buffer]).expect("submit failed");
+        }
+
+        // Render the curves
+        self.render_curves(queue, &image, &color_target_view);
+
+        // Draw overlay
+        {
+            self.overlay.set_camera(self.camera_control.camera());
+            self.draw_axes();
+
+            let mut command_buffer = queue.create_command_buffer();
+            let mut encoder = command_buffer.begin_rendering(&RenderAttachments {
+                color: &color_target_view,
+                depth: &self.depth_buffer_view,
+            });
+            self.overlay.render(image.width(), image.height(), &mut encoder);
+            encoder.finish();
+            queue.submit([command_buffer]).expect("submit failed");
+        }
+
+        // 16x16 bin => 8100 tiles
+        // 16 curves per tile => 129600 curves
+        // 1 curve segment = 1 index into the curve buffer = 4 bytes
     }
 
     pub fn on_exit(&mut self) {}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+fn create_bin_rast_pipeline(
+    device: &Device,
+    target_color_format: Format,
+    target_depth_format: Format,
+) -> Result<GraphicsPipeline, graal::Error> {
+    let create_info = GraphicsPipelineCreateInfo {
+        layout: PipelineLayoutDescriptor {
+            arguments: &[BinRastArguments::LAYOUT],
+            push_constants_size: mem::size_of::<BinRastPushConstants>(),
+        },
+        vertex_input: Default::default(),
+        pre_rasterization_shaders: PreRasterizationShaders::MeshShading {
+            task: None,
+            mesh: ShaderEntryPoint {
+                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/bin_rast.mesh"))),
+                entry_point: "main",
+            },
+        },
+        rasterization: RasterizationState {
+            polygon_mode: PolygonMode::Fill,
+            cull_mode: Default::default(),
+            front_face: FrontFace::CounterClockwise,
+            conservative_rasterization_mode: ConservativeRasterizationMode::Disabled,
+            ..Default::default()
+        },
+        fragment_shader: ShaderEntryPoint {
+            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/bin_rast.frag"))),
+            entry_point: "main",
+        },
+        depth_stencil: DepthStencilState {
+            depth_write_enable: true,
+            depth_compare_op: CompareOp::LessOrEqual,
+            stencil_state: StencilState::default(),
+        },
+        fragment_output: FragmentOutputInterfaceDescriptor {
+            color_attachment_formats: &[target_color_format],
+            depth_attachment_format: Some(target_depth_format),
+            stencil_attachment_format: None,
+            multisample: Default::default(),
+            color_targets: &[ColorTargetState {
+                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
+                color_write_mask: Default::default(),
+            }],
+            blend_constants: [0.0; 4],
+        },
+    };
+
+    device.create_graphics_pipeline(create_info)
 }

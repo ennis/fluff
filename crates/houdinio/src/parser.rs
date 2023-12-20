@@ -1,9 +1,7 @@
 mod binary;
 mod json;
 
-use crate::{
-    Attribute, AttributeStorage, BezierBasis, BezierRun, Error, Error::Malformed, Geo, PrimVar, Primitive, StorageKind,
-};
+use crate::{Attribute, AttributeStorage, BezierBasis, BezierRun, Error, Error::Malformed, Geo, PrimVar, Primitive, StorageKind};
 use json::ParserImpl;
 use smol_str::SmolStr;
 
@@ -365,6 +363,21 @@ fn read_file(p: &mut ParserImpl) -> Result<Geo, Error> {
         "attributes" => {read_attributes(p, &mut geo)?}
         "primitives" => {read_primitives(p, &mut geo)?}
     }
+
+    // Sanity checks for the position attribute.
+    // TODO make this errors instead of panics
+    assert!(
+        geo.point_attributes.len() > 0,
+        "the geometry should contain at least one point attribute"
+    );
+    let positions = &geo.point_attributes[0];
+    assert_eq!(positions.name, "P", "the first point attribute should be the point position");
+    assert_eq!(positions.size, 3, "the position attribute should have 3 components");
+    assert!(positions.as_f32_slice().is_some(), "the position attribute should be fpreal32");
+    let positions_fp32 = positions.as_f32_slice().unwrap();
+    assert!(positions_fp32.len() % 3 == 0, "the number of positions should be a multiple of 3");
+    assert_eq!(positions_fp32.len(), geo.point_count * 3);
+
     Ok(geo)
 }
 
