@@ -1,7 +1,7 @@
 use glam::{vec3, DVec2};
 use graal::{
-    prelude::*, Buffer, ConservativeRasterizationMode, ImageSubresourceLayers, Point3D, ReadOnlyStorageBuffer, ReadWriteStorageBuffer,
-    ReadWriteStorageImage, Rect3D,
+    prelude::*, vk::ImageLayout, Buffer, ComputePipeline, ComputePipelineCreateInfo, ConservativeRasterizationMode, ImageSubresourceLayers,
+    Point3D, ReadOnlyStorageBuffer, ReadWriteStorageBuffer, ReadWriteStorageImage, Rect3D,
 };
 use std::{mem, path::Path};
 
@@ -35,7 +35,7 @@ struct ControlPointRange {
 }
 
 /// Represents a range of curves in the curve buffer.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct CurveRange {
     start: u32,
@@ -43,6 +43,7 @@ struct CurveRange {
 }
 
 /// Information about a single animation frame.
+#[derive(Debug)]
 struct AnimationFrame {
     /// Time of the frame in seconds.
     time: f32,
@@ -128,13 +129,13 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                 }
             }
 
-            frames.push(AnimationFrame {
+            frames.push(dbg!(AnimationFrame {
                 time: 0.0, // TODO
                 curves: CurveRange {
                     start: offset as u32,
                     count: curve_ptr as u32 - offset as u32,
                 },
-            });
+            }));
         }
     }
 
@@ -150,7 +151,7 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const BIN_RAST_SAMPLE_COUNT: u32 = 32;
-const BIN_RAST_TILE_SIZE: u32 = 16;
+const BIN_RAST_TILE_SIZE: u32 = 8;
 const BIN_RAST_MAX_CURVES_PER_TILE: usize = 16;
 
 type CurveIndex = u32;
@@ -182,6 +183,32 @@ struct BinRastArguments<'a> {
     tiles_curve_count_image: ReadWriteStorageImage<'a>,
     #[argument(binding = 3)]
     tiles_buffer: ReadWriteStorageBuffer<'a, [BinRastTile]>,
+}
+
+#[derive(Arguments)]
+struct DrawCurvesArguments<'a> {
+    #[argument(binding = 0)]
+    position_buffer: ReadOnlyStorageBuffer<'a, [ControlPoint]>,
+    #[argument(binding = 1)]
+    curve_buffer: ReadOnlyStorageBuffer<'a, [ControlPointRange]>,
+    #[argument(binding = 2)]
+    tiles_curve_count_image: ReadWriteStorageImage<'a>,
+    #[argument(binding = 3)]
+    tiles_buffer: ReadWriteStorageBuffer<'a, [BinRastTile]>,
+    #[argument(binding = 4)]
+    output_image: ReadWriteStorageImage<'a>,
+}
+
+#[derive(Copy, Clone)]
+struct DrawCurvesPushConstants {
+    view_proj: glam::Mat4,
+    /// Base index into the curve buffer.
+    base_curve: u32,
+    stroke_width: f32,
+    /// Number of tiles in the X direction.
+    tile_count_x: u32,
+    /// Number of tiles in the Y direction.
+    tile_count_y: u32,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -222,6 +249,7 @@ struct BinRastAttachments<'a> {
 #[derive(Default)]
 struct Pipelines {
     bin_rast_pipeline: Option<GraphicsPipeline>,
+    draw_curves_pipeline: Option<ComputePipeline>,
 }
 
 pub struct App {
@@ -242,11 +270,12 @@ pub struct App {
     bin_rast_tiles_y: u32,
     bin_rast_tile_curve_count_image: Image,
     bin_rast_tile_buffer: TypedBuffer<[BinRastTile]>,
+    curves_image: Image,
 }
 
 impl App {
     fn reload_shaders(&mut self) {
-        fn check(name: &str, p: Result<GraphicsPipeline, graal::Error>) -> Option<GraphicsPipeline> {
+        fn check<T>(name: &str, p: Result<T, graal::Error>) -> Option<T> {
             match p {
                 Ok(p) => Some(p),
                 Err(err) => {
@@ -260,6 +289,7 @@ impl App {
             "bin_rast_pipeline",
             create_bin_rast_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
         );
+        self.pipelines.draw_curves_pipeline = check("draw_curves_pipeline", create_draw_curves_pipeline(&self.device));
     }
 
     fn load_geo(&mut self) {
@@ -338,15 +368,40 @@ impl App {
             );
         }
 
+        let bin_rast_tile_curve_count_image_view = self.bin_rast_tile_curve_count_image.create_top_level_view();
+
+        if width != self.curves_image.width() || height != self.curves_image.height() {
+            self.curves_image = self.device.create_image(
+                "curves_image",
+                &ImageCreateInfo {
+                    memory_location: MemoryLocation::GpuOnly,
+                    type_: ImageType::Image2D,
+                    usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+                    format: Format::R8G8B8A8_UNORM,
+                    width,
+                    height,
+                    depth: 1,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: 1,
+                },
+            );
+        }
+
         unsafe {
             let mut cmdbuf = queue.create_command_buffer();
+            cmdbuf.push_debug_group("clear tile buffer");
 
             // Clear the tile curve count image and the tile buffer
             {
                 let mut encoder = cmdbuf.begin_blit();
                 encoder.clear_image(&self.bin_rast_tile_curve_count_image, ClearColorValue::Uint([0, 0, 0, 0]));
+                encoder.clear_image(&self.curves_image, ClearColorValue::Float([0.0, 0.0, 0.0, 0.0]));
                 encoder.fill_buffer(&self.bin_rast_tile_buffer.slice(..).any(), 0);
             }
+            cmdbuf.pop_debug_group();
+
+            cmdbuf.push_debug_group("render curves");
 
             // Render the curves
             {
@@ -355,7 +410,6 @@ impl App {
                     depth: &self.depth_buffer_view,
                 });
 
-                let bin_rast_tile_curve_count_image_view = self.bin_rast_tile_curve_count_image.create_top_level_view();
                 encoder.bind_graphics_pipeline(bin_rast_pipeline);
                 encoder.set_viewport(0.0, 0.0, tile_count_x as f32, tile_count_y as f32, 0.0, 1.0);
                 encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
@@ -380,10 +434,41 @@ impl App {
                 encoder.draw_mesh_tasks(frame.curves.count, 1, 1);
             }
 
+            cmdbuf.pop_debug_group();
+
+            cmdbuf.push_debug_group("draw curves");
+
+            {
+                let mut encoder = cmdbuf.begin_compute();
+                encoder.bind_compute_pipeline(self.pipelines.draw_curves_pipeline.as_ref().unwrap());
+                encoder.bind_arguments(
+                    0,
+                    &DrawCurvesArguments {
+                        position_buffer: animation.position_buffer.as_read_only_storage_buffer(),
+                        curve_buffer: animation.curve_buffer.as_read_only_storage_buffer(),
+                        tiles_curve_count_image: bin_rast_tile_curve_count_image_view.as_read_write_storage(),
+                        tiles_buffer: self.bin_rast_tile_buffer.as_read_write_storage_buffer(),
+                        output_image: self.curves_image.create_top_level_view().as_read_write_storage(),
+                    },
+                );
+                encoder.bind_push_constants(&DrawCurvesPushConstants {
+                    view_proj: self.camera_control.camera().view_projection(),
+                    base_curve: animation.frames[self.bin_rast_current_frame].curves.start,
+                    stroke_width: self.bin_rast_stroke_width,
+                    tile_count_x,
+                    tile_count_y,
+                });
+                encoder.dispatch(tile_count_x, tile_count_y, 1);
+            }
+
+            cmdbuf.pop_debug_group();
+
+            cmdbuf.push_debug_group("blit curves to screen");
+
             {
                 let mut encoder = cmdbuf.begin_blit();
                 encoder.blit_image(
-                    &self.bin_rast_tile_curve_count_image,
+                    &self.curves_image,
                     ImageSubresourceLayers {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         mip_level: 0,
@@ -393,8 +478,8 @@ impl App {
                     Rect3D {
                         min: Point3D { x: 0, y: 0, z: 0 },
                         max: Point3D {
-                            x: tile_count_x as i32,
-                            y: tile_count_y as i32,
+                            x: width as i32,
+                            y: height as i32,
                             z: 1,
                         },
                     },
@@ -417,6 +502,7 @@ impl App {
                 );
             }
 
+            cmdbuf.pop_debug_group();
             queue.submit([cmdbuf]).expect("submit failed");
         }
     }
@@ -456,6 +542,22 @@ impl App {
                 samples: 1,
             },
         );
+        // DUMMY
+        let curves_image = device.create_image(
+            "curves_image",
+            &ImageCreateInfo {
+                memory_location: MemoryLocation::GpuOnly,
+                type_: ImageType::Image2D,
+                usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
+                format: Format::R8G8B8A8_SRGB,
+                width: 1,
+                height: 1,
+                depth: 1,
+                mip_levels: 1,
+                array_layers: 1,
+                samples: 1,
+            },
+        );
         let mut app = App {
             device: device.clone(),
             animation: None,
@@ -471,6 +573,7 @@ impl App {
             bin_rast_tiles_y: 0,
             bin_rast_tile_curve_count_image,
             bin_rast_tile_buffer,
+            curves_image,
         };
         app.reload_shaders();
         app
@@ -551,13 +654,15 @@ impl App {
         // Clear attachments
         {
             let mut command_buffer = queue.create_command_buffer();
+            command_buffer.push_debug_group("Clear attachments");
             let mut encoder = command_buffer.begin_rendering(&RenderAttachments {
                 color: &color_target_view,
                 depth: &self.depth_buffer_view,
             });
             encoder.clear_color(0, ClearColorValue::Float([0.2, 0.4, 0.6, 1.0]));
             encoder.clear_depth(1.0);
-            encoder.finish();
+            drop(encoder);
+            command_buffer.pop_debug_group();
             queue.submit([command_buffer]).expect("submit failed");
         }
 
@@ -570,12 +675,14 @@ impl App {
             self.draw_axes();
 
             let mut command_buffer = queue.create_command_buffer();
+            command_buffer.push_debug_group("Overlay");
             let mut encoder = command_buffer.begin_rendering(&RenderAttachments {
                 color: &color_target_view,
                 depth: &self.depth_buffer_view,
             });
             self.overlay.render(image.width(), image.height(), &mut encoder);
-            encoder.finish();
+            drop(encoder);
+            command_buffer.pop_debug_group();
             queue.submit([command_buffer]).expect("submit failed");
         }
 
@@ -637,4 +744,18 @@ fn create_bin_rast_pipeline(
     };
 
     device.create_graphics_pipeline(create_info)
+}
+
+fn create_draw_curves_pipeline(device: &Device) -> Result<ComputePipeline, graal::Error> {
+    let create_info = ComputePipelineCreateInfo {
+        layout: PipelineLayoutDescriptor {
+            arguments: &[DrawCurvesArguments::LAYOUT],
+            push_constants_size: mem::size_of::<DrawCurvesPushConstants>(),
+        },
+        compute_shader: ShaderEntryPoint {
+            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/draw_curves.comp"))),
+            entry_point: "main",
+        },
+    };
+    device.create_compute_pipeline(create_info)
 }

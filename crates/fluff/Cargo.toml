@@ -16,7 +16,6 @@ imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = 
 tracing-subscriber = { version = "0.2.17", features = ["fmt"] }
 rfd = "0.12.1"
 lyon = "1.0.1"
-
-openimageio = { workspace=true }
+#openimageio = { workspace=true }
 graal = { workspace=true }
 houdinio = { workspace=true }

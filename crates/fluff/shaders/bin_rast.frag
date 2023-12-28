@@ -23,6 +23,7 @@ layout(std140, push_constant) uniform PushConstants {
 };
 
 layout(location=0) flat in int curveIndex;
+layout(location=0) out vec4 color;
 
 void main() {
     ivec3 tilePos = ivec3(gl_FragCoord);
@@ -30,6 +31,7 @@ void main() {
 
     int count = imageAtomicAdd(tileCurveCountImage, tilePos.xy, 1);
     if (count < MAX_CURVES_PER_TILE) {
-        tiles[tileIndex].curves[count] = baseCurve + curveIndex;
+        tiles[tileIndex].curves[count] = curveIndex;
     }
+    color = vec4(0., 1., 0., 0.2);
 }

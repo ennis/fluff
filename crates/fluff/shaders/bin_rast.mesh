@@ -94,7 +94,7 @@ void main()
 
     // TODO handle curves with more than one segment
     Bezier curve = loadCubicSegment(curves[curveIndex].start, 0);
-    float t = float(sampleIndex) / float(SAMPLE_COUNT - 1);
+    float t = 1.2 * (float(sampleIndex) / float(SAMPLE_COUNT - 1) - 0.5) + 0.5;
 
     vec2 position = bezier3(curve, t);
     vec2 tangent = normalize(bezier3Tangent(curve, t));

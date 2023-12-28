@@ -208,12 +208,9 @@ impl OverlayRenderer {
             encoder.set_scissor(0, 0, width, height);
 
             for draw in self.draws.iter() {
-                encoder.bind_push_constants(
-                    PipelineBindPoint::Graphics,
-                    &PushConstants {
-                        matrix: self.camera.view_projection() * draw.transform,
-                    },
-                );
+                encoder.bind_push_constants(&PushConstants {
+                    matrix: self.camera.view_projection() * draw.transform,
+                });
                 encoder.set_primitive_topology(draw.topology);
 
                 match draw.kind {

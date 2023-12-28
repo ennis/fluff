@@ -106,6 +106,7 @@ impl Renderer {
         let clip_scale = draw_data.framebuffer_scale;
 
         let mut command_buffer = queue.create_command_buffer();
+        command_buffer.push_debug_group("ImGui");
         let mut encoder = command_buffer.begin_rendering(&ImguiAttachments { color: target });
         unsafe {
             for draw_list in draw_data.draw_lists() {
@@ -156,7 +157,7 @@ impl Renderer {
                                 // TODO: bind_index_buffer from typed slice
                                 encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(idx_offset..(idx_offset + count)).any());
 
-                                encoder.bind_push_constants(PipelineBindPoint::Graphics, &ImguiPushConstants { matrix });
+                                encoder.bind_push_constants(&ImguiPushConstants { matrix });
 
                                 encoder.set_scissor(
                                     clip_rect[0].floor() as i32,
@@ -184,7 +185,8 @@ impl Renderer {
                 }
             }
         };
-        encoder.finish();
+        drop(encoder);
+        command_buffer.pop_debug_group();
         queue.submit([command_buffer]).expect("submit failed");
     }
 }
