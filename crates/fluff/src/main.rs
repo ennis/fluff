@@ -21,6 +21,8 @@ mod shaders;
 mod util;
 
 fn main() {
+    tracing_subscriber::fmt::init();
+
     // Create the event loop and the main window
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let window = WindowBuilder::new().build(&event_loop).unwrap();
@@ -29,7 +31,7 @@ fn main() {
     let surface_format = vk::SurfaceFormatKHR {
         format: vk::Format::B8G8R8A8_UNORM,
         color_space: Default::default(),
-    }; // unsafe { device.get_preferred_surface_format(surface) };
+    };
     let (init_width, init_height) = window.inner_size().into();
     let mut swapchain = unsafe { device.create_swapchain(surface, surface_format, init_width, init_height) };
     let (mut width, mut height) = window.inner_size().into();

@@ -2,6 +2,7 @@
 
 layout(std140, push_constant) uniform PushConstants {
     mat4 matrix;
+    float width;
 };
 
 layout(location=0) in vec3 pos;

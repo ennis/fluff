@@ -187,6 +187,7 @@ void main() {
         //color = vec4(vec3(mask), 1.0);
         mindist = min(mindist, dist);
     }
-    imageStore(outputImage, ivec2(coord), color);
+
+    imageStore(outputImage, ivec2(coord), vec4(1.0));
 
 }

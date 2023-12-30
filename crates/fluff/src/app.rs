@@ -11,7 +11,11 @@ use winit::{
     keyboard::{Key, NamedKey},
 };
 
-use crate::{camera_control::CameraControl, overlay::OverlayRenderer, util::resolve_file_sequence};
+use crate::{
+    camera_control::CameraControl,
+    overlay::{CubicBezierSegment, OverlayRenderer},
+    util::resolve_file_sequence,
+};
 
 /// Geometry loaded from a `frame####.geo` file.
 struct GeoFileData {
@@ -48,7 +52,9 @@ struct AnimationFrame {
     /// Time of the frame in seconds.
     time: f32,
     /// Range of curves in the curve buffer.
-    curves: CurveRange,
+    curve_range: CurveRange,
+    /// Curve segments
+    curve_segments: Vec<CubicBezierSegment>,
 }
 
 struct AnimationData {
@@ -110,6 +116,8 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
 
         for f in geo_files.iter() {
             let offset = curve_ptr;
+
+            let mut curve_segments = vec![];
             for prim in f.geometry.primitives.iter() {
                 match prim {
                     houdinio::Primitive::BezierRun(run) => {
@@ -119,6 +127,15 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                                 *point_data.offset(point_ptr) = f.geometry.vertex_position(vertex_index);
                                 point_ptr += 1;
                             }
+                            for segment in curve.vertices.windows(4) {
+                                curve_segments.push(CubicBezierSegment {
+                                    p0: f.geometry.vertex_position(segment[0]).into(),
+                                    p1: f.geometry.vertex_position(segment[1]).into(),
+                                    p2: f.geometry.vertex_position(segment[2]).into(),
+                                    p3: f.geometry.vertex_position(segment[3]).into(),
+                                });
+                            }
+
                             *curve_data.offset(curve_ptr) = ControlPointRange {
                                 start: start as u32,
                                 count: curve.vertices.len() as u32,
@@ -129,13 +146,14 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                 }
             }
 
-            frames.push(dbg!(AnimationFrame {
+            frames.push(AnimationFrame {
                 time: 0.0, // TODO
-                curves: CurveRange {
+                curve_range: CurveRange {
                     start: offset as u32,
                     count: curve_ptr as u32 - offset as u32,
                 },
-            }));
+                curve_segments,
+            });
         }
     }
 
@@ -271,6 +289,9 @@ pub struct App {
     bin_rast_tile_curve_count_image: Image,
     bin_rast_tile_buffer: TypedBuffer<[BinRastTile]>,
     curves_image: Image,
+
+    overlay_line_width: f32,
+    overlay_filter_width: f32,
 }
 
 impl App {
@@ -425,13 +446,13 @@ impl App {
 
                 encoder.bind_push_constants(&BinRastPushConstants {
                     view_proj: self.camera_control.camera().view_projection(),
-                    base_curve: animation.frames[self.bin_rast_current_frame].curves.start,
+                    base_curve: animation.frames[self.bin_rast_current_frame].curve_range.start,
                     stroke_width: self.bin_rast_stroke_width,
                     tile_count_x,
                     tile_count_y,
                 });
 
-                encoder.draw_mesh_tasks(frame.curves.count, 1, 1);
+                encoder.draw_mesh_tasks(frame.curve_range.count, 1, 1);
             }
 
             cmdbuf.pop_debug_group();
@@ -453,7 +474,7 @@ impl App {
                 );
                 encoder.bind_push_constants(&DrawCurvesPushConstants {
                     view_proj: self.camera_control.camera().view_projection(),
-                    base_curve: animation.frames[self.bin_rast_current_frame].curves.start,
+                    base_curve: animation.frames[self.bin_rast_current_frame].curve_range.start,
                     stroke_width: self.bin_rast_stroke_width,
                     tile_count_x,
                     tile_count_y,
@@ -574,6 +595,8 @@ impl App {
             bin_rast_tile_curve_count_image,
             bin_rast_tile_buffer,
             curves_image,
+            overlay_line_width: 1.0,
+            overlay_filter_width: 1.0,
         };
         app.reload_shaders();
         app
@@ -622,6 +645,8 @@ impl App {
         if let Some(ref animation) = self.animation {
             ui.window("Animation").build(|| {
                 ui.slider("Stroke width", 0.001, 0.20, &mut self.bin_rast_stroke_width);
+                ui.slider("Overlay line width", 0.1, 40.0, &mut self.overlay_line_width);
+                ui.slider("Overlay filter width", 0.01, 10.0, &mut self.overlay_filter_width);
                 imgui::Drag::new("Frame")
                     .display_format("Frame %d")
                     .range(0, animation.frames.len() - 1)
@@ -632,6 +657,15 @@ impl App {
         ui.show_metrics_window(&mut true);
 
         quit
+    }
+
+    pub fn draw_curves(&mut self) {
+        if let Some(anim_data) = self.animation.as_ref() {
+            let frame = &anim_data.frames[self.bin_rast_current_frame];
+            for segment in frame.curve_segments.iter() {
+                self.overlay.cubic_bezier(segment, [0, 0, 0, 255]);
+            }
+        }
     }
 
     pub fn draw_axes(&mut self) {
@@ -673,6 +707,7 @@ impl App {
         {
             self.overlay.set_camera(self.camera_control.camera());
             self.draw_axes();
+            self.draw_curves();
 
             let mut command_buffer = queue.create_command_buffer();
             command_buffer.push_debug_group("Overlay");
@@ -680,7 +715,13 @@ impl App {
                 color: &color_target_view,
                 depth: &self.depth_buffer_view,
             });
-            self.overlay.render(image.width(), image.height(), &mut encoder);
+            self.overlay.render(
+                image.width(),
+                image.height(),
+                self.overlay_line_width,
+                self.overlay_filter_width,
+                &mut encoder,
+            );
             drop(encoder);
             command_buffer.pop_debug_group();
             queue.submit([command_buffer]).expect("submit failed");
