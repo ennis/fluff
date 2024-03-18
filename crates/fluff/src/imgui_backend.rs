@@ -1,11 +1,11 @@
-use graal::prelude::*;
+use graal::{prelude::*, util::CommandStreamExt};
 use imgui::{internal::RawWrapper, DrawCmd, DrawCmdParams, DrawData, DrawIdx, TextureId, Textures};
 use std::{mem, path::Path};
 
 #[derive(Debug, Attachments)]
 struct ImguiAttachments<'a> {
     // FIXME: we shouldn't specify attachment formats statically
-    #[attachment(format=B8G8R8A8_UNORM)]
+    #[attachment(format=R16G16B16A16_SFLOAT)]
     color: &'a ImageView,
 }
 
@@ -26,9 +26,9 @@ const _: () = assert!(mem::size_of::<DrawIdx>() == 2);
 
 #[derive(Arguments)]
 struct ImguiArguments<'a> {
-    #[argument(binding = 0)]
-    tex: SampledImage<'a>,
-    #[argument(binding = 1)]
+    #[argument(binding = 0, sampled_image)]
+    tex: &'a ImageView,
+    #[argument(binding = 1, sampler)]
     sampler: &'a Sampler,
 }
 
@@ -41,12 +41,12 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(queue: &mut Queue, ctx: &mut imgui::Context) -> Renderer {
-        let pipeline = create_pipeline(queue.device());
-        let font_texture = upload_font_texture(queue, ctx.fonts());
+    pub fn new(cmd: &mut CommandStream, ctx: &mut imgui::Context) -> Renderer {
+        let pipeline = create_pipeline(cmd.device());
+        let font_texture = upload_font_texture(cmd, ctx.fonts());
         ctx.set_renderer_name(Some(format!("fluff_imgui_backend {}", env!("CARGO_PKG_VERSION"))));
         ctx.io_mut().backend_flags.insert(imgui::BackendFlags::RENDERER_HAS_VTX_OFFSET);
-        let sampler = queue.device().create_sampler(&SamplerCreateInfo {
+        let sampler = cmd.device().create_sampler(&SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
             min_filter: vk::Filter::LINEAR,
             mipmap_mode: vk::SamplerMipmapMode::NEAREST,
@@ -65,8 +65,8 @@ impl Renderer {
         }
     }
 
-    pub fn reload_font_texture(&mut self, queue: &mut Queue, ctx: &mut imgui::Context) {
-        self.font_texture = upload_font_texture(queue, ctx.fonts());
+    pub fn reload_font_texture(&mut self, cmd: &mut CommandStream, ctx: &mut imgui::Context) {
+        self.font_texture = upload_font_texture(cmd, ctx.fonts());
     }
 
     pub fn textures(&mut self) -> &mut Textures<Image> {
@@ -83,7 +83,7 @@ impl Renderer {
         }
     }
 
-    pub fn render(&mut self, queue: &mut Queue, target: &ImageView, draw_data: &DrawData) {
+    pub fn render(&mut self, cmd: &mut CommandStream, target: &ImageView, draw_data: &DrawData) {
         let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
         let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
         if !(fb_width > 0.0 && fb_height > 0.0) {
@@ -105,21 +105,15 @@ impl Renderer {
         let clip_off = draw_data.display_pos;
         let clip_scale = draw_data.framebuffer_scale;
 
-        let mut command_buffer = queue.create_command_buffer();
-        command_buffer.push_debug_group("ImGui");
-        let mut encoder = command_buffer.begin_rendering(&ImguiAttachments { color: target });
-        unsafe {
+        cmd.debug_group("ImGui", |cmd| {
+            let mut encoder = cmd.begin_rendering(&ImguiAttachments { color: target });
             for draw_list in draw_data.draw_lists() {
                 // upload vertex & index data
-                let vertex_data = draw_list.transmute_vtx_buffer::<ImguiDrawVert>();
+                let vertex_data = unsafe { draw_list.transmute_vtx_buffer::<ImguiDrawVert>() };
                 let index_data = draw_list.idx_buffer();
 
-                let vertex_buffer = encoder
-                    .device()
-                    .upload_array_buffer("imgui vertex buffer", BufferUsage::VERTEX_BUFFER, vertex_data);
-                let index_buffer = encoder
-                    .device()
-                    .upload_array_buffer("imgui index buffer", BufferUsage::INDEX_BUFFER, index_data);
+                let vertex_buffer = encoder.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
+                let index_buffer = encoder.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, index_data);
 
                 encoder.bind_graphics_pipeline(&self.pipeline);
 
@@ -150,12 +144,12 @@ impl Renderer {
                                 // TODO: VertexBufferDescriptor from typed slice
                                 encoder.bind_vertex_buffer(&VertexBufferDescriptor {
                                     binding: 0,
-                                    buffer_range: vertex_buffer.slice(vtx_offset..).any(),
+                                    buffer_range: vertex_buffer.slice(vtx_offset..).untyped,
                                     stride: mem::size_of::<ImguiDrawVert>() as u32,
                                 });
 
                                 // TODO: bind_index_buffer from typed slice
-                                encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(idx_offset..(idx_offset + count)).any());
+                                encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(idx_offset..(idx_offset + count)).untyped);
 
                                 encoder.bind_push_constants(&ImguiPushConstants { matrix });
 
@@ -170,7 +164,7 @@ impl Renderer {
                                 encoder.bind_arguments(
                                     0,
                                     &ImguiArguments {
-                                        tex: SampledImage { image_view: &texture_view },
+                                        tex: &texture_view,
                                         sampler: &self.font_sampler,
                                     },
                                 );
@@ -180,22 +174,20 @@ impl Renderer {
                             }
                         }
                         DrawCmd::ResetRenderState => (), // TODO
-                        DrawCmd::RawCallback { callback, raw_cmd } => callback(draw_list.raw(), raw_cmd),
+                        // TODO SAFETY
+                        DrawCmd::RawCallback { callback, raw_cmd } => unsafe { callback(draw_list.raw(), raw_cmd) },
                     }
                 }
             }
-        };
-        drop(encoder);
-        command_buffer.pop_debug_group();
-        queue.submit([command_buffer]).expect("submit failed");
+            encoder.finish();
+        });
     }
 }
 
-fn upload_font_texture(queue: &mut Queue, fonts: &mut imgui::FontAtlas) -> Image {
+fn upload_font_texture(cmd: &mut CommandStream, fonts: &mut imgui::FontAtlas) -> Image {
     let texture = fonts.build_rgba32_texture();
 
-    let font_texture = queue.create_image_with_data(
-        "imgui font texture",
+    let font_texture = cmd.create_image_with_data(
         &ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
             type_: ImageType::Image2D,

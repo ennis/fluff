@@ -19,3 +19,14 @@ lyon = "1.0.1"
 #openimageio = { workspace=true }
 graal = { workspace=true }
 houdinio = { workspace=true }
+image = "0.24.8"
+egui =  { version = "0.25", features = ["persistence"] }
+egui-winit = "0.25"
+egui-phosphor = { version =  "0.3.2", features = ["fill"] }
+egui_dnd = "0.6.0"
+egui_extras = { version = "0.25", features = ["syntect"] }
+serde_json = "1.0.113"
+serde = { version = "1.0.196", features = ["derive"] }
+syntect = "5.1.0"
+spirv-reflect = { git = "https://github.com/gwihlidal/spirv-reflect-rs", rev = "b2c452750adfe9018057aabe2a8a92a87de02098" }
+thiserror = "1.0.50"

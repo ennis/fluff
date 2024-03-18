@@ -115,14 +115,14 @@ layout(triangles, max_vertices = POLYLINE_FRAGMENT_VERTICES*2, max_primitives = 
 layout(location=0) out vec2 o_position[];
 layout(location=1) out vec4 o_color[];
 
-vec3 project(vec3 pos)
+vec4 project(vec3 pos, out bool clipped)
 {
     vec4 p = vec4(pos, 1.0);
-    vec4 proj = viewProjectionMatrix * p;
-    //proj.y = -proj.y;
-    vec3 ndc = proj.xyz / proj.w;
+    vec4 clip = viewProjectionMatrix * p;
+    clipped = clip.w <= 0.0;
+    vec3 ndc = clip.xyz / clip.w;
     vec3 window = vec3(ndc.xy * 0.5 + 0.5, ndc.z) * vec3(screenWidth, screenHeight, 1.0);
-    return window;
+    return vec4(window, clip.w);
 }
 
 vec3 fetchPosition(uint index)
@@ -153,25 +153,29 @@ void main()
         return;
     }
 
-    vec3 p = project(fetchPosition(fragment.startVertex + vertexIndex));
+    bool clipped = false;
+    bool cc = false;
+    vec4 pp = project(fetchPosition(fragment.startVertex + vertexIndex), clipped);
+    vec3 p = pp.xyz;
+    float w = pp.w;
     u8vec4 color = vertices[fragment.startVertex + vertexIndex].color;
 
     // half-width + anti-aliasing margin
     // clamp the width to 1.0, below that we just fade out the line
 
-    float hw_aa = max(width, 1.0) * 0.5 + sqrt(2.0);
+    float hw_aa = max(width, 1.0) * 0.5 + filterWidth * sqrt(2.0);
 
     vec2 a;
     vec2 b;
 
     if (bool(fragment.flags & POLYLINE_START) && vertexIndex == 0) {
-        vec3 p1 = project(fetchPosition(fragment.startVertex + vertexIndex + 1));
+        vec3 p1 = project(fetchPosition(fragment.startVertex + vertexIndex + 1), cc).xyz;
         vec2 v = normalize(p1.xy - p.xy);
         vec2 n = vec2(-v.y, v.x);
         a = p.xy - hw_aa * n;
         b = p.xy + hw_aa * n;
     } else if (bool(fragment.flags & POLYLINE_END) && vertexIndex == fragment.vertexCount - 1) {
-        vec3 p0 = project(fetchPosition(fragment.startVertex + vertexIndex - 1));
+        vec3 p0 = project(fetchPosition(fragment.startVertex + vertexIndex - 1), cc).xyz;
         vec2 v = normalize(p.xy - p0.xy);
         vec2 n = vec2(-v.y, v.x) ;
         a = p.xy - hw_aa * n;
@@ -179,8 +183,8 @@ void main()
     }
     else {
         // NOTE: this may go outside the fragment, but that's OK
-        vec3 p0 = project(fetchPosition(fragment.startVertex + vertexIndex - 1));
-        vec3 p1 = project(fetchPosition(fragment.startVertex + vertexIndex + 1));
+        vec3 p0 = project(fetchPosition(fragment.startVertex + vertexIndex - 1), cc).xyz;
+        vec3 p1 = project(fetchPosition(fragment.startVertex + vertexIndex + 1), cc).xyz;
         vec2 v0 = normalize(p.xy - p0.xy);
         vec2 v1 = normalize(p1.xy - p.xy);
         vec2 vt = 0.5 * (v0 + v1);
@@ -192,8 +196,8 @@ void main()
         b = p.xy + d * n;
     }
 
-    gl_MeshVerticesEXT[vertexIndex*2+0].gl_Position = vec4(windowToNdc(vec3(a, 0.0)), 1.0);
-    gl_MeshVerticesEXT[vertexIndex*2+1].gl_Position = vec4(windowToNdc(vec3(b, 0.0)), 1.0);
+    gl_MeshVerticesEXT[vertexIndex*2+0].gl_Position = vec4(windowToNdc(vec3(a, p.z)), clipped ? 0.0 : 1.0);
+    gl_MeshVerticesEXT[vertexIndex*2+1].gl_Position = vec4(windowToNdc(vec3(b, p.z)), clipped ? 0.0 : 1.0);
     o_color[vertexIndex*2+0] = vec4(color) / 255.0;
     o_color[vertexIndex*2+1] = vec4(color) / 255.0;
     o_position[vertexIndex*2+0] = vec2(0.0, -hw_aa);
@@ -229,14 +233,11 @@ void main() {
     // clamped width
     float width1 = max(width, 1.0);
     float h = width1 * 0.5;
-
     float y = abs(i_position.y);
     //float filterWidth = 1.5;
     float halfFilterWidth = filterWidth * 0.5;
-
     float alpha = (clamp((y + h + halfFilterWidth), 0., width1) - clamp((y + h - halfFilterWidth), 0., width1)) / filterWidth;
     alpha *= min(width, 1.0);
-
     o_color = i_color * vec4(1., 1., 1., alpha);
 }
 

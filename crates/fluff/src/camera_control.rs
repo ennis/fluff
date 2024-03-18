@@ -89,7 +89,7 @@ impl CameraControl {
     pub fn new(width: u32, height: u32) -> CameraControl {
         CameraControl {
             fov_y_radians: std::f64::consts::PI / 2.0,
-            z_near: 0.001,
+            z_near: 0.1,
             z_far: 10.0,
             zoom: 1.0,
             screen_size: dvec2(width as f64, height as f64),

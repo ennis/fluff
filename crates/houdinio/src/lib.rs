@@ -95,12 +95,25 @@ impl Geo {
         unsafe { slice::from_raw_parts(data.as_ptr().cast(), new_len) }
     }
 
+    /// Returns the contents of the color attribute (`Cd`).
+    pub fn color(&self) -> Option<&[[f32; 3]]> {
+        let data = self.find_point_attribute("Cd")?.as_f32_slice()?;
+        let new_len = data.len() / 3;
+        Some(unsafe { slice::from_raw_parts(data.as_ptr().cast(), new_len) })
+    }
+
     /// Returns the position of of the given vertex.
     pub fn vertex_position(&self, vertex_index: i32) -> [f32; 3] {
         // The vertex is an index into the topology array, which gives us the index into the point attribute.
         // The double indirection is because different vertices can share the same point.
         let point = self.topology[vertex_index as usize] as usize;
         self.positions()[point]
+    }
+
+    /// Returns the color of of the given vertex.
+    pub fn vertex_color(&self, vertex_index: i32) -> Option<[f32; 3]> {
+        let point = self.topology[vertex_index as usize] as usize;
+        Some(self.color()?[point])
     }
 }
 

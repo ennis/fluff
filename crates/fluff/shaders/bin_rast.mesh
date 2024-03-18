@@ -69,12 +69,12 @@ vec2 loadCP(int i)
 }
 
 // Load a bezier segment from an index into the control point buffer
-Bezier loadCubicSegment(int baseControlPoint, int segmentIndex) {
+CubicBezierSegment2D loadCubicSegment(int baseControlPoint, int segmentIndex) {
     vec2 p0 = loadCP(baseControlPoint + segmentIndex*3 + 0);
     vec2 p1 = loadCP(baseControlPoint + segmentIndex*3 + 1);
     vec2 p2 = loadCP(baseControlPoint + segmentIndex*3 + 2);
     vec2 p3 = loadCP(baseControlPoint + segmentIndex*3 + 3);
-    return Bezier(p0, p1, p2, p3);
+    return CubicBezierSegment2D(p0, p1, p2, p3);
 }
 
 //////////////////////////////////////////////////////////
@@ -93,11 +93,11 @@ void main()
     uint sampleIndex = gl_LocalInvocationID.x;
 
     // TODO handle curves with more than one segment
-    Bezier curve = loadCubicSegment(curves[curveIndex].start, 0);
+    CubicBezierSegment2D curve = loadCubicSegment(curves[curveIndex].start, 0);
     float t = 1.2 * (float(sampleIndex) / float(SAMPLE_COUNT - 1) - 0.5) + 0.5;
 
-    vec2 position = bezier3(curve, t);
-    vec2 tangent = normalize(bezier3Tangent(curve, t));
+    vec2 position = evalCubicBezier2D(curve, t);
+    vec2 tangent = normalize(evalCubicBezierTangent2D(curve, t));
     vec2 normal = vec2(-tangent.y, tangent.x);
 
     s_curveSamples[sampleIndex] = CurveSample(position, normal);

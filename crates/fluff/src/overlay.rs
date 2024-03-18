@@ -2,7 +2,7 @@
 use std::{f32::consts::TAU, mem, path::Path};
 
 use glam::{vec3, Mat4, Vec3};
-use graal::{prelude::*, ReadOnlyStorageBuffer};
+use graal::{prelude::*, BufferRange};
 
 use crate::camera_control::Camera;
 
@@ -163,10 +163,10 @@ layout(std430,set=0,binding=1) buffer LineBuffer {
 
 #[derive(Arguments)]
 struct LineRenderingArguments<'a> {
-    #[argument(binding = 0)]
-    vertex_buffer: ReadOnlyStorageBuffer<'a, [LineVertex]>,
-    #[argument(binding = 1)]
-    line_buffer: ReadOnlyStorageBuffer<'a, [Polyline]>,
+    #[argument(binding = 0, storage, read_only)]
+    vertex_buffer: BufferRange<'a, [LineVertex]>,
+    #[argument(binding = 1, storage, read_only)]
+    line_buffer: BufferRange<'a, [Polyline]>,
 }
 
 pub struct OverlayRenderer {
@@ -341,81 +341,72 @@ impl OverlayRenderer {
             return;
         }
 
-        let vertex_buffer = encoder
-            .device()
-            .upload_array_buffer("overlay/vertices", BufferUsage::VERTEX_BUFFER, &self.vertices);
-        let index_buffer = encoder
-            .device()
-            .upload_array_buffer("overlay/indices", BufferUsage::INDEX_BUFFER, &self.indices);
+        let vertex_buffer = encoder.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, &self.vertices);
+        let index_buffer = encoder.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &self.indices);
 
         // SAFETY: ???
-        unsafe {
-            encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
-            encoder.set_scissor(0, 0, width, height);
+        encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
+        encoder.set_scissor(0, 0, width, height);
 
-            // Lines
-            if !self.polylines.is_empty() {
-                let line_vertex_buffer =
-                    encoder
-                        .device()
-                        .upload_array_buffer("overlay/line_vertices", BufferUsage::STORAGE_BUFFER, &self.line_vertices);
-                let line_buffer = encoder
-                    .device()
-                    .upload_array_buffer("overlay/lines", BufferUsage::STORAGE_BUFFER, &self.polylines);
+        // Lines
+        if !self.polylines.is_empty() {
+            let line_vertex_buffer = encoder
+                .device()
+                .upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.line_vertices);
+            let line_buffer = encoder.device().upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.polylines);
 
-                encoder.bind_graphics_pipeline(&self.line_pipeline);
-                encoder.bind_push_constants(&PushConstants {
-                    matrix: self.camera.view_projection(),
-                    width: line_width,
-                    filter_width,
-                    line_count: self.polylines.len() as u32,
-                    screen_width: width as f32,
-                    screen_height: height as f32,
-                });
-                encoder.bind_arguments(
-                    0,
-                    &LineRenderingArguments {
-                        vertex_buffer: line_vertex_buffer.as_read_only_storage_buffer(),
-                        line_buffer: line_buffer.as_read_only_storage_buffer(),
-                    },
-                );
-                encoder.draw_mesh_tasks(((self.polylines.len() + 31) as u32) / 32, 1, 1);
-            }
-
-            // Polygons
-            encoder.bind_graphics_pipeline(&self.pipeline);
-            encoder.bind_vertex_buffer(&VertexBufferDescriptor {
-                binding: 0,
-                buffer_range: vertex_buffer.slice(..).any(),
-                stride: mem::size_of::<OverlayVertex>() as u32,
+            encoder.bind_graphics_pipeline(&self.line_pipeline);
+            encoder.bind_push_constants(&PushConstants {
+                matrix: self.camera.view_projection(),
+                width: line_width,
+                filter_width,
+                line_count: self.polylines.len() as u32,
+                screen_width: width as f32,
+                screen_height: height as f32,
             });
-            encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(..).any());
+            encoder.bind_arguments(
+                0,
+                &LineRenderingArguments {
+                    vertex_buffer: line_vertex_buffer.slice(..),
+                    line_buffer: line_buffer.slice(..),
+                },
+            );
+            encoder.draw_mesh_tasks(((self.polylines.len() + 31) as u32) / 32, 1, 1);
+        }
 
-            for draw in self.draws.iter() {
-                encoder.bind_push_constants(&PushConstants {
-                    matrix: self.camera.view_projection() * draw.transform,
-                    width: 1.0,
-                    filter_width,
-                    line_count: 0,
-                    screen_width: width as f32,
-                    screen_height: height as f32,
-                });
-                encoder.set_primitive_topology(draw.topology);
+        // Polygons
+        encoder.bind_graphics_pipeline(&self.pipeline);
+        encoder.bind_vertex_buffer(&VertexBufferDescriptor {
+            binding: 0,
+            buffer_range: vertex_buffer.slice(..).untyped,
+            stride: mem::size_of::<OverlayVertex>() as u32,
+        });
+        encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(..).untyped);
 
-                match draw.kind {
-                    DrawKind::Indexed {
-                        base_vertex,
-                        start_index,
-                        index_count,
-                    } => {
-                        encoder.draw_indexed(start_index..(start_index + index_count), base_vertex as i32, 0..1);
-                    }
-                    DrawKind::Draw {
-                        start_vertex,
-                        vertex_count,
-                    } => {
-                        encoder.draw(start_vertex..(start_vertex + vertex_count), 0..1);
-                    }
+        for draw in self.draws.iter() {
+            encoder.bind_push_constants(&PushConstants {
+                matrix: self.camera.view_projection() * draw.transform,
+                width: 1.0,
+                filter_width,
+                line_count: 0,
+                screen_width: width as f32,
+                screen_height: height as f32,
+            });
+            encoder.set_primitive_topology(draw.topology);
+
+            match draw.kind {
+                DrawKind::Indexed {
+                    base_vertex,
+                    start_index,
+                    index_count,
+                } => {
+                    encoder.draw_indexed(start_index..(start_index + index_count), base_vertex as i32, 0..1);
+                }
+                DrawKind::Draw {
+                    start_vertex,
+                    vertex_count,
+                } => {
+                    encoder.draw(start_vertex..(start_vertex + vertex_count), 0..1);
                 }
             }
         }

@@ -1,7 +1,5 @@
 #version 450
 
-uniform vec2 screenSize;
-
 layout(location=0) in vec2 a_position;
 layout(location=0) out vec2 v_position;
 
