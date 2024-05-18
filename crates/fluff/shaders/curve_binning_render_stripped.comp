@@ -1,0 +1,111 @@
+#include "common.glsl"
+
+#extension GL_EXT_shader_atomic_float : require
+
+const int TILE_SIZE_X = 16;
+const int TILE_SIZE_Y = 16;
+
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 768;
+
+const int TILE_COUNT_X = (SCREEN_WIDTH + TILE_SIZE_X - 1) / TILE_SIZE_X;
+const int TILE_COUNT_Y = (SCREEN_HEIGHT + TILE_SIZE_Y - 1) / TILE_SIZE_Y;
+
+//const int MAX_LINES_PER_TILE = 64;
+
+struct TileEntry {
+    vec4 line;
+    vec2 paramRange;
+    uint curveIndex;
+};
+
+struct Tile {
+    TileEntry[MAX_LINES_PER_TILE] entries;
+};
+
+struct CurveDescriptor {
+    vec4 widthProfile; // polynomial coefficients
+    vec4 opacityProfile; // polynomial coefficients
+    uint start;
+    uint size;
+    vec2 paramRange;
+};
+
+// Position buffer
+readonly buffer ControlPointsPosition {
+    float[] position; 
+};
+
+readonly buffer CurveBuffer {
+    CurveDescriptor[] curves;
+};
+
+buffer TileBuffer {
+    Tile[] tiles;
+};
+
+layout(r32i) uniform coherent iimage2D tileLineCountImage;
+
+uniform PushConstants {
+    mat4 viewProjectionMatrix;
+    int baseCurve;
+    float strokeWidth;
+    uint tilesCountX;
+    uint tilesCountY;
+    int frame;
+};
+
+// One thread per pixel in a tile
+layout(local_size_x=TILE_SIZE_X, local_size_y=TILE_SIZE_Y) in;
+
+// ------ OUTPUT ------
+
+uniform writeonly image2D outputImage;
+
+//////////////////////////////////////////////////////////
+
+shared TileEntry[MAX_LINES_PER_TILE] s_lines;
+
+float distSeg(vec2 p, vec2 a, vec2 b) {
+    vec2 ab = b - a;
+    vec2 ap = p - a;
+    float side = sign(cross(vec3(ab,0.0),vec3(ap,0.0)).z);
+    float d = dot(p - a, ab) / dot(ab,ab);
+    d = clamp(d, 0.0, 1.0);
+    vec2 p0 = a + d * ab;
+    //float taper = max(0.0, 80.0 - distance(p,b)) / 80.0;
+    return distance(p,p0);
+}
+
+void main() {
+    uvec2 tileCoord = gl_WorkGroupID.xy;
+    uint tileIndex = tileCoord.y * tilesCountX + tileCoord.x;
+    int lineCount = imageLoad(tileLineCountImage, ivec2(tileCoord)).x;
+    uvec2 coord = gl_GlobalInvocationID.xy;
+
+    // load lines in shared memory
+    if (gl_LocalInvocationIndex < lineCount) {
+        s_lines[gl_LocalInvocationIndex] = tiles[tileIndex].entries[gl_LocalInvocationIndex];
+    }
+    barrier();
+
+    vec4 color = vec4(0.0);
+    for (int i = 0; i < lineCount; i++) {
+        float width = strokeWidth;
+        float h = width * 0.5;
+        float y = distSeg(vec2(coord)+vec2(0.5), s_lines[i].line.xy, s_lines[i].line.zw);
+        float filterWidth = 1.5;
+        float halfFilterWidth = filterWidth * 0.5;
+        float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
+        color += 0.2 * alpha;
+        //color += vec4(1.0) * (1.0 - smoothstep(0.0, 3.0, y));
+    }
+
+    /*uvec2 localCoord = gl_LocalInvocationID.xy;
+    if (localCoord.x == 0 || localCoord.y == 0) {
+        color = vec4(1.0, 0.0, 0.0, 1.0);
+    }*/
+
+   imageStore(outputImage, ivec2(coord), vec4(color.rg, float(lineCount)/float(MAX_LINES_PER_TILE), 1.0));
+   //imageStore(outputImage, ivec2(coord), vec4(vec3(float(lineCount)/float(MAX_LINES_PER_TILE)), 1.0));
+}
