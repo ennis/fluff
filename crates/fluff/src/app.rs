@@ -1,10 +1,11 @@
 use egui::{Align2, Frame, Margin, Rounding, Widget};
 use glam::{mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2, Vec4};
-use graal::{
-    prelude::*, Buffer, BufferRange, ComputePipeline, ComputePipelineCreateInfo, ConservativeRasterizationMode, ImageCopyBuffer,
-    ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D,
+use graal::{prelude::*, vk::{AttachmentLoadOp, AttachmentStoreOp}, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassDescriptor, Descriptor};
+use std::{
+    fs, mem,
+    path::{Path, PathBuf},
+    ptr,
 };
-use std::{fs, mem, path::Path, ptr};
 
 use houdinio::Geo;
 use winit::{
@@ -14,12 +15,13 @@ use winit::{
 
 use crate::{
     camera_control::CameraControl,
+    engine2::{BufferKey, Engine, ImageDesc, ImageKey, MeshShadingPassDesc},
     overlay::{CubicBezierSegment, OverlayRenderer},
-    pass::{compile_pass_pipeline, PipelineDescriptor, PipelineMode},
     ui,
     ui::{resources_window, test_ui},
     util::resolve_file_sequence,
 };
+use crate::engine2::ComputePassDesc;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -151,7 +153,7 @@ struct AnimationData {
     curve_buffer: Buffer<[CurveDesc]>,
 }
 
-/// Converts bezier curve data from `.geo` files to a format that can be uploaded to the GPU.
+/// Converts Bézier curve data from `.geo` files to a format that can be uploaded to the GPU.
 ///
 /// Curves are represented as follows:
 /// * position buffer: contains the control points of curves, all flattened into a single linear buffer.
@@ -227,7 +229,8 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                             for i in 0..num_segments {
                                 *curve_data.offset(curve_ptr) = CurveDesc {
                                     start: start as u32 + 3 * i,
-                                    count: 4, /*curve.vertices.len() as u32*/
+                                    count: 4,
+                                    /*curve.vertices.len() as u32*/
                                     width_profile,
                                     opacity_profile,
                                     param_range: vec2(i as f32 / num_segments_f, (i + 1) as f32 / num_segments_f),
@@ -303,25 +306,25 @@ const _: () = assert!(mem::size_of::<BinRastTile>() == 28 * CURVE_BINNING_MAX_LI
 #[derive(Arguments)]
 struct BinRastArguments<'a> {
     #[argument(binding = 0, storage, read_only)]
-    position_buffer: BufferRange<'a, [ControlPoint]>,
+    position_buffer: BufferRange<[ControlPoint]>,
     #[argument(binding = 1, storage, read_only)]
-    curve_buffer: BufferRange<'a, [CurveDesc]>,
+    curve_buffer: BufferRange<[CurveDesc]>,
     #[argument(binding = 2, storage_image, read_write)]
     tile_line_count_image: &'a ImageView,
     #[argument(binding = 3, storage, read_write)]
-    tile_buffer: BufferRange<'a, [BinRastTile]>,
+    tile_buffer: BufferRange<[BinRastTile]>,
 }
 
 #[derive(Arguments)]
 struct DrawCurvesArguments<'a> {
     #[argument(binding = 0, storage, read_only)]
-    position_buffer: BufferRange<'a, [ControlPoint]>,
+    position_buffer: BufferRange<[ControlPoint]>,
     #[argument(binding = 1, storage, read_only)]
-    curve_buffer: BufferRange<'a, [CurveDesc]>,
+    curve_buffer: BufferRange<[CurveDesc]>,
     #[argument(binding = 2, storage_image, read_write)]
     tile_line_count_image: &'a ImageView,
     #[argument(binding = 3, storage)]
-    tile_buffer: BufferRange<'a, [BinRastTile]>,
+    tile_buffer: BufferRange<[BinRastTile]>,
     #[argument(binding = 4, storage_image, read_write)]
     output_image: &'a ImageView,
 }
@@ -339,38 +342,38 @@ struct DrawCurvesPushConstants {
     frame: i32,
 }
 
-#[derive(Attachments)]
+/*#[derive(Attachments)]
 struct RenderAttachments<'a> {
-    #[attachment(color, format=R16G16B16A16_SFLOAT)]
+    #[attachment(color, format = R16G16B16A16_SFLOAT)]
     color: &'a ImageView,
-    #[attachment(depth, format=D32_SFLOAT)]
+    #[attachment(depth, format = D32_SFLOAT)]
     depth: &'a ImageView,
 }
 
 #[derive(Attachments)]
 struct BinRastAttachments<'a> {
-    #[attachment(depth, format=D32_SFLOAT)]
+    #[attachment(depth, format = D32_SFLOAT)]
     depth: &'a ImageView,
 }
 
 #[derive(Attachments)]
 struct CurvesOITAttachments<'a> {
-    #[attachment(color, format=R16G16B16A16_SFLOAT)]
+    #[attachment(color, format = R16G16B16A16_SFLOAT)]
     color: &'a ImageView,
-    #[attachment(depth, format=D32_SFLOAT)]
+    #[attachment(depth, format = D32_SFLOAT)]
     depth: &'a ImageView,
-}
+}*/
 
 #[derive(Arguments)]
 struct CurvesOITArguments<'a> {
     #[argument(binding = 0, storage)]
-    position_buffer: BufferRange<'a, [ControlPoint]>,
+    position_buffer: BufferRange<[ControlPoint]>,
     #[argument(binding = 1, storage)]
-    curve_buffer: BufferRange<'a, [CurveDesc]>,
+    curve_buffer: BufferRange<[CurveDesc]>,
     #[argument(binding = 2, storage)]
-    fragment_buffer: BufferRange<'a, [CurvesOITFragmentData]>,
+    fragment_buffer: BufferRange<[CurvesOITFragmentData]>,
     #[argument(binding = 3, storage)]
-    fragment_count_buffer: BufferRange<'a, [u32]>,
+    fragment_count_buffer: BufferRange<[u32]>,
     #[argument(binding = 4, sampled_image)]
     brush_texture: &'a ImageView,
     #[argument(binding = 5, sampler)]
@@ -380,9 +383,9 @@ struct CurvesOITArguments<'a> {
 #[derive(Arguments)]
 struct CurvesOITResolveArguments<'a> {
     #[argument(binding = 0, storage)]
-    fragment_buffer: BufferRange<'a, [CurvesOITFragmentData]>,
+    fragment_buffer: BufferRange<[CurvesOITFragmentData]>,
     #[argument(binding = 1, storage)]
-    fragment_count_buffer: BufferRange<'a, [u32]>,
+    fragment_count_buffer: BufferRange<[u32]>,
 }
 
 #[derive(Copy, Clone)]
@@ -414,13 +417,14 @@ struct CurvesOITResolvePushConstants {
 
 //////////////////////////////////////////////////////
 
+/*
 #[derive(Attachments)]
 struct TemporalAverageAttachments<'a> {
-    #[attachment(color, format=R16G16B16A16_SFLOAT)]
+    #[attachment(color, format = R16G16B16A16_SFLOAT)]
     color: &'a ImageView,
-    #[attachment(depth, format=D32_SFLOAT)]
+    #[attachment(depth, format = D32_SFLOAT)]
     depth: &'a ImageView,
-}
+}*/
 
 #[derive(Arguments)]
 struct TemporalAverageArguments<'a> {
@@ -521,9 +525,99 @@ pub struct App {
     // Overlay
     overlay_line_width: f32,
     overlay_filter_width: f32,
+
+    engine: Engine,
 }
 
+const CONTROL_POINT_BUFFER: BufferKey = BufferKey("b_controlPoints");
+const CURVE_BUFFER: BufferKey = BufferKey("b_curves");
+const TILE_LINE_COUNT_IMAGE: ImageKey = ImageKey("i_tileLineCount");
+const DRAW_CURVES_OUTPUT_IMAGE: ImageKey = ImageKey("i_drawCurvesOutput");
+const TEMPORAL_AVG_OUTPUT_IMAGE: ImageKey = ImageKey("i_temporalAvg");
+
+const PASS_CURVE_BINNING: &str = "curve_binning";
+const PASS_DRAW_CURVES: &str = "draw_curves";
+const PASS_TEMPORAL_AVERAGE: &str = "temporal_average";
+
 impl App {
+    fn setup(&mut self, screen_width: u32, screen_height: u32) {
+        let engine = &mut self.engine;
+        engine.reset();
+
+        let tile_count_x = screen_width.div_ceil(CURVE_BINNING_TILE_SIZE);
+        let tile_count_y = screen_height.div_ceil(CURVE_BINNING_TILE_SIZE);
+
+        engine.define_global("TILE_SIZE", CURVE_BINNING_TILE_SIZE.to_string());
+
+        if let Some(ref animation) = self.animation {
+            engine.import_buffer(CONTROL_POINT_BUFFER, animation.position_buffer.clone());
+            engine.import_buffer(CURVE_BUFFER, animation.curve_buffer.clone());
+        }
+
+        engine.define_image(
+            TILE_LINE_COUNT_IMAGE,
+            ImageDesc {
+                format: Format::R32_SINT,
+                width: tile_count_x,
+                height: tile_count_y,
+            },
+        );
+
+        if self.temporal_average {
+            engine.define_image(
+                "i_temporalAvg",
+                ImageDesc {
+                    format: Format::R16G16B16A16_SFLOAT,
+                    width: screen_width,
+                    height: screen_height,
+                },
+            );
+        }
+
+        engine.mesh_shading_pass(
+            PASS_CURVE_BINNING,
+            MeshShadingPassDesc {
+                shader: PathBuf::from("crates/fluff/shaders/curve_binning_stripped.glsl"),
+                defines: Default::default(),
+                color_attachments: vec![],
+                depth_stencil_attachment: None,
+                rasterization_state: Default::default(),
+                depth_stencil_state: Default::default(),
+                multisample_state: Default::default(),
+                color_target_states: vec![],
+                draw: (),
+            },
+        );
+
+        engine.compute_pass(
+            PASS_DRAW_CURVES,
+            ComputePassDesc {
+                shader: PathBuf::from("crates/fluff/shaders/draw_curves.glsl"),
+                defines: Default::default(),
+                dispatch: (tile_count_x, tile_count_y, 1),
+            },
+        );
+
+        // temporal average
+        engine.compute_pass(
+            PASS_TEMPORAL_AVERAGE,
+            ComputePassDesc {
+                shader: PathBuf::from("crates/fluff/shaders/temporal_average.glsl"),
+                defines: Default::default(),
+                dispatch: (screen_width.div_ceil(16), screen_height.div_ceil(16), 1),
+            },
+        );
+
+
+        //engine.forward_image(DRAW_CURVES_OUTPUT_IMAGE, TEMPORAL_AVG_OUTPUT_IMAGE);
+
+
+        // split pass definition from pass order?
+        // this way it's possible to enable/disable passes without recompiling everything
+        // alternatively, enable/disable passes instead of respecifying the order
+        // problem: not enough to disable passes, must also forward resources
+    }
+
     fn reload_shaders(&mut self) {
         fn check<T>(name: &str, p: Result<T, graal::Error>) -> Option<T> {
             match p {
@@ -621,6 +715,34 @@ impl App {
         }
     }
 
+    fn load_config(&mut self) {
+        use rfd::FileDialog;
+        let file = FileDialog::new().add_filter("Render configuration file", &["lua"]).pick_file();
+        if let Some(ref file) = file {
+            let r = self.engine.load_config_file(file);
+            match r {
+                Ok(_) => {
+                    eprintln!("Loaded config file: `{}`", file.display());
+                }
+                Err(err) => {
+                    eprintln!("Error loading config file: {}", err);
+                }
+            }
+        }
+    }
+
+    fn reload_config(&mut self) {
+        let r = self.engine.reload_config_file();
+        match r {
+            Ok(_) => {
+                eprintln!("Reloaded config file");
+            }
+            Err(err) => {
+                eprintln!("Error loading config file: {}", err);
+            }
+        }
+    }
+
     fn render_curve_bins(&mut self, cmd: &mut CommandStream) {
         let color_target = &self.frame_image;
         let color_target_view = &self.frame_image.create_top_level_view();
@@ -688,10 +810,23 @@ impl App {
             });
 
             cmd.debug_group("render curves", |cmd| {
-                let mut encoder = cmd.begin_rendering(&RenderAttachments {
-                    color: &color_target_view,
-                    depth: &self.depth_buffer_view,
-                });
+                let mut encoder = cmd.begin_rendering(
+                    &[ColorAttachment {
+                        image_view: color_target_view.clone(),
+                        load_op: AttachmentLoadOp::LOAD,
+                        store_op: AttachmentStoreOp::STORE,
+                        clear_value: [0.0, 0.0, 0.0, 0.0],
+                    }],
+                    Some(DepthStencilAttachment {
+                        image_view: self.depth_buffer_view.clone(),
+                        depth_load_op: AttachmentLoadOp::LOAD,
+                        depth_store_op: AttachmentLoadOp::STORE,
+                        stencil_load_op: Default::default(),
+                        stencil_store_op: Default::default(),
+                        depth_clear_value: 0.0,
+                        stencil_clear_value: 0,
+                    }),
+                );
 
                 encoder.bind_graphics_pipeline(bin_rast_pipeline);
                 encoder.set_viewport(
@@ -703,7 +838,7 @@ impl App {
                     1.0,
                 );
                 encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
-                encoder.bind_arguments(
+                encoder.push_descriptors(
                     0,
                     &BinRastArguments {
                         position_buffer: animation.position_buffer.slice(..),
@@ -713,7 +848,7 @@ impl App {
                     },
                 );
 
-                encoder.bind_push_constants(&BinRastPushConstants {
+                encoder.push_constants(&BinRastPushConstants {
                     view_proj: self.camera_control.camera().view_projection(),
                     base_curve_index: animation.frames[self.bin_rast_current_frame].curve_range.start,
                     stroke_width: self.bin_rast_stroke_width,
@@ -849,12 +984,27 @@ impl App {
                 //encoder.fill_buffer(&self.oit_fragment_buffer.slice(..).untyped, 0);
                 encoder.fill_buffer(&self.oit_fragment_count_buffer.slice(..).untyped, 0);
             });
+
             // Render the curves
             cmd.debug_group("OIT curves", |cmd| {
-                let mut encoder = cmd.begin_rendering(&CurvesOITAttachments {
-                    color: &color_target_view,
-                    depth: &self.depth_buffer_view,
-                });
+                let mut encoder = cmd.begin_rendering(RenderPassDescriptor {
+                    color_attachments: &[ColorAttachment {
+                        image_view: color_target_view.clone(),
+                        load_op: AttachmentLoadOp::LOAD,
+                        store_op: AttachmentStoreOp::STORE,
+                        clear_value: [0.0, 0.0, 0.0, 0.0],
+                    }],
+                    depth_stencil_attachment: Some(DepthStencilAttachment {
+                        image_view: self.depth_buffer_view.clone(),
+                        depth_load_op: AttachmentLoadOp::LOAD,
+                        depth_store_op: AttachmentLoadOp::STORE,
+                        stencil_load_op: Default::default(),
+                        stencil_store_op: Default::default(),
+                        depth_clear_value: 0.0,
+                        stencil_clear_value: 0,
+                    }),
+                },
+                );
 
                 let brush_texture = &self.brush_textures[self.selected_brush].image.create_top_level_view();
 
@@ -865,23 +1015,24 @@ impl App {
                 }
                 encoder.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
                 encoder.set_scissor(0, 0, width, height);
-                encoder.bind_arguments(
+                encoder.push_descriptors(
                     0,
-                    &CurvesOITArguments {
-                        position_buffer: animation.position_buffer.slice(..),
-                        curve_buffer: animation.curve_buffer.slice(..),
-                        fragment_buffer: self.oit_fragment_buffer.slice(..),
-                        fragment_count_buffer: self.oit_fragment_count_buffer.slice(..),
-                        brush_texture,
-                        brush_sampler: &self.device.create_sampler(&SamplerCreateInfo {
+                    &[
+                        (0, animation.position_buffer.slice(..).storage_descriptor()),
+                        (1, animation.curve_buffer.slice(..).storage_descriptor()),
+                        (2, self.oit_fragment_buffer.slice(..).storage_descriptor()),
+                        (3, self.oit_fragment_count_buffer.slice(..).storage_descriptor()),
+                        (4, brush_texture.texture_descriptor(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)),
+                        (5, self.device.create_sampler(&SamplerCreateInfo {
                             address_mode_u: vk::SamplerAddressMode::REPEAT,
                             address_mode_v: vk::SamplerAddressMode::REPEAT,
                             address_mode_w: vk::SamplerAddressMode::REPEAT,
                             ..Default::default()
-                        }),
-                    },
+                        }).descriptor())
+                    ],
                 );
-                encoder.bind_push_constants(&CurvesOITPushConstants {
+
+                encoder.push_constants(&CurvesOITPushConstants {
                     view_proj: self.camera_control.camera().view_projection(),
                     viewport_size: uvec2(width, height),
                     stroke_width: self.oit_stroke_width,
@@ -907,14 +1058,14 @@ impl App {
                 encoder.bind_graphics_pipeline(resolve_pipeline);
                 encoder.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
                 encoder.set_scissor(0, 0, width, height);
-                encoder.bind_arguments(
+                encoder.push_descriptors(
                     0,
                     &CurvesOITResolveArguments {
                         fragment_buffer: self.oit_fragment_buffer.slice(..),
                         fragment_count_buffer: self.oit_fragment_count_buffer.slice(..),
                     },
                 );
-                encoder.bind_push_constants(&CurvesOITResolvePushConstants {
+                encoder.push_constants(&CurvesOITResolvePushConstants {
                     viewport_size: uvec2(width, height),
                 });
                 // Draw full-screen quad
@@ -1033,6 +1184,7 @@ impl App {
             frame: 0,
             frame_image,
             temporal_average_alpha: 0.25,
+            engine: Engine::new(device.clone(), mem::size_of::<BinRastPushConstants>()),
         };
         app.reload_shaders();
         app
@@ -1145,6 +1297,8 @@ impl App {
     }
 
     pub fn render(&mut self, cmd: &mut CommandStream, image: &Image) {
+        engine.import_image(FRAME_IMAGE, &image);
+
         let width = image.width();
         let height = image.height();
 
@@ -1248,6 +1402,12 @@ impl App {
                 ui.menu_button("File", |ui| {
                     if ui.button("Load .geo...").clicked() {
                         self.load_geo()
+                    }
+                    if ui.button("Load render config").clicked() {
+                        self.load_config()
+                    }
+                    if ui.button("Reload render config").clicked() {
+                        self.reload_config()
                     }
                 })
             });

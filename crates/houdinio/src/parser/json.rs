@@ -1,6 +1,5 @@
 //! JSON geometry format
 use crate::{error::Error, parser::Event};
-use serde_json::StreamDeserializer;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ParserState {

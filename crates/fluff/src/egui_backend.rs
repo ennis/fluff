@@ -2,17 +2,11 @@ use egui::{epaint::Primitive, ClippedPrimitive, ImageData, TexturesDelta};
 use graal::{
     prelude::*,
     util::CommandStreamExt,
-    vk::{ImageAspectFlags, Offset3D},
-    BlendFactor, BlendOp, ImageCopyView, Size3D, Vertex,
+    vk::{AttachmentLoadOp, AttachmentStoreOp, ImageAspectFlags, Offset3D},
+    Descriptor, BlendFactor, BlendOp, BufferAccess, ColorAttachment, ImageAccess,
+    ImageCopyView, RenderPassDescriptor, ResourceUse, Size3D, Vertex,
 };
 use std::{collections::HashMap, mem, path::Path, slice};
-
-#[derive(Debug, Attachments)]
-struct EguiAttachments<'a> {
-    // FIXME: we shouldn't specify attachment formats statically
-    #[attachment(format=R16G16B16A16_SFLOAT)]
-    color: &'a ImageView,
-}
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]
@@ -27,13 +21,8 @@ struct EguiPushConstants {
     screen_size: [f32; 2],
 }
 
-#[derive(Arguments)]
-struct EguiArguments<'a> {
-    #[argument(binding = 0, sampled_image)]
-    tex: &'a ImageView,
-    #[argument(binding = 1, sampler)]
-    sampler: &'a Sampler,
-}
+const _: () = assert_eq!(mem::size_of::<egui::epaint::Vertex>(), mem::size_of::<EguiVertex>());
+const _: () = assert!(mem::align_of::<EguiVertex>() <= mem::align_of::<egui::epaint::Vertex>());
 
 struct Texture {
     image: Image,
@@ -43,6 +32,7 @@ struct Texture {
 
 pub struct Renderer {
     pipeline: GraphicsPipeline,
+    //layout: vk::PipelineLayout,
     sampler: Sampler,
     textures: HashMap<egui::TextureId, Texture>,
 }
@@ -144,6 +134,7 @@ impl Renderer {
                 Size3D { width, height, depth: 1 },
                 data,
             );
+            cmd.use_image(&texture.image, ImageAccess::SAMPLED_READ);
         }
     }
 
@@ -159,93 +150,121 @@ impl Renderer {
         self.update_textures(cmd, textures_delta);
 
         let clipped_primitives = ctx.tessellate(shapes, pixels_per_point);
-        let mut encoder = cmd.begin_rendering(&EguiAttachments { color: color_target });
 
-        for ClippedPrimitive { clip_rect, primitive } in clipped_primitives.iter() {
-            match primitive {
-                Primitive::Mesh(mesh) => {
-                    // upload vertex & index data
-                    assert_eq!(mem::size_of::<egui::epaint::Vertex>(), mem::size_of::<EguiVertex>(),);
-                    assert!(mem::align_of::<EguiVertex>() <= mem::align_of::<egui::epaint::Vertex>());
-                    let vertex_data: &[EguiVertex] = unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
-                    let vertex_buffer = encoder.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
-                    let index_buffer = encoder.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
-                    encoder.bind_graphics_pipeline(&self.pipeline);
+        let meshes: Vec<_> = clipped_primitives
+            .iter()
+            .filter_map(|ClippedPrimitive { primitive, clip_rect }| match primitive {
+                Primitive::Mesh(mesh) => Some((clip_rect, mesh)),
+                Primitive::Callback(_) => None,
+            })
+            .collect();
 
-                    let width = color_target.width();
-                    let height = color_target.height();
+        // upload vertex & index data
+        // TODO we could use only one vertex buffer and one index buffer for all meshes
+        let mut mesh_vertex_buffers = Vec::with_capacity(meshes.len());
+        let mut mesh_index_buffers = Vec::with_capacity(meshes.len());
 
-                    // Transform clip rect to physical pixels:
-                    let clip_min_x = pixels_per_point * clip_rect.min.x;
-                    let clip_min_y = pixels_per_point * clip_rect.min.y;
-                    let clip_max_x = pixels_per_point * clip_rect.max.x;
-                    let clip_max_y = pixels_per_point * clip_rect.max.y;
-
-                    let clip_min_x = clip_min_x.round() as i32;
-                    let clip_min_y = clip_min_y.round() as i32;
-                    let clip_max_x = clip_max_x.round() as i32;
-                    let clip_max_y = clip_max_y.round() as i32;
-
-                    let clip_min_x = clip_min_x.clamp(0, width as i32);
-                    let clip_min_y = clip_min_y.clamp(0, height as i32);
-                    let clip_max_x = clip_max_x.clamp(clip_min_x, width as i32);
-                    let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
-
-                    // TODO: VertexBufferDescriptor from typed slice
-                    encoder.bind_vertex_buffer(&VertexBufferDescriptor {
-                        binding: 0,
-                        buffer_range: vertex_buffer.slice(..).untyped,
-                        stride: mem::size_of::<EguiVertex>() as u32,
-                    });
-
-                    // TODO: bind_index_buffer from typed slice
-                    encoder.bind_index_buffer(IndexType::U32, index_buffer.slice(..).untyped);
-
-                    let texture = self.textures.get(&mesh.texture_id).expect("texture not found");
-
-                    encoder.bind_push_constants(&EguiPushConstants {
-                        screen_size: [width as f32, height as f32],
-                    });
-                    encoder.set_scissor(
-                        clip_min_x,
-                        clip_min_y,
-                        (clip_max_x - clip_min_x) as u32,
-                        (clip_max_y - clip_min_y) as u32,
-                    );
-                    encoder.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-                    encoder.bind_arguments(
-                        0,
-                        &EguiArguments {
-                            tex: &texture.view,
-                            sampler: &texture.sampler,
-                        },
-                    );
-
-                    encoder.set_primitive_topology(PrimitiveTopology::TriangleList);
-                    encoder.draw_indexed(0..(index_buffer.len() as u32), 0, 0..1);
-                }
-                Primitive::Callback(_) => {
-                    // TODO
-                }
-            }
+        for (_, mesh) in meshes {
+            let vertex_data: &[EguiVertex] = unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
+            let vertex_buffer = cmd.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
+            let index_buffer = cmd.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
+            mesh_vertex_buffers.push(vertex_buffer);
+            mesh_index_buffers.push(index_buffer);
         }
 
-        encoder.finish();
+        // encode draw commands
+        let mut enc = cmd.begin_rendering(RenderPassDescriptor {
+            color_attachments: &[ColorAttachment {
+                image_view: color_target.clone(),
+                load_op: AttachmentLoadOp::LOAD,
+                store_op: AttachmentStoreOp::STORE,
+                clear_value: [0.0, 0.0, 0.0, 0.0],
+            }],
+            depth_stencil_attachment: None,
+        });
+
+        enc.bind_graphics_pipeline(&self.pipeline);
+
+        for (i, (clip_rect, mesh)) in meshes.iter().enumerate() {
+            let vertex_buffer = &mesh_vertex_buffers[i];
+            let index_buffer = &mesh_index_buffers[i];
+            let width = color_target.width();
+            let height = color_target.height();
+
+            // Transform clip rect to physical pixels:
+            let clip_min_x = pixels_per_point * clip_rect.min.x;
+            let clip_min_y = pixels_per_point * clip_rect.min.y;
+            let clip_max_x = pixels_per_point * clip_rect.max.x;
+            let clip_max_y = pixels_per_point * clip_rect.max.y;
+
+            let clip_min_x = clip_min_x.round() as i32;
+            let clip_min_y = clip_min_y.round() as i32;
+            let clip_max_x = clip_max_x.round() as i32;
+            let clip_max_y = clip_max_y.round() as i32;
+
+            let clip_min_x = clip_min_x.clamp(0, width as i32);
+            let clip_min_y = clip_min_y.clamp(0, height as i32);
+            let clip_max_x = clip_max_x.clamp(clip_min_x, width as i32);
+            let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
+
+            enc.bind_vertex_buffer(0, vertex_buffer.slice(..).untyped, mem::size_of::<EguiVertex>() as u32);
+            enc.bind_index_buffer(vk::IndexType::UINT32, index_buffer.slice(..).untyped);
+
+            enc.push_constants(&EguiPushConstants {
+                screen_size: [width as f32, height as f32],
+            });
+            enc.set_scissor(
+                clip_min_x,
+                clip_min_y,
+                (clip_max_x - clip_min_x) as u32,
+                (clip_max_y - clip_min_y) as u32,
+            );
+            enc.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+
+            let texture = self.textures.get(&mesh.texture_id).expect("texture not found");
+            enc.push_descriptors(
+                0,
+                &[
+                    (0, texture.view.texture_descriptor(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)),
+                    (1, self.sampler.descriptor()),
+                ],
+            );
+
+            enc.set_primitive_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+            enc.draw_indexed(0..(index_buffer.len() as u32), 0, 0..1);
+        }
+
+        enc.finish();
     }
 }
 
 fn create_pipeline(device: &Device) -> GraphicsPipeline {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[EguiArguments::LAYOUT],
-            push_constants_size: mem::size_of::<EguiPushConstants>(),
+    let set_layout = device.create_push_descriptor_set_layout(&[
+        vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
         },
+        vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
+        }
+    ]);
+
+    let create_info = GraphicsPipelineCreateInfo {
+        set_layouts: &[&set_layout],
+        push_constants_size: mem::size_of::<EguiPushConstants>(),
         vertex_input: VertexInputState {
-            topology: PrimitiveTopology::TriangleList,
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             buffers: &[VertexBufferLayoutDescription {
                 binding: 0,
                 stride: mem::size_of::<EguiVertex>() as u32,
-                input_rate: VertexInputRate::Vertex,
+                input_rate: vk::VertexInputRate::VERTEX,
             }],
             attributes: &[
                 VertexInputAttributeDescription {
@@ -278,10 +297,9 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             geometry: None,
         },
         rasterization: RasterizationState {
-            polygon_mode: PolygonMode::Fill,
+            polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
-            front_face: FrontFace::Clockwise,
-            line_rasterization: Default::default(),
+            front_face: vk::FrontFace::CLOCKWISE,
             ..Default::default()
         },
         fragment_shader: ShaderEntryPoint {
@@ -294,7 +312,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             stencil_state: StencilState::default(),
         },
         fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: <EguiAttachments as StaticAttachments>::COLOR,
+            color_attachment_formats: &[Format::R16G16B16A16_SFLOAT],
             depth_attachment_format: None,
             stencil_attachment_format: None,
             multisample: Default::default(),

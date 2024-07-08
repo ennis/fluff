@@ -93,7 +93,7 @@ macro_rules! read_kvarray {
     ($p:ident, $($key:pat => $b:block)*) => {
         $p.read_kvarray(|$p, key| {
             match key {
-                $($key => $b,)*
+                $($key => $b)*
                 _ => {$p.skip();}
             }
             Ok(())
@@ -196,10 +196,6 @@ fn read_point_attribute(p: &mut ParserImpl) -> Result<Attribute, Error> {
 
 enum PrimType {
     Run,
-}
-
-enum RunType {
-    BezierCurve,
 }
 
 fn read_bezier_basis(p: &mut ParserImpl) -> Result<BezierBasis, Error> {

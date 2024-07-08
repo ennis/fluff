@@ -22,10 +22,10 @@ mod camera_control;
 mod egui_backend;
 mod imgui_backend;
 mod overlay;
-mod pass;
 mod shaders;
 mod ui;
 mod util;
+mod engine2;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -50,7 +50,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         (TextStyle::Button, FontId::new(12.0, FontFamily::Proportional)),
         (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
     ]
-    .into();
+        .into();
     ctx.set_style(style);
 }
 

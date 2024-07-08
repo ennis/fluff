@@ -1,13 +1,6 @@
-use graal::{prelude::*, util::CommandStreamExt};
+use graal::{ColorAttachment, prelude::*, util::CommandStreamExt};
 use imgui::{internal::RawWrapper, DrawCmd, DrawCmdParams, DrawData, DrawIdx, TextureId, Textures};
 use std::{mem, path::Path};
-
-#[derive(Debug, Attachments)]
-struct ImguiAttachments<'a> {
-    // FIXME: we shouldn't specify attachment formats statically
-    #[attachment(format=R16G16B16A16_SFLOAT)]
-    color: &'a ImageView,
-}
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]
@@ -106,7 +99,12 @@ impl Renderer {
         let clip_scale = draw_data.framebuffer_scale;
 
         cmd.debug_group("ImGui", |cmd| {
-            let mut encoder = cmd.begin_rendering(&ImguiAttachments { color: target });
+            let mut encoder = cmd.begin_rendering(&[ColorAttachment {
+                image_view: target.clone(),
+                load_op: vk::AttachmentLoadOp::LOAD,
+                store_op: vk::AttachmentStoreOp::STORE,
+                clear_value: [0.0, 0.0, 0.0, 0.0],
+            }], None);
             for draw_list in draw_data.draw_lists() {
                 // upload vertex & index data
                 let vertex_data = unsafe { draw_list.transmute_vtx_buffer::<ImguiDrawVert>() };
@@ -122,13 +120,13 @@ impl Renderer {
                         DrawCmd::Elements {
                             count,
                             cmd_params:
-                                DrawCmdParams {
-                                    clip_rect,
-                                    texture_id,
-                                    vtx_offset,
-                                    idx_offset,
-                                    ..
-                                },
+                            DrawCmdParams {
+                                clip_rect,
+                                texture_id,
+                                vtx_offset,
+                                idx_offset,
+                                ..
+                            },
                         } => {
                             let clip_rect = [
                                 (clip_rect[0] - clip_off[0]) * clip_scale[0],
@@ -151,7 +149,7 @@ impl Renderer {
                                 // TODO: bind_index_buffer from typed slice
                                 encoder.bind_index_buffer(IndexType::U16, index_buffer.slice(idx_offset..(idx_offset + count)).untyped);
 
-                                encoder.bind_push_constants(&ImguiPushConstants { matrix });
+                                encoder.push_constants(&ImguiPushConstants { matrix });
 
                                 encoder.set_scissor(
                                     clip_rect[0].floor() as i32,
@@ -161,7 +159,7 @@ impl Renderer {
                                 );
 
                                 encoder.set_viewport(0.0, 0.0, fb_width, fb_height, 0.0, 1.0);
-                                encoder.bind_arguments(
+                                encoder.push_descriptors(
                                     0,
                                     &ImguiArguments {
                                         tex: &texture_view,
@@ -264,11 +262,12 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             stencil_state: StencilState::default(),
         },
         fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: <ImguiAttachments as StaticAttachments>::COLOR,
+            color_attachment_formats: &[vk::Format::R16G16B16A16_SFLOAT],
             depth_attachment_format: None,
             stencil_attachment_format: None,
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
+                format: vk::Format::R16G16B16A16_SFLOAT,
                 blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
                 color_write_mask: Default::default(),
             }],
