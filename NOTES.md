@@ -371,9 +371,70 @@ destination is used; and thus it needs to be reallocated).
 
 6. Don't alias resources, just recompile everything should the pass structure change.
 
-# Frontend/backend separation
+Example:
+
+- define resource L1 (allocate phy res P1)
+- alias L2 to L1 (L2 -> P1)
+- alias L3 to L2 (L3 -> P1)
+- alias L2 to L4 (L2 -> P4) ** breaks L3 -> L2 (L3 now different from L2)
+
+L1 = L2 = L3 = P1
+L2 = L4
+L4 = P4
+
+Issue: L3 to L2 link broken
+
+Alternative: don't alias resources (at least in the frontend), just use variable keys between passes.
+Issue: need to respec passes when the render config changes; can't selectively disable passes
+Also: can't use variable keys because resources are matched by name in the shader.
+
+## Frontend/backend separation
 
 Frontend: manage logical/physical resources, infer usages
+
+## Issue: shaders must use different names for pipeline inputs/outputs
+
+## Issue 2: compute pass loops
+
+Multiple passes of the same compute shader are difficult because resources (inputs/outputs) are matched by name,
+can't plug the output of one pass to the input of the next.
+Also it's going to recompile the same shader multiple times.
+
+E.g.
+
+```glsl
+layout(rgba8) uniform readonly image2D i_input;
+layout(rgba8) uniform coherent image2D i_output;
+```
+
+What if there's another pass that uses the same names? => this doesn't work at all.
+We can't assign a consistent binding number to those resources, unless we allow modifying the bindless descriptor set
+between passes, which we absolutely don't want to do.
+There would need to be different binding numbers for each loop iteration, the shader would need to be recompiled for
+each iteration, which is highly dubious.
+
+# New design
+
+Engine API:
+
+- create_image -> Image (Arc<ImageInner>) : creates an image
+- create_named_image -> Image : creates an image, registers it by name
+
+Pass builders:
+
+- specify shader
+- specify mapping of uniform names to resource
+- autobind resources by name
+
+Binding details:
+
+- generalized descriptor indexing? No, too much stuff to change in shaders
+- big descriptor set containing all resources
+
+Remaining issues:
+
+- passes can only be compiled when the format of the framebuffer is known, which is at
+- can't deduce resource usages anymore with autobind (to confirm)
 
 # Going forward
 

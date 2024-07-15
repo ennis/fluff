@@ -179,7 +179,7 @@ void main() {
     uint numWorkgroupsToLaunch = 0;
     for (int i = 0; i < SUBDIVISION_LEVEL_COUNT; ++i) {
         uint curvesPerWorkgroup = subdividedCurvesPerMeshWorkgroup(i);
-        uint numWorkgroupsToLaunchForBucket = div_ceil(taskData.subdivisionBinSizes[i], curvesPerWorkgroup);
+        uint numWorkgroupsToLaunchForBucket = divCeil(taskData.subdivisionBinSizes[i], curvesPerWorkgroup);
         numWorkgroupsToLaunch += numWorkgroupsToLaunchForBucket;
     }
 
@@ -225,7 +225,7 @@ void main()
             // Number of curves in this bucket
             uint numCurvesInBin = taskData.subdivisionBinSizes[i];
             uint curvesPerWorkgroup = subdividedCurvesPerMeshWorkgroup(i);
-            uint numWorkgroupsForBucket = div_ceil(numCurvesInBin, curvesPerWorkgroup);
+            uint numWorkgroupsForBucket = divCeil(numCurvesInBin, curvesPerWorkgroup);
             if (gl_WorkGroupID.x < s + numWorkgroupsForBucket) {
                 subdivisionLevel = i;
                 baseCurveIndexInBin = (gl_WorkGroupID.x - s) * curvesPerWorkgroup;

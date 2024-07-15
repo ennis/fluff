@@ -25,10 +25,10 @@ vec4 linear_from_srgba(vec4 srgba) {
 
 void main() {
     gl_Position = vec4(
-            2.0 * i_pos.x / u_screen_size.x - 1.0,
-            2.0 * i_pos.y / u_screen_size.y - 1.0,
-            0.0,
-            1.0);
+    2.0 * i_pos.x / u_screen_size.x - 1.0,
+    2.0 * i_pos.y / u_screen_size.y - 1.0,
+    0.0,
+    1.0);
     o_color = linear_from_srgba(vec4(i_color));
     o_uv = i_uv;
 }

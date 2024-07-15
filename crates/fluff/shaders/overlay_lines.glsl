@@ -2,7 +2,7 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 
-#include "../common.glsl"
+//#include "common.glsl"
 
 // A group of at most 64 points in a polyline.
 struct PolylineFragment {

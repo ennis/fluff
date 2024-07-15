@@ -20,12 +20,12 @@ mod aabb;
 mod app;
 mod camera_control;
 mod egui_backend;
-mod imgui_backend;
+//mod imgui_backend;
 mod overlay;
 mod shaders;
-mod ui;
-mod util;
+//mod ui;
 mod engine2;
+mod util;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -74,10 +74,10 @@ fn main() {
     let mut app = App::new(&device, width, height, surface_format.format);
 
     // imgui stuff
-    let mut imgui = imgui::Context::create();
-    let mut platform = WinitPlatform::init(&mut imgui); // step 1
-    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default); // step 2
-    let mut imgui_renderer = imgui_backend::Renderer::new(&mut command_stream, &mut imgui);
+    //let mut imgui = imgui::Context::create();
+    //let mut platform = WinitPlatform::init(&mut imgui); // step 1
+    //platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default); // step 2
+    //let mut imgui_renderer = imgui_backend::Renderer::new(&mut command_stream, &mut imgui);
 
     // egui stuff
     let mut egui_winit_state = egui_winit::State::new(egui_ctx, ViewportId::default(), &window, None, None);
@@ -105,7 +105,7 @@ fn main() {
                     let now = Instant::now();
                     delta_time = now - last_frame_time;
                     last_frame_time = now;
-                    imgui.io_mut().update_delta_time(delta_time);
+                    //imgui.io_mut().update_delta_time(delta_time);
                 }
                 Event::WindowEvent {
                     window_id,
@@ -116,23 +116,22 @@ fn main() {
                         return;
                     }
 
-                    platform.handle_event(imgui.io_mut(), &window, &event);
-
-                    let want_capture_mouse = imgui.io().want_capture_mouse;
-                    let want_capture_keyboard = imgui.io().want_capture_keyboard;
+                    //platform.handle_event(imgui.io_mut(), &window, &event);
+                    //let want_capture_mouse = imgui.io().want_capture_mouse;
+                    //let want_capture_keyboard = imgui.io().want_capture_keyboard;
 
                     match window_event {
-                        WindowEvent::CursorMoved { position, device_id, .. } if !want_capture_mouse => {
+                        WindowEvent::CursorMoved { position, device_id, .. } => {
                             cursor_pos = dvec2(position.x, position.y);
                             app.cursor_moved(cursor_pos);
                         }
-                        WindowEvent::MouseInput { button, state, .. } if !want_capture_mouse => {
+                        WindowEvent::MouseInput { button, state, .. } => {
                             app.mouse_input(*button, cursor_pos, *state == winit::event::ElementState::Pressed);
                         }
-                        WindowEvent::KeyboardInput { event, .. } if !want_capture_keyboard => {
+                        WindowEvent::KeyboardInput { event, .. } => {
                             app.key_input(&event.logical_key, event.state == winit::event::ElementState::Pressed);
                         }
-                        WindowEvent::MouseWheel { delta, .. } if !want_capture_mouse => {
+                        WindowEvent::MouseWheel { delta, .. } => {
                             let delta = match delta {
                                 MouseScrollDelta::LineDelta(x, y) => *y as f64 * 20.0,
                                 MouseScrollDelta::PixelDelta(px) => px.y,
@@ -159,12 +158,12 @@ fn main() {
                             // Render app
                             app.render(&mut command_stream, &swapchain_image.image);
                             // Update/render UI
-                            let frame = imgui.new_frame();
+                            //let frame = imgui.new_frame();
                             //let quit_requested = app.ui(frame);
-                            platform.prepare_render(frame, &window);
-                            let draw_data = imgui.render();
+                            //platform.prepare_render(frame, &window);
+                            //let draw_data = imgui.render();
                             let view = swapchain_image.image.create_top_level_view();
-                            imgui_renderer.render(&mut command_stream, &view, &draw_data);
+                            //imgui_renderer.render(&mut command_stream, &view, &draw_data);
                             egui_renderer.render(
                                 &mut command_stream,
                                 &view,
@@ -183,11 +182,11 @@ fn main() {
                     }
                 }
                 Event::AboutToWait => {
-                    platform.prepare_frame(imgui.io_mut(), &window).expect("Failed to prepare frame");
+                    //platform.prepare_frame(imgui.io_mut(), &window).expect("Failed to prepare frame");
                     window.request_redraw();
                 }
                 event => {
-                    platform.handle_event(imgui.io_mut(), &window, &event);
+                    //platform.handle_event(imgui.io_mut(), &window, &event);
                 }
             }
 

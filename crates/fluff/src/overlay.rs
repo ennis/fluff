@@ -1,9 +1,9 @@
 //! Scene overlay drawing utilities
-use std::{f32::consts::TAU, mem, path::Path};
-use std::borrow::Cow;
+use std::{borrow::Cow, f32::consts::TAU, mem, path::Path};
 
 use glam::{vec3, Mat4, Vec3};
-use graal::{prelude::*, BufferRange, ArgumentsLayout};
+use graal::{prelude::*, ArgumentsLayout, BufferRange, RenderPassDescriptor, ColorAttachment, DepthStencilAttachment};
+use graal::vk::{AttachmentLoadOp, AttachmentStoreOp};
 
 use crate::camera_control::Camera;
 
@@ -148,19 +148,143 @@ struct Polyline {
     vertex_count: u32,
 }
 
+struct Pipelines {
+    polygon_pipeline: GraphicsPipeline,
+    line_pipeline: GraphicsPipeline,
+}
+
+fn create_pipelines(device: &Device, target_color_format: Format, target_depth_format: Format) -> Pipelines {
+    // Polygon pipeline
+    let create_info = GraphicsPipelineCreateInfo {
+        set_layouts: &[],
+        push_constants_size: mem::size_of::<PushConstants>(),
+        vertex_input: VertexInputState {
+            topology: vk::PrimitiveTopology::LINE_STRIP,
+            buffers: &[VertexBufferLayoutDescription {
+                binding: 0,
+                stride: mem::size_of::<OverlayVertex>() as u32,
+                input_rate: vk::VertexInputRate::VERTEX,
+            }],
+            attributes: &[
+                // Position
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: OverlayVertex::ATTRIBUTES[0].offset,
+                },
+                // Color
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R8G8B8A8_UNORM,
+                    offset: OverlayVertex::ATTRIBUTES[1].offset,
+                },
+            ],
+        },
+        pre_rasterization_shaders: PreRasterizationShaders::vertex_shader_from_source_file(Path::new(
+            "crates/fluff/shaders/overlay_polygons.vert",
+        )),
+        rasterization: RasterizationState {
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: Default::default(),
+            front_face: vk::FrontFace::CLOCKWISE,
+            ..Default::default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: target_depth_format,
+            depth_write_enable: true,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            stencil_state: StencilState::default(),
+        }),
+        fragment: FragmentState {
+            shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.frag")),
+            multisample: Default::default(),
+            color_targets: &[ColorTargetState {
+                format: target_color_format,
+                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
+                ..Default::default()
+            }],
+            blend_constants: [0.; 4],
+        },
+    };
+
+    let polygon_pipeline = device.create_graphics_pipeline(create_info).expect("failed to create pipeline");
+
+    // Line pipeline
+    let descriptor_set_layout = device.create_push_descriptor_set_layout(&[
+        vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::TASK_EXT,
+            ..Default::default()
+        },
+        vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::TASK_EXT,
+            ..Default::default()
+        },
+    ]);
+
+    let create_info = GraphicsPipelineCreateInfo {
+        set_layouts: &[descriptor_set_layout.clone()],
+        push_constants_size: mem::size_of::<PushConstants>(),
+        vertex_input: VertexInputState::default(),
+        pre_rasterization_shaders: PreRasterizationShaders::mesh_shading_from_source_file(Path::new(
+            "crates/fluff/shaders/overlay_lines.glsl",
+        )),
+        rasterization: RasterizationState {
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: Default::default(),
+            front_face: vk::FrontFace::CLOCKWISE,
+            ..Default::default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: target_depth_format,
+            depth_write_enable: true,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            stencil_state: StencilState::default(),
+        }),
+        fragment: FragmentState {
+            shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_lines.glsl")),
+            multisample: Default::default(),
+            color_targets: &[ColorTargetState {
+                format: target_color_format,
+                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
+                ..Default::default()
+            }],
+            blend_constants: [0.0; 4],
+        },
+    };
+
+    let line_pipeline = device.create_graphics_pipeline(create_info).expect("failed to create pipeline");
+
+    Pipelines {
+        polygon_pipeline,
+        line_pipeline,
+    }
+}
+
+#[derive(Clone)]
+pub struct OverlayRenderParams {
+    pub color_target: ImageView,
+    pub depth_target: ImageView,
+    pub line_width: f32,
+    pub filter_width: f32,
+}
 
 pub struct OverlayRenderer {
     polygon_pipeline: GraphicsPipeline,
     line_pipeline: GraphicsPipeline,
-
     camera: Camera,
     target_color_format: Format,
     target_depth_format: Format,
     vertices: Vec<OverlayVertex>,
     indices: Vec<u16>,
     draws: Vec<Draw>,
-
-    // Line data
     line_vertices: Vec<LineVertex>,
     polylines: Vec<Polyline>,
 }
@@ -172,10 +296,15 @@ impl OverlayRenderer {
     ///
     /// * `format` format of the output image
     pub fn new(device: &Device, target_color_format: Format, target_depth_format: Format) -> Self {
+        let Pipelines {
+            polygon_pipeline,
+            line_pipeline,
+        } = create_pipelines(device, target_color_format, target_depth_format);
+
         Self {
             camera: Camera::default(),
-            polygon_pipeline: compile_shaders(device, target_color_format, target_depth_format),
-            line_pipeline: compile_line_shaders(device, target_color_format, target_depth_format),
+            polygon_pipeline,
+            line_pipeline,
             target_color_format,
             target_depth_format,
             vertices: vec![],
@@ -187,6 +316,7 @@ impl OverlayRenderer {
     }
 
     pub fn set_camera(&mut self, camera: Camera) {
+        // TODO specify camera at draw time
         self.camera = camera;
     }
 
@@ -316,13 +446,39 @@ impl OverlayRenderer {
         })
     }
 
-    pub fn render(&mut self, width: u32, height: u32, line_width: f32, filter_width: f32, encoder: &mut RenderEncoder) {
+    pub fn render(&mut self,
+                  cmd: &mut CommandStream,
+                  params: OverlayRenderParams)
+    {
         if self.draws.is_empty() {
             return;
         }
 
+        let mut encoder = cmd.begin_rendering(RenderPassDescriptor {
+            color_attachments: &[ColorAttachment {
+                image_view: params.color_target.clone(),
+                load_op: AttachmentLoadOp::LOAD,
+                store_op: AttachmentStoreOp::STORE,
+                clear_value: [0.0, 0.0, 0.0, 0.0],
+            }],
+            depth_stencil_attachment: Some(DepthStencilAttachment {
+                image_view: params.depth_target.clone(),
+                depth_load_op: AttachmentLoadOp::LOAD,
+                depth_store_op: AttachmentStoreOp::STORE,
+                stencil_load_op: Default::default(),
+                stencil_store_op: Default::default(),
+                depth_clear_value: 0.0,
+                stencil_clear_value: 0,
+            }),
+        });
+
+        let width = params.color_target.width();
+        let height = params.color_target.height();
+
         let vertex_buffer = encoder.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, &self.vertices);
+        vertex_buffer.set_name("overlay vertex buffer");
         let index_buffer = encoder.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &self.indices);
+        index_buffer.set_name("overlay index buffer");
 
         encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
         encoder.set_scissor(0, 0, width, height);
@@ -332,13 +488,15 @@ impl OverlayRenderer {
             let line_vertex_buffer = encoder
                 .device()
                 .upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.line_vertices);
+            line_vertex_buffer.set_name("overlay line vertex buffer");
             let line_buffer = encoder.device().upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.polylines);
+            line_buffer.set_name("overlay line buffer");
 
             encoder.bind_graphics_pipeline(&self.line_pipeline);
             encoder.push_constants(&PushConstants {
                 matrix: self.camera.view_projection(),
-                width: line_width,
-                filter_width,
+                width: params.line_width,
+                filter_width: params.filter_width,
                 line_count: self.polylines.len() as u32,
                 screen_width: width as f32,
                 screen_height: height as f32,
@@ -347,26 +505,22 @@ impl OverlayRenderer {
                 0,
                 &[
                     (0, line_vertex_buffer.slice(..).storage_descriptor()),
-                    (1, line_buffer.slice(..).storage_descriptor())
+                    (1, line_buffer.slice(..).storage_descriptor()),
                 ],
             );
-            encoder.draw_mesh_tasks(((self.polylines.len() + 31) as u32) / 32, 1, 1);
+            encoder.draw_mesh_tasks(self.polylines.len().div_ceil(32) as u32, 1, 1);
         }
 
         // Polygons
         encoder.bind_graphics_pipeline(&self.polygon_pipeline);
-        encoder.bind_vertex_buffer(
-            0,
-            vertex_buffer.slice(..).untyped,
-            mem::size_of::<OverlayVertex>() as u32,
-        );
+        encoder.bind_vertex_buffer(0, vertex_buffer.slice(..).untyped);
         encoder.bind_index_buffer(vk::IndexType::UINT16, index_buffer.slice(..).untyped);
 
         for draw in self.draws.iter() {
             encoder.push_constants(&PushConstants {
                 matrix: self.camera.view_projection() * draw.transform,
                 width: 1.0,
-                filter_width,
+                filter_width: params.filter_width,
                 line_count: 0,
                 screen_width: width as f32,
                 screen_height: height as f32,
@@ -396,120 +550,4 @@ impl OverlayRenderer {
         self.line_vertices.clear();
         self.polylines.clear();
     }
-}
-
-fn compile_shaders(device: &Device, target_color_format: Format, target_depth_format: Format) -> GraphicsPipeline {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            descriptor_sets: &[],
-            push_constants_size: mem::size_of::<PushConstants>(),
-        },
-        vertex_input: VertexInputState {
-            topology: vk::PrimitiveTopology::LINE_STRIP,
-            buffers: &[VertexBufferLayoutDescription {
-                binding: 0,
-                stride: mem::size_of::<OverlayVertex>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            }],
-            attributes: &[
-                // Position
-                VertexInputAttributeDescription {
-                    location: 0,
-                    binding: 0,
-                    format: Format::R32G32B32_SFLOAT,
-                    offset: OverlayVertex::ATTRIBUTES[0].offset,
-                },
-                // Color
-                VertexInputAttributeDescription {
-                    location: 1,
-                    binding: 0,
-                    format: Format::R8G8B8A8_UNORM,
-                    offset: OverlayVertex::ATTRIBUTES[1].offset,
-                },
-            ],
-        },
-        pre_rasterization_shaders: PreRasterizationShaders::vertex_shader_from_source_file(Path::new(
-            "crates/fluff/shaders/overlay/overlay.vert",
-        )),
-        rasterization: RasterizationState {
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: Default::default(),
-            front_face: vk::FrontFace::CLOCKWISE,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay/overlay.frag")),
-        depth_stencil: DepthStencilState {
-            depth_write_enable: true,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info).expect("failed to create pipeline")
-}
-
-fn compile_line_shaders(device: &Device, target_color_format: Format, target_depth_format: Format) -> GraphicsPipeline {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            descriptor_sets: &[ArgumentsLayout {
-                bindings: Cow::Borrowed(&[
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 0,
-                        descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::MESH_NV,
-                        ..Default::default()
-                    },
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 1,
-                        descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::MESH_NV,
-                        ..Default::default()
-                    },
-                ]),
-            }],
-            push_constants_size: mem::size_of::<PushConstants>(),
-        },
-        vertex_input: VertexInputState::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::mesh_shading_from_source_file(Path::new(
-            "crates/fluff/shaders/overlay/lines.glsl",
-        )),
-        rasterization: RasterizationState {
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: Default::default(),
-            front_face: vk::FrontFace::CLOCKWISE,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay/lines.glsl")),
-        depth_stencil: DepthStencilState {
-            depth_write_enable: true,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info).expect("failed to create pipeline")
 }

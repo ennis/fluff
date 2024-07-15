@@ -1,12 +1,12 @@
-use egui::{epaint::Primitive, ClippedPrimitive, ImageData, TexturesDelta};
+use std::{collections::HashMap, mem, path::Path, slice};
+
+use egui::{epaint::Primitive, ClippedPrimitive, ImageData};
 use graal::{
     prelude::*,
     util::CommandStreamExt,
     vk::{AttachmentLoadOp, AttachmentStoreOp, ImageAspectFlags, Offset3D},
-    Descriptor, BlendFactor, BlendOp, BufferAccess, ColorAttachment, ImageAccess,
-    ImageCopyView, RenderPassDescriptor, ResourceUse, Size3D, Vertex,
+    ColorAttachment, ImageAccess, ImageCopyView, RenderPassDescriptor, Size3D, Vertex,
 };
-use std::{collections::HashMap, mem, path::Path, slice};
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]
@@ -21,7 +21,7 @@ struct EguiPushConstants {
     screen_size: [f32; 2],
 }
 
-const _: () = assert_eq!(mem::size_of::<egui::epaint::Vertex>(), mem::size_of::<EguiVertex>());
+const _: () = assert!(mem::size_of::<egui::epaint::Vertex>() == mem::size_of::<EguiVertex>());
 const _: () = assert!(mem::align_of::<EguiVertex>() <= mem::align_of::<egui::epaint::Vertex>());
 
 struct Texture {
@@ -32,7 +32,6 @@ struct Texture {
 
 pub struct Renderer {
     pipeline: GraphicsPipeline,
-    //layout: vk::PipelineLayout,
     sampler: Sampler,
     textures: HashMap<egui::TextureId, Texture>,
 }
@@ -106,8 +105,10 @@ impl Renderer {
                     },
                     data,
                 );
+                image.set_name("egui texture");
 
                 let view = image.create_top_level_view();
+                view.set_name("egui texture view");
 
                 let sampler = cmd.device().create_sampler(&SamplerCreateInfo {
                     mag_filter: convert_filter(tex.options.magnification),
@@ -164,10 +165,12 @@ impl Renderer {
         let mut mesh_vertex_buffers = Vec::with_capacity(meshes.len());
         let mut mesh_index_buffers = Vec::with_capacity(meshes.len());
 
-        for (_, mesh) in meshes {
+        for (_, mesh) in meshes.iter() {
             let vertex_data: &[EguiVertex] = unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
             let vertex_buffer = cmd.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
             let index_buffer = cmd.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
+            vertex_buffer.set_name("egui vertex buffer");
+            index_buffer.set_name("egui index buffer");
             mesh_vertex_buffers.push(vertex_buffer);
             mesh_index_buffers.push(index_buffer);
         }
@@ -207,7 +210,7 @@ impl Renderer {
             let clip_max_x = clip_max_x.clamp(clip_min_x, width as i32);
             let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
 
-            enc.bind_vertex_buffer(0, vertex_buffer.slice(..).untyped, mem::size_of::<EguiVertex>() as u32);
+            enc.bind_vertex_buffer(0, vertex_buffer.slice(..).untyped);
             enc.bind_index_buffer(vk::IndexType::UINT32, index_buffer.slice(..).untyped);
 
             enc.push_constants(&EguiPushConstants {
@@ -242,7 +245,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
     let set_layout = device.create_push_descriptor_set_layout(&[
         vk::DescriptorSetLayoutBinding {
             binding: 0,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
@@ -253,11 +256,11 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
-        }
+        },
     ]);
 
     let create_info = GraphicsPipelineCreateInfo {
-        set_layouts: &[&set_layout],
+        set_layouts: &[set_layout],
         push_constants_size: mem::size_of::<EguiPushConstants>(),
         vertex_input: VertexInputState {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -302,30 +305,24 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             front_face: vk::FrontFace::CLOCKWISE,
             ..Default::default()
         },
-        fragment_shader: ShaderEntryPoint {
-            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.frag"))),
-            entry_point: "main",
-        },
-        depth_stencil: DepthStencilState {
-            depth_write_enable: false,
-            depth_compare_op: Default::default(),
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[Format::R16G16B16A16_SFLOAT],
-            depth_attachment_format: None,
-            stencil_attachment_format: None,
+        depth_stencil: None,
+        fragment: FragmentState {
+            shader: ShaderEntryPoint {
+                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.frag"))),
+                entry_point: "main",
+            },
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
+                format: Format::R16G16B16A16_SFLOAT,
                 blend_equation: Some(ColorBlendEquation {
-                    src_color_blend_factor: BlendFactor::One,
-                    dst_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
-                    color_blend_op: BlendOp::Add,
-                    src_alpha_blend_factor: BlendFactor::OneMinusDstAlpha,
-                    dst_alpha_blend_factor: BlendFactor::One,
-                    alpha_blend_op: BlendOp::Add,
+                    src_color_blend_factor: vk::BlendFactor::ONE,
+                    dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                    color_blend_op: vk::BlendOp::ADD,
+                    src_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+                    dst_alpha_blend_factor: vk::BlendFactor::ONE,
+                    alpha_blend_op: vk::BlendOp::ADD,
                 }),
-                color_write_mask: Default::default(),
+                ..Default::default()
             }],
             blend_constants: [0.0; 4],
         },

@@ -6,7 +6,7 @@ use egui::{
 };
 use egui_dnd::dnd;
 use egui_extras::Column;
-use graal::{vk, BlendFactor, Format};
+use graal::{vk, Format};
 use highlight::highlight;
 use std::{fmt::Debug, hash::Hash};
 
@@ -455,19 +455,19 @@ pub fn test_ui(ui: &mut egui::Ui) {
 
         generic_list_header(ui, "Attachments", |ui| {
             if icon_button(ui, egui_phosphor::fill::PLUS, Color32::WHITE).on_hover_text("Add new attachment").clicked() {
-               eprintln!("TODO: add new attachment") 
+                eprintln!("TODO: add new attachment")
             }
             if icon_button(ui, egui_phosphor::fill::TRASH, Color32::WHITE).on_hover_text("Remove selected attachment").clicked() {
-               eprintln!("TODO: remove selected attachment") 
+                eprintln!("TODO: remove selected attachment")
             }
         });
 
         let mut current_attachment = 1;
-        dnd(ui, "attachments").show([1,2,3].into_iter(), |ui, val, handle, state| {
+        dnd(ui, "attachments").show([1, 2, 3].into_iter(), |ui, val, handle, state| {
             handle.show_drag_cursor_on_hover(false).ui(ui, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                     ui.selectable_value(&mut current_attachment, val, format!("Attachment {}", val));
-                    vk_format_combo(ui, ("format",val), &mut Format::UNDEFINED);
+                    vk_format_combo(ui, ("format", val), &mut Format::UNDEFINED);
                 });
             });
         });

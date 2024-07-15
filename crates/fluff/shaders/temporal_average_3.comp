@@ -1,0 +1,41 @@
+#version 460 core
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+
+#include "bindless.glsl"
+
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer BufferData {
+    vec4 widthProfile;// polynomial coefficients
+    vec4 opacityProfile;// polynomial coefficients
+    uint start;
+    uint size;
+    vec2 paramRange;
+};
+
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer CurveControlPoints2 {
+    vec3 pos;
+    vec3 color;
+};
+
+// Push constants
+layout(scalar, push_constant) uniform PushConstants {
+    uint element_count;
+    BufferData data;
+    CurveControlPoints2 controlPoints;
+    image2DIndex output_image;
+};
+
+layout(local_size_x=64) in;
+
+// ------ OUTPUT ------
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= element_count) {
+        return;
+    }
+    uint start = data[index].start;
+    vec3 color = controlPoints[start].color;
+    imageStore(output_image, ivec2(0, 0), vec4(color, 1.0));
+}

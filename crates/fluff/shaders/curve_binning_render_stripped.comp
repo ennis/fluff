@@ -1,66 +1,27 @@
+#version 460
 #include "common.glsl"
 
-#extension GL_EXT_shader_atomic_float : require
+//#extension GL_EXT_shader_atomic_float : require
 
 const int TILE_SIZE_X = 16;
 const int TILE_SIZE_Y = 16;
 
-const int SCREEN_WIDTH = 1024;
-const int SCREEN_HEIGHT = 768;
 
-const int TILE_COUNT_X = (SCREEN_WIDTH + TILE_SIZE_X - 1) / TILE_SIZE_X;
-const int TILE_COUNT_Y = (SCREEN_HEIGHT + TILE_SIZE_Y - 1) / TILE_SIZE_Y;
-
-//const int MAX_LINES_PER_TILE = 64;
-
-struct TileEntry {
-    vec4 line;
-    vec2 paramRange;
-    uint curveIndex;
-};
-
-struct Tile {
-    TileEntry[MAX_LINES_PER_TILE] entries;
-};
-
-struct CurveDescriptor {
-    vec4 widthProfile;// polynomial coefficients
-    vec4 opacityProfile;// polynomial coefficients
-    uint start;
-    uint size;
-    vec2 paramRange;
-};
-
-readonly buffer ControlPointsPosition {
-    float[] position;
-};
-
-readonly buffer CurveBuffer {
-    CurveDescriptor[] curves;
-};
-
-buffer TileBuffer {
-    Tile[] tiles;
-};
-
-layout(r32i)
-uniform coherent iimage2D tileLineCountImage;
-
-uniform PushConstants {
+layout(push_constant) uniform PushConstants {
     mat4 viewProjectionMatrix;
     int baseCurve;
     float strokeWidth;
     uint tilesCountX;
     uint tilesCountY;
     int frame;
+
+    TileData tiles;
+    TileLineCountData tileLineCount;
+    image2DIndex outputImage;
 };
 
 // One thread per pixel in a tile
 layout(local_size_x=TILE_SIZE_X, local_size_y=TILE_SIZE_Y) in;
-
-// ------ OUTPUT ------
-
-uniform writeonly image2D outputImage;
 
 //////////////////////////////////////////////////////////
 
@@ -80,7 +41,7 @@ float distSeg(vec2 p, vec2 a, vec2 b) {
 void main() {
     uvec2 tileCoord = gl_WorkGroupID.xy;
     uint tileIndex = tileCoord.y * tilesCountX + tileCoord.x;
-    int lineCount = imageLoad(tileLineCountImage, ivec2(tileCoord)).x;
+    int lineCount = min(tileLineCount[tileIndex].count, MAX_LINES_PER_TILE);// imageLoad(tileLineCountImage, ivec2(tileCoord)).x;
     uvec2 coord = gl_GlobalInvocationID.xy;
 
     // load lines in shared memory
