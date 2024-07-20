@@ -137,6 +137,9 @@ fn main() {
                             };
                             app.mouse_wheel(delta);
                         }
+                        WindowEvent::Touch(touch) => {
+                            app.touch_event(touch);
+                        }
                         WindowEvent::CloseRequested => {
                             println!("The close button was pressed; stopping");
                             event_loop.exit();

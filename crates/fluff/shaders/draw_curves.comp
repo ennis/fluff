@@ -39,6 +39,11 @@ void main() {
         //color += vec4(1.0) * (1.0 - smoothstep(0.0, 3.0, y));
     }
 
+
+    if (u.debugOverflow == 1 && lineCount >= MAX_LINES_PER_TILE) {
+        color = vec4(1.0, 0.0, 0.0, 1.0);
+    }
+
     /*uvec2 localCoord = gl_LocalInvocationID.xy;
     if (localCoord.x == 0 || localCoord.y == 0) {
         color = vec4(1.0, 0.0, 0.0, 1.0);

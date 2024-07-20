@@ -363,8 +363,6 @@ type UniformBlockLayout = BTreeMap<String, (u32, UniformType)>;
 
 struct MeshRenderPipelineInner {
     desc: MeshRenderPipelineDesc,
-    push_constants_layout: UniformBlockLayout,
-    push_constants_size: usize,
     pipeline: graal::GraphicsPipeline,
 }
 
@@ -719,6 +717,13 @@ impl Engine {
         }
     }
 
+    pub fn set_global_defines(&mut self, defines: BTreeMap<String, String>) {
+        self.global_defs = defines;
+        // recompile all shaders
+        self.mesh_render_pipelines.clear();
+        self.compute_pipelines.clear();
+    }
+
     pub fn submit_graph(&mut self, graph: RenderGraph, cmd: &mut CommandStream) {
         // 1. allocate resources
         //let device = &self.engine.device;
@@ -974,8 +979,6 @@ impl Engine {
             Ok(pipeline) => {
                 let pipeline = MeshRenderPipeline(Rc::new(MeshRenderPipelineInner {
                     desc,
-                    push_constants_layout: ci.push_cst_map,
-                    push_constants_size: ci.push_cst_size,
                     pipeline,
                 }));
                 self.mesh_render_pipelines.insert(name.to_string(), pipeline.clone());

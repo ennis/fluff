@@ -35,6 +35,7 @@ tracing = "0.1.40"
 bytemuck = "1.16.1"
 bitflags = "2.6.0"
 scoped-tls = "1.0.1"
+curve-fit-nd-sys = { workspace = true }
 
 [build-dependencies]
 shader-bridge = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "curve-fit-nd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+curve-fit-nd-sys = { workspace = true }
+bitflags = "2.6.0"
+libc = "0.2"

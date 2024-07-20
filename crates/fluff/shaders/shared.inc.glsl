@@ -129,6 +129,7 @@ struct DrawCurvesPushConstants {
     TileDataSlice tileData;
     uintSlice tileLineCount;
     image2DHandle outputImage;
+    uint debugOverflow;
 };
 
 

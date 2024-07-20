@@ -101,6 +101,7 @@ pub struct DrawCurvesPushConstants {
     pub tile_data: BufferAddress<[TileData]>,
     pub tile_line_count: BufferAddress<[u32]>,
     pub output_image: ImageHandle,
+    pub debug_overflow: u32,
 }
 
 pub const BINNING_TILE_SIZE: u32 = 16;

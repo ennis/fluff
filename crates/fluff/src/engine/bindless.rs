@@ -250,7 +250,7 @@ impl Drop for ResourceDescriptors {
             let mut samplers = mem::take(&mut self.samplers);
             let last_submission_index = self.last_submission_index.load(Ordering::Relaxed);
             self.device.call_later(last_submission_index, move || {
-                debug!("ResourceDescriptors for submission {last_submission_index}");
+                //debug!("ResourceDescriptors for submission {last_submission_index}");
                 device.destroy_descriptor_pool(pool, None);
                 // release images & samplers now
                 let _images = mem::take(&mut images);

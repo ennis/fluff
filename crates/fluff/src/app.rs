@@ -1,5 +1,6 @@
-use egui::{Align2, Frame, Margin, Rounding, Widget};
-use glam::{mat4, uvec2, vec2, vec3, vec4, DVec2};
+use egui::{Align2, Color32, FontId, Frame, Margin, Response, Rounding, Ui, Widget};
+use egui_extras::{Column, TableBuilder};
+use glam::{dvec2, mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2};
 use graal::{
     prelude::*,
     vk::{AttachmentLoadOp, AttachmentStoreOp},
@@ -7,14 +8,16 @@ use graal::{
     ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassDescriptor,
 };
 use std::{
+    collections::BTreeMap,
     fs, mem,
     path::{Path, PathBuf},
     ptr,
 };
+use tracing::trace;
 
 use houdinio::Geo;
 use winit::{
-    event::MouseButton,
+    event::{MouseButton, TouchPhase},
     keyboard::{Key, NamedKey},
 };
 
@@ -23,9 +26,178 @@ use crate::{
     engine::{ColorAttachmentDesc, ComputePipelineDesc, DepthStencilAttachmentDesc, Engine, Error, MeshRenderPipelineDesc},
     overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer},
     shaders,
+    shaders::shared::{CurveDesc, TemporalAverageParams, BINNING_TILE_SIZE},
     util::resolve_file_sequence,
 };
-use crate::shaders::shared::{BINNING_TILE_SIZE, TemporalAverageParams};
+
+/// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
+///
+/// If the buffer is host-visible, elements can be added directly to the buffer.
+/// Otherwise, elements are first added to a staging area and must be copied to the buffer on
+/// the device timeline by calling [`AppendBuffer::commit`].
+pub struct AppendBuffer<T> {
+    buffer: Buffer<[T]>,
+    len: usize,
+    staging: Vec<T>,
+}
+
+impl<T: Copy> AppendBuffer<T> {
+    /// Creates an append buffer with the given usage flags and default capacity.
+    pub fn new(device: &Device, usage: BufferUsage, memory_location: MemoryLocation) -> AppendBuffer<T> {
+        Self::with_capacity(device, usage, memory_location, 16)
+    }
+
+    /// Creates an append buffer with the given usage flags and initial capacity.
+    pub fn with_capacity(device: &Device, mut usage: BufferUsage, memory_location: MemoryLocation, capacity: usize) -> Self {
+        // Add TRANSFER_DST capacity if the buffer is not host-visible
+        if memory_location != MemoryLocation::CpuToGpu {
+            usage |= BufferUsage::TRANSFER_DST;
+        }
+        let buffer = device.create_array_buffer(usage, memory_location, capacity);
+        Self {
+            buffer,
+            len: 0,
+            staging: vec![],
+        }
+    }
+
+    /// Returns the capacity in elements of the buffer before it needs to be resized.
+    pub fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Returns the number of elements in the buffer (including elements in the staging area).
+    pub fn len(&self) -> usize {
+        // number of elements in the main buffer + pending elements
+        self.len + self.staging.len()
+    }
+
+    fn needs_to_grow(&self, additional: usize) -> bool {
+        self.len + additional > self.capacity()
+    }
+
+    /// Whether the buffer is host-visible (and mapped in memory).
+    fn host_visible(&self) -> bool {
+        self.buffer.memory_location() == MemoryLocation::CpuToGpu
+    }
+
+    fn reserve_gpu(&mut self, cmd: &mut CommandStream, additional: usize) {
+        if self.needs_to_grow(additional) {
+            let memory_location = self.buffer.memory_location();
+            let new_capacity = (self.len + additional).next_power_of_two(); // in num of elements
+            trace!(
+                "AppendBuffer: reallocating {} -> {} bytes",
+                self.capacity() * size_of::<T>(),
+                new_capacity * size_of::<T>()
+            );
+            let new_buffer = self
+                .buffer
+                .device()
+                .create_array_buffer(self.buffer.usage(), memory_location, new_capacity);
+            cmd.copy_buffer(&self.buffer.untyped, 0, &new_buffer.untyped, 0, (self.len * size_of::<T>()) as u64);
+            self.buffer = new_buffer;
+        }
+    }
+
+    /// Reserve space for `additional` elements in the buffer, if the buffer is host-visible.
+    fn reserve_cpu(&mut self, additional: usize) {
+        assert!(self.host_visible());
+        if self.needs_to_grow(additional) {
+            let new_capacity = (self.len + additional).next_power_of_two(); // in num of elements
+            trace!(
+                "AppendBuffer: reallocating {} -> {} bytes",
+                self.capacity() * size_of::<T>(),
+                new_capacity * size_of::<T>()
+            );
+            let new_buffer = self
+                .buffer
+                .device()
+                .create_array_buffer(self.buffer.usage(), self.buffer.memory_location(), new_capacity);
+            // Copy the old data to the new buffer
+            unsafe {
+                let old_data = self.buffer.mapped_data().expect("buffer should be mapped");
+                let new_data = new_buffer.mapped_data().expect("buffer should be mapped");
+                ptr::copy_nonoverlapping(old_data, new_data, self.len);
+            }
+            self.buffer = new_buffer;
+        }
+    }
+
+    /// Truncates the buffer to the given length.
+    ///
+    /// # Panics
+    ///
+    /// * Panics if `len` is greater than the current length of the buffer.
+    /// * Panics if there are pending elements in the staging area.
+    pub fn truncate(&mut self, len: usize) {
+        assert!(len <= self.len);
+        assert!(self.staging.is_empty());
+        self.len = len;
+    }
+
+    /// Adds an element to the buffer.
+    pub fn push(&mut self, elem: T) {
+        if self.buffer.memory_location() == MemoryLocation::CpuToGpu {
+            // the buffer is mapped in memory, we can copy the element right now
+            self.reserve_cpu(1);
+            unsafe {
+                let data = self.buffer.mapped_data().expect("buffer should be mapped");
+                ptr::write(data.add(self.len), elem);
+            }
+        } else {
+            // add to pending list
+            self.staging.push(elem);
+        }
+        self.len += 1;
+    }
+
+    /// Returns whether there are pending elements to be copied to the main buffer.
+    pub fn has_pending(&self) -> bool {
+        !self.staging.is_empty()
+    }
+
+    /// Copies pending elements to the main buffer.
+    pub fn commit(&mut self, cmd: &mut CommandStream) {
+        let n = self.staging.len(); // number of elements to append
+        if n == 0 {
+            return;
+        }
+
+        if self.host_visible() {
+            // nothing to do, the elements have already been copied
+            return;
+        }
+
+        self.reserve_gpu(cmd, n);
+        // allocate staging buffer & copy pending elements
+        let staging_buf = self
+            .buffer
+            .device()
+            .create_array_buffer::<T>(BufferUsage::TRANSFER_SRC, MemoryLocation::CpuToGpu, n);
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.staging.as_ptr(),
+                staging_buf.mapped_data().expect("buffer should be mapped"),
+                n,
+            );
+        }
+        // copy from staging to main buffer
+        let elem_size = size_of::<T>() as u64;
+        cmd.copy_buffer(
+            &staging_buf.untyped,
+            0,
+            &self.buffer.untyped,
+            self.len as u64 * elem_size,
+            n as u64 * elem_size,
+        );
+        self.staging.clear();
+    }
+
+    /// Returns the underlying GPU buffer.
+    pub fn buffer(&self) -> Buffer<[T]> {
+        self.buffer.clone()
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -113,6 +285,7 @@ fn lagrange_interpolation(p1: glam::Vec2, p2: glam::Vec2, p3: glam::Vec2, p4: gl
     coeffs
 }
 
+/*
 /// Represents a range of control points in the position buffer.
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -128,7 +301,7 @@ struct CurveDesc {
     count: u32,
     /// parameter range
     param_range: glam::Vec2,
-}
+}*/
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -309,32 +482,6 @@ struct BinRastTile {
 
 const _: () = assert!(mem::size_of::<BinRastTile>() == 28 * CURVE_BINNING_MAX_LINES_PER_TILE);
 
-struct BinRastArguments<'a> {
-    //#[argument(binding = 0, storage, read_only)]
-    position_buffer: BufferRange<[ControlPoint]>,
-    //#[argument(binding = 1, storage, read_only)]
-    curve_buffer: BufferRange<[CurveDesc]>,
-    //#[argument(binding = 2, storage_image, read_write)]
-    tile_line_count_image: &'a ImageView,
-    //#[argument(binding = 3, storage, read_write)]
-    tile_buffer: BufferRange<[BinRastTile]>,
-}
-
-//#[derive(Arguments)]
-struct DrawCurvesArguments<'a> {
-    //#[argument(binding = 0, storage, read_only)]
-    position_buffer: BufferRange<[ControlPoint]>,
-    //#[argument(binding = 1, storage, read_only)]
-    curve_buffer: BufferRange<[CurveDesc]>,
-    //#[argument(binding = 2, storage_image, read_write)]
-    tile_line_count_image: &'a ImageView,
-    //#[argument(binding = 3, storage)]
-    tile_buffer: BufferRange<[BinRastTile]>,
-    //#[argument(binding = 4, storage_image, read_write)]
-    output_image: &'a ImageView,
-}
-
-
 /*#[derive(Attachments)]
 struct RenderAttachments<'a> {
     #[attachment(color, format = R16G16B16A16_SFLOAT)]
@@ -408,9 +555,6 @@ struct CurvesOITResolvePushConstants {
     //base_curve_index: u32,
 }
 
-//////////////////////////////////////////////////////
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
     let image = device.create_image(&ImageCreateInfo {
@@ -427,6 +571,17 @@ fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
     });
     image.set_name("depth buffer");
     image
+}
+
+fn icon_button(ui: &mut Ui, icon: &str, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(20.0, 20.0), egui::Sense::click());
+    if response.hovered() {
+        let color = ui.style().visuals.selection.bg_fill;
+        ui.painter().rect_filled(rect, 0.0, color);
+    }
+    ui.painter()
+        .text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), color);
+    response
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -454,6 +609,20 @@ struct BrushTexture {
     id: u32,
 }
 
+#[derive(Copy, Clone)]
+struct PenSample {
+    position: DVec2,
+    pressure: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Tweak {
+    name: String,
+    value: String,
+    enabled: bool,
+    autofocus: bool,
+}
+
 pub struct App {
     // Keep a copy of the device so we don't have to pass it around everywhere.
     device: Device,
@@ -472,6 +641,7 @@ pub struct App {
     temporal_average_alpha: f32,
     frame_image: Image,
     temporal_avg_image: Image,
+    debug_tile_line_overflow: bool,
 
     // Bin rasterization
     bin_rast_stroke_width: f32,
@@ -483,7 +653,7 @@ pub struct App {
     oit_fragment_buffer: Buffer<[CurvesOITFragmentData]>,
     oit_fragment_count_buffer: Buffer<[u32]>,
 
-    // Resources
+    // Brushes
     reload_brush_textures: bool,
     brush_textures: Vec<BrushTexture>,
     selected_brush: usize,
@@ -492,58 +662,16 @@ pub struct App {
     overlay_line_width: f32,
     overlay_filter_width: f32,
 
+    // UI
+    /// Curve drawing mode active
+    is_drawing: bool,
+    pen_points: Vec<PenSample>,
+    drawn_curves: AppendBuffer<CurveDesc>,
+    drawn_control_points: AppendBuffer<ControlPoint>,
+    tweaks: Vec<Tweak>,
+    tweaks_need_update: bool,
     engine: Engine,
 }
-
-/*
-layout(push_constant) uniform PushConstants {
-    mat4 viewProjectionMatrix;
-    uvec2 viewportSize;
-    float strokeWidth;
-    int baseCurveIndex;
-    int curveCount;
-    int tilesCountX;
-    int tilesCountY;
-    int frame;
-
-    CurveControlPoints b_controlPoints;
-    CurveBuffer b_curveData;
-    TileLineCountData b_tileLineCount;
-    TileData b_tileData;
-
-
-};
-*/
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct CurveBinningConstants {
-    control_points: vk::DeviceAddress,
-    curve_data: vk::DeviceAddress,
-    tile_line_count: vk::DeviceAddress,
-    tile_data: vk::DeviceAddress,
-    view_projection_matrix: glam::Mat4,
-    viewport_size: glam::UVec2,
-    stroke_width: f32,
-    base_curve_index: u32,
-    curve_count: u32,
-    tile_count_x: u32,
-    tile_count_y: u32,
-    frame: u32,
-}
-
-/*
-const CONTROL_POINT_BUFFER: BufferKey = BufferKey("b_controlPoints");
-const CURVE_BUFFER: BufferKey = BufferKey("b_curves");
-const TILE_LINE_COUNT_BUFFER: BufferKey = BufferKey("b_tileLineCount");
-const TILE_BUFFER: BufferKey = BufferKey("b_tiles");
-
-const COLOR_TARGET: ImageKey = ImageKey("i_color");
-const DEPTH_TARGET: ImageKey = ImageKey("i_depth");
-const TEMPORAL_AVERAGE_TARGET: ImageKey = ImageKey("i_temporalAvg");
-
-const PASS_CURVE_BINNING: &str = "curve_binning";
-const PASS_DRAW_CURVES: &str = "draw_curves";
-const PASS_TEMPORAL_AVERAGE: &str = "temporal_average";*/
 
 impl App {
     fn setup(&mut self, cmd: &mut CommandStream, color_target: Image, width: u32, height: u32) -> Result<(), Error> {
@@ -558,6 +686,7 @@ impl App {
         let stroke_width = self.bin_rast_stroke_width;
         let viewport_size = [width, height];
         let temporal_average_falloff = self.temporal_average_alpha;
+        let debug_tile_line_overflow = self.debug_tile_line_overflow;
 
         let tile_count_x = width.div_ceil(CURVE_BINNING_TILE_SIZE);
         let tile_count_y = height.div_ceil(CURVE_BINNING_TILE_SIZE);
@@ -595,46 +724,44 @@ impl App {
             rg.record_fill_buffer("clear_tile_line_count", tile_line_count_buffer, 0);
             rg.record_fill_buffer("clear_tile_buffer", tile_buffer, 0);
 
-            let curve_binning_pipeline = engine
-                .create_mesh_render_pipeline(
-                    "curve_binning",
-                    // TODO: in time, all of this will be moved to hot-reloadable config files
-                    MeshRenderPipelineDesc {
-                        shader: PathBuf::from("crates/fluff/shaders/bin_curves.glsl"),
-                        defines: Default::default(),
-                        color_targets: vec![ColorTargetState {
-                            format: Format::R16G16B16A16_SFLOAT,
-                            ..Default::default()
-                        }],
-                        rasterization_state: Default::default(),
-                        depth_stencil_state: Some(DepthStencilState {
-                            format: Format::D32_SFLOAT,
-                            depth_write_enable: true,
-                            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                            stencil_state: StencilState::default(),
-                        }),
-                        multisample_state: Default::default(),
-                    },
-                )
-                .unwrap();
+            let curve_binning_pipeline = engine.create_mesh_render_pipeline(
+                "curve_binning",
+                // TODO: in time, all of this will be moved to hot-reloadable config files
+                MeshRenderPipelineDesc {
+                    shader: PathBuf::from("crates/fluff/shaders/bin_curves.glsl"),
+                    defines: Default::default(),
+                    color_targets: vec![ColorTargetState {
+                        format: Format::R16G16B16A16_SFLOAT,
+                        ..Default::default()
+                    }],
+                    rasterization_state: Default::default(),
+                    depth_stencil_state: Some(DepthStencilState {
+                        format: Format::D32_SFLOAT,
+                        depth_write_enable: true,
+                        depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                        stencil_state: StencilState::default(),
+                    }),
+                    multisample_state: Default::default(),
+                },
+            )?;
 
-            let mut rp = rg.record_mesh_render_pass("bin_curves", curve_binning_pipeline);
+            let mut pass = rg.record_mesh_render_pass("bin_curves", curve_binning_pipeline);
 
-            rp.set_color_attachments([ColorAttachmentDesc {
+            pass.set_color_attachments([ColorAttachmentDesc {
                 image: color_target,
                 clear_value: Some([0.0, 0.0, 0.0, 1.0]),
             }]);
-            rp.set_depth_stencil_attachment(DepthStencilAttachmentDesc {
+            pass.set_depth_stencil_attachment(DepthStencilAttachmentDesc {
                 image: depth_target,
                 depth_clear_value: Some(1.0),
                 stencil_clear_value: None,
             });
-            rp.read_buffer(control_point_buffer);
-            rp.read_buffer(curve_buffer);
-            rp.write_buffer(tile_line_count_buffer);
-            rp.write_buffer(tile_buffer);
+            pass.read_buffer(control_point_buffer);
+            pass.read_buffer(curve_buffer);
+            pass.write_buffer(tile_line_count_buffer);
+            pass.write_buffer(tile_buffer);
 
-            rp.set_render_func(move |encoder| {
+            pass.set_render_func(move |encoder| {
                 let vp_width = width as f32 / BINNING_TILE_SIZE as f32;
                 let vp_height = height as f32 / BINNING_TILE_SIZE as f32;
                 encoder.set_viewport(0.0, 0.0, vp_width, vp_height, 0.0, 1.0);
@@ -662,7 +789,7 @@ impl App {
                 encoder.draw_mesh_tasks(curve_count.div_ceil(64), 1, 1);
             });
 
-            rp.finish();
+            pass.finish();
         }
 
         ////////////////////////////////////////////////////////////
@@ -695,38 +822,12 @@ impl App {
                     tile_data: tile_buffer.device_address(),
                     tile_line_count: tile_line_count_buffer.device_address(),
                     output_image: color_target.device_handle(),
+                    debug_overflow: debug_tile_line_overflow as u32,
                 });
                 encoder.dispatch(tile_count_x, tile_count_y, 1);
             });
             pass.finish();
         }
-
-        /*////////////////////////////////////////////////////////////
-        // Temporal accumulation
-        {
-            let compute_test = engine.create_compute_pipeline(
-                "compute_test",
-                ComputePipelineDesc {
-                    shader: PathBuf::from("../shaders/compute_test.comp"),
-                    defines: Default::default(),
-                },
-            )?;
-            let mut pass = rg.record_compute_pass("compute_test", compute_test);
-            pass.read_buffer(curve_buffer);
-            pass.read_buffer(control_point_buffer);
-            pass.write_image(temporal_average);
-            pass.set_render_func(move |encoder| {
-                encoder.push_constants(&ComputeTestPushConstants {
-                    element_count: curve_count,
-                    data: curve_buffer.device_address(),
-                    control_points: control_point_buffer.device_address(),
-                    output_image: temporal_average.device_handle(),
-                });
-                encoder.dispatch(curve_count.div_ceil(64), 1, 1);
-            });
-            pass.finish();
-            //rg.record_blit("blit_temporal_avg", temporal_average.clone(), color_target.clone());
-        }*/
 
         ////////////////////////////////////////////////////////////
         // Temporal accumulation
@@ -734,10 +835,11 @@ impl App {
             let temporal_average_pipeline = engine.create_compute_pipeline(
                 "temporal_average",
                 ComputePipelineDesc {
-                    shader: PathBuf::from("../shaders/temporal_average.comp"),
+                    shader: PathBuf::from("crates/fluff/shaders/temporal_average.comp"),
                     defines: Default::default(),
                 },
             )?;
+
             let mut pass = rg.record_compute_pass("temporal_average", temporal_average_pipeline.clone());
             pass.read_image(color_target);
             pass.read_image(temporal_average);
@@ -771,38 +873,6 @@ impl App {
                 }
             }
         }
-
-        /*self.pipelines.curve_binning_pipeline = check(
-            "bin_rast_pipeline",
-            create_bin_rast_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
-        );
-        self.pipelines.draw_curves_pipeline = check("draw_curves_pipeline", create_draw_curves_pipeline(&self.device));
-        self.pipelines.draw_curves_oit_pipeline = check(
-            "draw_curves_oit_pipeline",
-            create_curves_oit_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
-        );
-        self.pipelines.draw_curves_oit_v2_pipeline = check(
-            "draw_curves_oit_v2_pipeline",
-            create_curves_oit_v2_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
-        );
-        self.pipelines.draw_curves_oit_resolve_pipeline = check(
-            "draw_curves_oit_resolve_pipeline",
-            create_curves_oit_resolve_pipeline(&self.device, self.color_target_format, self.depth_buffer.format()),
-        );*/
-        //self.pipelines.temporal_average_pipeline = check("temporal_average_pipeline", create_temporal_avg_pipeline(&self.device));
-
-        /*compile_pass_pipeline(
-            &self.device,
-            &PipelineDescriptor {
-                mode: PipelineMode::MeshShading,
-                unified_shader_file: "crates/fluff/shaders/curve_binning.glsl",
-                defines: vec![
-                    ("TILE_SIZE", Some(CURVE_BINNING_TILE_SIZE.to_string())),
-                    ("MAX_LINES_PER_TILE", Some(CURVE_BINNING_MAX_LINES_PER_TILE.to_string())),
-                ],
-            },
-        )
-        .unwrap()*/
     }
 
     fn reload_textures(&mut self, cmd: &mut CommandStream) {
@@ -1060,6 +1130,21 @@ impl App {
             device.create_array_buffer::<u32>(BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST, MemoryLocation::GpuOnly, 1);
         oit_fragment_count_buffer.untyped.set_name("oit_fragment_count_buffer");
 
+        let drawn_curves = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+        let drawn_control_points = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+
+        // load tweaks
+        let tweaks = match fs::read_to_string("global-settings.json") {
+            Ok(json) => serde_json::from_str::<Vec<Tweak>>(&json).unwrap_or_else(|err| {
+                eprintln!("Error loading tweaks: {}", err);
+                vec![]
+            }),
+            Err(err) => {
+                eprintln!("Error loading tweaks: {}", err);
+                vec![]
+            }
+        };
+
         let mut app = App {
             device: device.clone(),
             animation: None,
@@ -1080,6 +1165,9 @@ impl App {
             selected_brush: 0,
             overlay_line_width: 1.0,
             overlay_filter_width: 1.0,
+            is_drawing: false,
+            pen_points: vec![],
+            drawn_curves,
             mode: RenderMode::BinRasterization,
             temporal_average: false,
             temporal_avg_image,
@@ -1087,6 +1175,10 @@ impl App {
             frame_image,
             temporal_average_alpha: 0.25,
             engine: Engine::new(device.clone()),
+            drawn_control_points,
+            tweaks,
+            debug_tile_line_overflow: false,
+            tweaks_need_update: false,
         };
         app.reload_shaders();
         app
@@ -1140,6 +1232,32 @@ impl App {
         }
     }
 
+    pub fn touch_event(&mut self, touch_event: &winit::event::Touch) {
+        if self.is_drawing {
+            if touch_event.phase == TouchPhase::Started {
+                self.pen_points.clear();
+            }
+
+            let (x, y): (f64, f64) = touch_event.location.into();
+            let pressure = if let Some(force) = touch_event.force {
+                force.normalized()
+            } else {
+                1.0
+            };
+
+            trace!("Touch event: {:?} at ({}, {}) with pressure {}", touch_event.phase, x, y, pressure);
+
+            self.pen_points.push(PenSample {
+                position: dvec2(x, y),
+                pressure,
+            });
+
+            if touch_event.phase == TouchPhase::Ended {
+                //self.is_drawing = false;
+            }
+        }
+    }
+
     pub fn mouse_wheel(&mut self, delta: f64) {
         self.camera_control.mouse_wheel(delta);
     }
@@ -1173,21 +1291,25 @@ impl App {
             self.reload_brush_textures = false;
         }
 
+        // commit dynamic curves
+        self.drawn_curves.commit(cmd);
+        self.drawn_control_points.commit(cmd);
+
         let width = image.width();
         let height = image.height();
 
         self.setup(cmd, self.frame_image.clone(), width, height);
 
         let color_target_view = self.frame_image.create_top_level_view();
-
-        // Draw overlay
-        self.overlay.set_camera(self.camera_control.camera());
         self.draw_axes();
         self.draw_curves();
+
+        // Draw overlay
         cmd.debug_group("Overlay", |cmd| {
             self.overlay.render(
                 cmd,
                 OverlayRenderParams {
+                    camera: self.camera_control.camera(),
                     color_target: color_target_view.clone(),
                     depth_target: self.depth_buffer_view.clone(),
                     line_width: self.overlay_line_width,
@@ -1273,6 +1395,7 @@ impl App {
 
         egui::Window::new("Settings").show(ctx, |ui| {
             ui.heading("Temporal average");
+            ui.checkbox(&mut self.is_drawing, "Drawing mode");
             ui.checkbox(&mut self.temporal_average, "Enable Temporal Average");
             ui.add_enabled(
                 self.temporal_average,
@@ -1284,6 +1407,8 @@ impl App {
             ui.radio_value(&mut self.mode, RenderMode::BinRasterization, "Bin Rasterization");
             ui.radio_value(&mut self.mode, RenderMode::CurvesOIT, "Curves OIT");
             ui.radio_value(&mut self.mode, RenderMode::CurvesOITv2, "Curves OIT v2");
+            ui.checkbox(&mut self.debug_tile_line_overflow, "Debug overflowing tiles")
+                .on_hover_text("Show tiles which exceeded the maximum number of lines per tile");
 
             ui.separator();
 
@@ -1317,6 +1442,88 @@ impl App {
                     .custom_formatter(|n, _| format!("Frame {} of {}", n, animation.frames.len()))
                     .ui(ui);
             }
+
+
+            ui.heading("Global settings");
+            TableBuilder::new(ui)
+                .column(Column::auto().resizable(true))
+                .column(Column::remainder())
+                .column(Column::exact(16.0))
+                .column(Column::exact(16.0))
+                .striped(true)
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.label("Define");
+                    });
+                    header.col(|ui| {
+                        ui.label("Value");
+                    });
+                })
+                .body(|mut body| {
+                    let mut delete = None;
+                    for (i, t) in self.tweaks.iter_mut().enumerate() {
+                        body.row(18.0, |mut row| {
+                            row.col(|ui| {
+                                let resp = ui.text_edit_singleline(&mut t.name);
+                                if t.autofocus {
+                                    resp.request_focus();
+                                    t.autofocus = false;
+                                }
+                                if resp.changed() {
+                                    self.tweaks_need_update = true;
+                                }
+                            });
+                            row.col(|ui| {
+                                if ui.text_edit_singleline(&mut t.value).changed() {
+                                    self.tweaks_need_update = true;
+                                }
+                            });
+                            row.col(|ui| {
+                                if ui.checkbox(&mut t.enabled, "").changed() {
+                                    self.tweaks_need_update = true;
+                                }
+                            });
+                            row.col(|ui| {
+                                if icon_button(ui, egui_phosphor::fill::TRASH, egui::Color32::WHITE).clicked() {
+                                    delete = Some(i);
+                                    self.tweaks_need_update = true;
+                                }
+                            });
+                        });
+                    }
+                    if let Some(i) = delete {
+                        self.tweaks.remove(i);
+                    }
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            if ui.button("Add tweak").clicked() {
+                                self.tweaks.push(Tweak {
+                                    name: format!("TWEAK_VALUE_{}", self.tweaks.len()),
+                                    value: "0".to_string(),
+                                    enabled: true,
+                                    autofocus: true,
+                                });
+                                self.tweaks_need_update = true;
+                            }
+                        });
+                    });
+                });
+
+            ui.add_enabled_ui(self.tweaks_need_update, |ui| {
+                if ui.button("Update tweaks").clicked() {
+                    let defines = self
+                        .tweaks
+                        .iter()
+                        .filter(|t| t.enabled)
+                        .map(|t| (t.name.clone(), t.value.clone()))
+                        .collect();
+                    self.engine.set_global_defines(defines);
+                    self.tweaks_need_update = false;
+
+                    // Save the tweaks to a json file
+                    fs::write("global-settings.json", serde_json::to_string(&self.tweaks).unwrap()).unwrap();
+                }
+            });
         });
     }
 

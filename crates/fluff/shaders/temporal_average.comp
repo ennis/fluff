@@ -1,5 +1,5 @@
 #version 460 core
-#include "bindless.glsl"
+#include "bindless.inc.glsl"
 
 // Push constants
 layout(scalar, push_constant) uniform PushConstants {

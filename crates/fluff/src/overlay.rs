@@ -270,6 +270,7 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
 
 #[derive(Clone)]
 pub struct OverlayRenderParams {
+    pub camera: Camera,
     pub color_target: ImageView,
     pub depth_target: ImageView,
     pub line_width: f32,
@@ -279,7 +280,7 @@ pub struct OverlayRenderParams {
 pub struct OverlayRenderer {
     polygon_pipeline: GraphicsPipeline,
     line_pipeline: GraphicsPipeline,
-    camera: Camera,
+    //camera: Camera,
     target_color_format: Format,
     target_depth_format: Format,
     vertices: Vec<OverlayVertex>,
@@ -302,7 +303,7 @@ impl OverlayRenderer {
         } = create_pipelines(device, target_color_format, target_depth_format);
 
         Self {
-            camera: Camera::default(),
+            //camera: Camera::default(),
             polygon_pipeline,
             line_pipeline,
             target_color_format,
@@ -315,24 +316,7 @@ impl OverlayRenderer {
         }
     }
 
-    pub fn set_camera(&mut self, camera: Camera) {
-        // TODO specify camera at draw time
-        self.camera = camera;
-    }
-
     pub fn line(&mut self, a: Vec3, b: Vec3, a_color: [u8; 4], b_color: [u8; 4]) {
-        /*let start_vertex = self.vertices.len() as u32;
-        self.vertices.push(OverlayVertex::new(a, a_color));
-        self.vertices.push(OverlayVertex::new(b, b_color));
-        self.draws.push(Draw {
-            transform: Mat4::IDENTITY,
-            topology: PrimitiveTopology::LineStrip,
-            kind: DrawKind::Draw {
-                start_vertex,
-                vertex_count: 2,
-            },
-        })*/
-
         let start_vertex = self.line_vertices.len() as u32;
         self.line_vertices.push(LineVertex {
             position: a.to_array(),
@@ -387,13 +371,13 @@ impl OverlayRenderer {
 
         let rot = glam::Quat::from_rotation_arc(vec3(0.0, 0.0, 1.0), (b - a).normalize());
 
-        let depth = (self.camera.view * a.extend(1.0)).z;
-        let scale = Vec3::splat(depth);
+        //let depth = (self.camera.view * a.extend(1.0)).z;
+        //let scale = Vec3::splat(depth);
 
         let index_count = self.indices.len() as u32 - start_index;
         self.draws.push(Draw {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            transform: Mat4::from_scale_rotation_translation(scale, rot, a),
+            transform: Mat4::from_rotation_translation(rot, a),
             kind: DrawKind::Indexed {
                 base_vertex,
                 start_index,
@@ -431,13 +415,13 @@ impl OverlayRenderer {
 
         let rot = glam::Quat::from_rotation_arc(vec3(0.0, 0.0, 1.0), (apex - base).normalize());
 
-        let depth = (self.camera.view * base.extend(1.0)).z;
-        let scale = Vec3::splat(-depth);
+        //let depth = (self.camera.view * base.extend(1.0)).z;
+        //let scale = Vec3::splat(-depth);
 
         let index_count = self.indices.len() as u32 - start_index;
         self.draws.push(Draw {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            transform: Mat4::from_scale_rotation_translation(scale, rot, base),
+            transform: Mat4::from_rotation_translation(rot, base),
             kind: DrawKind::Indexed {
                 base_vertex,
                 start_index,
@@ -483,7 +467,7 @@ impl OverlayRenderer {
         encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
         encoder.set_scissor(0, 0, width, height);
 
-        // Lines
+        // Draw polylines
         if !self.polylines.is_empty() {
             let line_vertex_buffer = encoder
                 .device()
@@ -494,7 +478,7 @@ impl OverlayRenderer {
 
             encoder.bind_graphics_pipeline(&self.line_pipeline);
             encoder.push_constants(&PushConstants {
-                matrix: self.camera.view_projection(),
+                matrix: params.camera.view_projection(),
                 width: params.line_width,
                 filter_width: params.filter_width,
                 line_count: self.polylines.len() as u32,
@@ -511,14 +495,19 @@ impl OverlayRenderer {
             encoder.draw_mesh_tasks(self.polylines.len().div_ceil(32) as u32, 1, 1);
         }
 
-        // Polygons
+        // Draw polygons
         encoder.bind_graphics_pipeline(&self.polygon_pipeline);
         encoder.bind_vertex_buffer(0, vertex_buffer.slice(..).untyped);
         encoder.bind_index_buffer(vk::IndexType::UINT16, index_buffer.slice(..).untyped);
 
+
         for draw in self.draws.iter() {
+            // Scale meshes based on depth to keep a constant screen size
+            let depth = (params.camera.view * draw.transform.transform_point3(Vec3::splat(0.0)).extend(1.0)).z;
+            let scale = Mat4::from_scale(Vec3::splat(-depth));
+
             encoder.push_constants(&PushConstants {
-                matrix: self.camera.view_projection() * draw.transform,
+                matrix: params.camera.view_projection() * draw.transform * scale,
                 width: 1.0,
                 filter_width: params.filter_width,
                 line_count: 0,
