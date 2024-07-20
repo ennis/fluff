@@ -1,5 +1,5 @@
 use egui::{Align2, Frame, Margin, Rounding, Widget};
-use glam::{mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2, Vec4};
+use glam::{mat4, uvec2, vec2, vec3, vec4, DVec2};
 use graal::{
     prelude::*,
     vk::{AttachmentLoadOp, AttachmentStoreOp},
@@ -20,13 +20,12 @@ use winit::{
 
 use crate::{
     camera_control::CameraControl,
-    engine2::{
-        BufferKey, ColorAttachmentDesc, ComputePipelineDesc, DepthStencilAttachmentDesc, Engine, Error, ImageDesc, ImageKey,
-        MeshRenderPipelineDesc,
-    },
+    engine::{ColorAttachmentDesc, ComputePipelineDesc, DepthStencilAttachmentDesc, Engine, Error, MeshRenderPipelineDesc},
     overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer},
+    shaders,
     util::resolve_file_sequence,
 };
+use crate::shaders::shared::{BINNING_TILE_SIZE, TemporalAverageParams};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -98,6 +97,8 @@ struct GeoFileData {
 }
 
 /// 3D bezier control point.
+#[derive(Copy, Clone)]
+#[repr(C)]
 struct ControlPoint {
     pos: [f32; 3],
     color: [f32; 3],
@@ -333,22 +334,6 @@ struct DrawCurvesArguments<'a> {
     output_image: &'a ImageView,
 }
 
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct DrawCurvesPushConstants {
-    view_proj: glam::Mat4,
-    /// Base index into the curve buffer.
-    base_curve: u32,
-    stroke_width: f32,
-    /// Number of tiles in the X direction.
-    tile_count_x: u32,
-    /// Number of tiles in the Y direction.
-    tile_count_y: u32,
-    frame: u32,
-    tile_data: vk::DeviceAddress,
-    tile_line_count: vk::DeviceAddress,
-    output_image: u32,
-}
 
 /*#[derive(Attachments)]
 struct RenderAttachments<'a> {
@@ -425,44 +410,6 @@ struct CurvesOITResolvePushConstants {
 
 //////////////////////////////////////////////////////
 
-/*
-#[derive(Attachments)]
-struct TemporalAverageAttachments<'a> {
-    #[attachment(color, format = R16G16B16A16_SFLOAT)]
-    color: &'a ImageView,
-    #[attachment(depth, format = D32_SFLOAT)]
-    depth: &'a ImageView,
-}*/
-
-//#[derive(Arguments)]
-struct TemporalAverageArguments<'a> {
-    //#[argument(binding = 0, storage_image)]
-    new_frame: &'a ImageView,
-    //#[argument(binding = 1, storage_image, read_write)]
-    accum: &'a ImageView,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct TemporalAveragePushConstants {
-    viewport_size: glam::UVec2,
-    frame: u32,
-    falloff: f32,
-    new_frame: u32,
-    avg_frame: u32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct ComputeTestPushConstants {
-    /*uint element_count;
-    BufferData data;
-    image2DIndex output_image;*/
-    element_count: u32,
-    data: vk::DeviceAddress,
-    control_points: vk::DeviceAddress,
-    output_image: u32,
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
@@ -529,11 +476,6 @@ pub struct App {
     // Bin rasterization
     bin_rast_stroke_width: f32,
     bin_rast_current_frame: usize,
-    tile_count_x: u32,
-    tile_count_y: u32,
-    tile_line_count_image: Image,
-    tile_buffer: Buffer<[BinRastTile]>,
-    curves_image: Image,
 
     // Curves OIT
     oit_stroke_width: f32,
@@ -617,7 +559,6 @@ impl App {
         let viewport_size = [width, height];
         let temporal_average_falloff = self.temporal_average_alpha;
 
-
         let tile_count_x = width.div_ceil(CURVE_BINNING_TILE_SIZE);
         let tile_count_y = height.div_ceil(CURVE_BINNING_TILE_SIZE);
         //engine.define_global("TILE_SIZE", CURVE_BINNING_TILE_SIZE.to_string());
@@ -637,7 +578,6 @@ impl App {
         let temporal_average = rg.import_image("temporal_average", self.temporal_avg_image.clone());
         let color_target = rg.import_image("color_target", color_target);
         let depth_target = rg.import_image("depth_buffer", self.depth_buffer.clone());
-
 
         ////////////////////////////////////////////////////////////
         // Curve binning test
@@ -660,7 +600,7 @@ impl App {
                     "curve_binning",
                     // TODO: in time, all of this will be moved to hot-reloadable config files
                     MeshRenderPipelineDesc {
-                        shader: PathBuf::from("crates/fluff/shaders/curve_binning_stripped.glsl"),
+                        shader: PathBuf::from("crates/fluff/shaders/bin_curves.glsl"),
                         defines: Default::default(),
                         color_targets: vec![ColorTargetState {
                             format: Format::R16G16B16A16_SFLOAT,
@@ -678,7 +618,7 @@ impl App {
                 )
                 .unwrap();
 
-            let mut rp = rg.record_mesh_render_pass("curve_binning", curve_binning_pipeline);
+            let mut rp = rg.record_mesh_render_pass("bin_curves", curve_binning_pipeline);
 
             rp.set_color_attachments([ColorAttachmentDesc {
                 image: color_target,
@@ -695,31 +635,27 @@ impl App {
             rp.write_buffer(tile_buffer);
 
             rp.set_render_func(move |encoder| {
-                encoder.set_viewport(
-                    0.0,
-                    0.0,
-                    width as f32 / CURVE_BINNING_TILE_SIZE as f32,
-                    height as f32 / CURVE_BINNING_TILE_SIZE as f32,
-                    0.0,
-                    1.0,
-                );
+                let vp_width = width as f32 / BINNING_TILE_SIZE as f32;
+                let vp_height = height as f32 / BINNING_TILE_SIZE as f32;
+                encoder.set_viewport(0.0, 0.0, vp_width, vp_height, 0.0, 1.0);
+
                 //eprintln!("control_point_buffer device address = 0x{:016x}", control_point_buffer.device_address());
                 //eprintln!("curve_buffer device address = 0x{:016x}", curve_buffer.device_address());
                 //eprintln!("base_curve_index = {}", base_curve_index);
-                eprintln!("curve_count = {}", curve_count);
+                //eprintln!("curve_count = {}", curve_count);
 
                 encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
-                encoder.push_constants(&CurveBinningConstants {
+                encoder.push_constants(&shaders::shared::BinCurvesParams {
                     view_projection_matrix: view_proj,
                     viewport_size: uvec2(width, height),
-                    stroke_width: stroke_width,
-                    base_curve_index: base_curve_index,
+                    stroke_width,
+                    base_curve_index,
                     curve_count,
                     tile_count_x,
                     tile_count_y,
-                    frame: frame,
+                    frame,
                     control_points: control_point_buffer.device_address(),
-                    curve_data: curve_buffer.device_address(),
+                    curves: curve_buffer.device_address(),
                     tile_line_count: tile_line_count_buffer.device_address(),
                     tile_data: tile_buffer.device_address(),
                 });
@@ -735,7 +671,7 @@ impl App {
             let draw_curves_pipeline = engine.create_compute_pipeline(
                 "draw_curves",
                 ComputePipelineDesc {
-                    shader: PathBuf::from("crates/fluff/shaders/curve_binning_render_stripped.comp"),
+                    shader: PathBuf::from("crates/fluff/shaders/draw_curves.comp"),
                     defines: Default::default(),
                 },
             )?;
@@ -749,13 +685,13 @@ impl App {
                 //eprintln!("number of tiles = {}x{}", tile_count_x, tile_count_y);
                 //eprintln!("tile_buffer device address = 0x{:016x}", tile_buffer.device_address());
 
-                encoder.push_constants(&DrawCurvesPushConstants {
-                    view_proj: view_proj,
+                encoder.push_constants(&crate::shaders::shared::DrawCurvesPushConstants {
+                    view_proj,
                     base_curve: base_curve_index,
-                    stroke_width: stroke_width,
+                    stroke_width,
                     tile_count_x,
                     tile_count_y,
-                    frame: frame,
+                    frame,
                     tile_data: tile_buffer.device_address(),
                     tile_line_count: tile_line_count_buffer.device_address(),
                     output_image: color_target.device_handle(),
@@ -765,13 +701,13 @@ impl App {
             pass.finish();
         }
 
-        ////////////////////////////////////////////////////////////
+        /*////////////////////////////////////////////////////////////
         // Temporal accumulation
         {
             let compute_test = engine.create_compute_pipeline(
                 "compute_test",
                 ComputePipelineDesc {
-                    shader: PathBuf::from("crates/fluff/shaders/temporal_average_3.comp"),
+                    shader: PathBuf::from("../shaders/compute_test.comp"),
                     defines: Default::default(),
                 },
             )?;
@@ -790,7 +726,7 @@ impl App {
             });
             pass.finish();
             //rg.record_blit("blit_temporal_avg", temporal_average.clone(), color_target.clone());
-        }
+        }*/
 
         ////////////////////////////////////////////////////////////
         // Temporal accumulation
@@ -798,7 +734,7 @@ impl App {
             let temporal_average_pipeline = engine.create_compute_pipeline(
                 "temporal_average",
                 ComputePipelineDesc {
-                    shader: PathBuf::from("crates/fluff/shaders/temporal_average_2.comp"),
+                    shader: PathBuf::from("../shaders/temporal_average.comp"),
                     defines: Default::default(),
                 },
             )?;
@@ -807,9 +743,9 @@ impl App {
             pass.read_image(temporal_average);
             pass.write_image(temporal_average);
             pass.set_render_func(move |encoder| {
-                encoder.push_constants(&TemporalAveragePushConstants {
+                encoder.push_constants(&TemporalAverageParams {
                     viewport_size: uvec2(width, height),
-                    frame: frame,
+                    frame,
                     falloff: temporal_average_falloff,
                     new_frame: color_target.device_handle(),
                     avg_frame: temporal_average.device_handle(),
@@ -921,189 +857,6 @@ impl App {
             self.animation = Some(convert_animation_data(&self.device, &geo_files));
         }
     }
-
-    /*fn render_curve_bins(&mut self, cmd: &mut CommandStream) {
-        let color_target = &self.frame_image;
-        let color_target_view = &self.frame_image.create_top_level_view();
-
-        let Some(animation) = self.animation.as_ref() else {
-            return;
-        };
-        let Some(bin_rast_pipeline) = self.pipelines.curve_binning_pipeline.as_ref() else {
-            return;
-        };
-
-        let frame = &animation.frames[self.bin_rast_current_frame];
-        let width = color_target_view.width();
-        let height = color_target_view.height();
-
-        let tile_count_x = (width + CURVE_BINNING_TILE_SIZE - 1) / CURVE_BINNING_TILE_SIZE;
-        let tile_count_y = (height + CURVE_BINNING_TILE_SIZE - 1) / CURVE_BINNING_TILE_SIZE;
-
-        if self.tile_count_x != tile_count_x || self.tile_count_y != tile_count_y {
-            self.tile_count_x = tile_count_x;
-            self.tile_count_y = tile_count_y;
-            self.tile_buffer = self.device.create_array_buffer(
-                BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                tile_count_x as usize * tile_count_y as usize,
-            );
-
-            self.tile_line_count_image = self.device.create_image(&ImageCreateInfo {
-                memory_location: MemoryLocation::GpuOnly,
-                type_: ImageType::Image2D,
-                usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-                format: Format::R32_SINT,
-                width: tile_count_x,
-                height: tile_count_y,
-                depth: 1,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: 1,
-            });
-        }
-
-        let tile_line_count_image_view = self.tile_line_count_image.create_top_level_view();
-
-        if width != self.curves_image.width() || height != self.curves_image.height() {
-            self.curves_image = self.device.create_image(&ImageCreateInfo {
-                memory_location: MemoryLocation::GpuOnly,
-                type_: ImageType::Image2D,
-                usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-                format: Format::R8G8B8A8_UNORM,
-                width,
-                height,
-                depth: 1,
-                mip_levels: 1,
-                array_layers: 1,
-                samples: 1,
-            });
-        }
-
-        unsafe {
-            cmd.debug_group("clear tile buffer", |cmd| {
-                let mut encoder = cmd.begin_blit();
-                encoder.clear_image(&self.tile_line_count_image, ClearColorValue::Uint([0, 0, 0, 0]));
-                encoder.clear_image(&self.curves_image, ClearColorValue::Float([0.0, 0.0, 0.0, 0.0]));
-                encoder.fill_buffer(&self.tile_buffer.slice(..).untyped, 0);
-            });
-
-            cmd.debug_group("render curves", |cmd| {
-                let mut encoder = cmd.begin_rendering(
-                    &[ColorAttachment {
-                        image_view: color_target_view.clone(),
-                        load_op: AttachmentLoadOp::LOAD,
-                        store_op: AttachmentStoreOp::STORE,
-                        clear_value: [0.0, 0.0, 0.0, 0.0],
-                    }],
-                    Some(DepthStencilAttachment {
-                        image_view: self.depth_buffer_view.clone(),
-                        depth_load_op: AttachmentLoadOp::LOAD,
-                        depth_store_op: AttachmentLoadOp::STORE,
-                        stencil_load_op: Default::default(),
-                        stencil_store_op: Default::default(),
-                        depth_clear_value: 0.0,
-                        stencil_clear_value: 0,
-                    }),
-                );
-
-                encoder.bind_graphics_pipeline(bin_rast_pipeline);
-                encoder.set_viewport(
-                    0.0,
-                    0.0,
-                    width as f32 / CURVE_BINNING_TILE_SIZE as f32,
-                    height as f32 / CURVE_BINNING_TILE_SIZE as f32,
-                    0.0,
-                    1.0,
-                );
-                encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
-                encoder.push_descriptors(
-                    0,
-                    &BinRastArguments {
-                        position_buffer: animation.position_buffer.slice(..),
-                        curve_buffer: animation.curve_buffer.slice(..),
-                        tile_line_count_image: &tile_line_count_image_view,
-                        tile_buffer: self.tile_buffer.slice(..),
-                    },
-                );
-
-                encoder.push_constants(&BinRastPushConstants {
-                    view_proj: self.camera_control.camera().view_projection(),
-                    base_curve_index: animation.frames[self.bin_rast_current_frame].curve_range.start,
-                    stroke_width: self.bin_rast_stroke_width,
-                    tile_count_x,
-                    tile_count_y,
-                    viewport_size: uvec2(width, height),
-                    curve_count: frame.curve_range.count,
-                    frame: self.frame,
-                });
-
-                encoder.draw_mesh_tasks(frame.curve_range.count.div_ceil(64), 1, 1);
-                encoder.finish();
-            });
-
-            cmd.debug_group("draw curves", |cmd| {
-                let mut encoder = cmd.begin_compute();
-                encoder.bind_compute_pipeline(self.pipelines.draw_curves_pipeline.as_ref().unwrap());
-                encoder.bind_arguments(
-                    0,
-                    &DrawCurvesArguments {
-                        position_buffer: animation.position_buffer.slice(..),
-                        curve_buffer: animation.curve_buffer.slice(..),
-                        tile_line_count_image: &tile_line_count_image_view,
-                        tile_buffer: self.tile_buffer.slice(..),
-                        output_image: &self.curves_image.create_top_level_view(),
-                    },
-                );
-                encoder.bind_push_constants(&DrawCurvesPushConstants {
-                    view_proj: self.camera_control.camera().view_projection(),
-                    base_curve: animation.frames[self.bin_rast_current_frame].curve_range.start,
-                    stroke_width: self.bin_rast_stroke_width,
-                    tile_count_x,
-                    tile_count_y,
-                    frame: self.frame,
-                });
-                encoder.dispatch(tile_count_x, tile_count_y, 1);
-            });
-
-            cmd.debug_group("blit curves to screen", |cmd| {
-                let mut encoder = cmd.begin_blit();
-                encoder.blit_image(
-                    &self.curves_image,
-                    ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    Rect3D {
-                        min: Point3D { x: 0, y: 0, z: 0 },
-                        max: Point3D {
-                            x: width as i32,
-                            y: height as i32,
-                            z: 1,
-                        },
-                    },
-                    &color_target,
-                    ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    Rect3D {
-                        min: Point3D { x: 0, y: 0, z: 0 },
-                        max: Point3D {
-                            x: width as i32,
-                            y: height as i32,
-                            z: 1,
-                        },
-                    },
-                    vk::Filter::NEAREST,
-                );
-            });
-        }
-    }*/
 
     /*fn render_curves_oit(&mut self, cmd: &mut CommandStream) {
         let color_target = &self.frame_image;
@@ -1270,35 +1023,6 @@ impl App {
         let depth_buffer_view = depth_buffer.create_top_level_view();
         let camera_control = CameraControl::new(width, height);
         let overlay_renderer = OverlayRenderer::new(device, color_target_format, depth_buffer.format());
-        // DUMMY
-        let bin_rast_tile_buffer =
-            device.create_array_buffer::<BinRastTile>(BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST, MemoryLocation::GpuOnly, 1);
-        // DUMMY
-        let bin_rast_tile_curve_count_image = device.create_image(&ImageCreateInfo {
-            memory_location: MemoryLocation::GpuOnly,
-            type_: ImageType::Image2D,
-            usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_DST,
-            format: Format::R32_SINT,
-            width: 1,
-            height: 1,
-            depth: 1,
-            mip_levels: 1,
-            array_layers: 1,
-            samples: 1,
-        });
-        // DUMMY
-        let curves_image = device.create_image(&ImageCreateInfo {
-            memory_location: MemoryLocation::GpuOnly,
-            type_: ImageType::Image2D,
-            usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
-            format: Format::R8G8B8A8_SRGB,
-            width: 1,
-            height: 1,
-            depth: 1,
-            mip_levels: 1,
-            array_layers: 1,
-            samples: 1,
-        });
         let frame_image = device.create_image(&ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
             type_: ImageType::Image2D,
@@ -1347,11 +1071,6 @@ impl App {
             pipelines: Default::default(),
             bin_rast_stroke_width: 1.0,
             bin_rast_current_frame: 0,
-            tile_count_x: 0,
-            tile_count_y: 0,
-            tile_line_count_image: bin_rast_tile_curve_count_image,
-            tile_buffer: bin_rast_tile_buffer,
-            curves_image,
             oit_stroke_width: 0.0,
             oit_max_fragments_per_pixel: 0,
             oit_fragment_buffer,
@@ -1447,39 +1166,6 @@ impl App {
         self.overlay.cone(vec3(0.0, 0.95, 0.0), vec3(0.0, 1.0, 0.0), 0.02, green, green);
         self.overlay.cone(vec3(0.0, 0.0, 0.95), vec3(0.0, 0.0, 1.0), 0.02, blue, blue);
     }
-
-    /*fn render_temporal_average(&mut self, cmd: &mut CommandStream) {
-        let width = self.frame_image.width();
-        let height = self.frame_image.height();
-
-        let Some(ref pipeline) = self.pipelines.temporal_average_pipeline else {
-            return;
-        };
-
-        // Resolve pass
-        cmd.debug_group("temporal average", |cmd| {
-            let tile_count_x = width.div_ceil(16);
-            let tile_count_y = height.div_ceil(16);
-
-            let mut encoder = cmd.begin_compute();
-
-            encoder.bind_compute_pipeline(pipeline);
-            encoder.bind_arguments(
-                0,
-                &TemporalAverageArguments {
-                    new_frame: &self.frame_image.create_top_level_view(),
-                    accum: &self.temporal_avg_image.create_top_level_view(),
-                },
-            );
-            encoder.bind_push_constants(&TemporalAveragePushConstants {
-                viewport_size: uvec2(width, height),
-                frame: self.frame,
-                falloff: self.temporal_average_alpha,
-            });
-
-            encoder.dispatch(tile_count_x, tile_count_y, 1);
-        });
-    }*/
 
     pub fn render(&mut self, cmd: &mut CommandStream, image: &Image) {
         if self.reload_brush_textures {
@@ -1634,155 +1320,12 @@ impl App {
         });
     }
 
-    /*pub fn ui(&mut self, ui: &mut imgui::Ui) -> bool {
-        ui.show_demo_window(&mut true);
-
-        let mut quit = false;
-        ui.main_menu_bar(|| {
-            ui.menu("File", || {
-                if ui.menu_item("Load .geo...") {
-                    self.load_geo()
-                }
-
-                if ui.menu_item("Quit") {
-                    quit = true;
-                }
-            });
-        });
-
-        if ui.button("Reload brush textures") {
-            self.reload_brush_textures = true;
-        }
-
-        ui.checkbox("Temporal average", &mut self.temporal_average);
-        if self.temporal_average {
-            ui.slider("Alpha", 0.0, 1.0, &mut self.temporal_average_alpha);
-        }
-
-        if let Some(ref animation) = self.animation {
-            ui.window("Animation").build(|| {
-                ui.slider("Stroke width", 0.1, 40.0, &mut self.bin_rast_stroke_width);
-                ui.slider("OIT Stroke width", 0.1, 40.0, &mut self.oit_stroke_width);
-                ui.slider("Overlay line width", 0.1, 40.0, &mut self.overlay_line_width);
-                ui.slider("Overlay filter width", 0.01, 10.0, &mut self.overlay_filter_width);
-                let mut mode = match self.mode {
-                    RenderMode::BinRasterization => 0,
-                    RenderMode::CurvesOIT => 1,
-                    RenderMode::CurvesOITv2 => 2,
-                };
-                ui.combo_simple_string("Render mode", &mut mode, &["Bin rasterization", "Curves OIT", "Curves OIT v2"]);
-                self.mode = match mode {
-                    0 => RenderMode::BinRasterization,
-                    1 => RenderMode::CurvesOIT,
-                    2 => RenderMode::CurvesOITv2,
-                    _ => unreachable!(),
-                };
-
-                let current_brush = self
-                    .brush_textures
-                    .get(self.selected_brush)
-                    .map(|b| b.name.as_str())
-                    .unwrap_or("<choose...>");
-                if let Some(cb) = ui.begin_combo("Brush texture", current_brush) {
-                    for (i, brush) in self.brush_textures.iter().enumerate() {
-                        let clicked = ui.selectable_config(&brush.name).selected(self.selected_brush == i).build();
-                        if self.selected_brush == i {
-                            ui.set_item_default_focus();
-                        }
-                        if clicked {
-                            self.selected_brush = i;
-                        }
-                    }
-                    cb.end();
-                }
-
-                imgui::Drag::new("Frame")
-                    .display_format("Frame %d")
-                    .range(0, animation.frames.len() - 1)
-                    .build(ui, &mut self.bin_rast_current_frame);
-
-                test_ui(ui);
-            });
-        }
-
-        ui.show_metrics_window(&mut true);
-
-        quit
-    }*/
-
     pub fn on_exit(&mut self) {}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /*
-fn create_bin_rast_pipeline(
-    device: &Device,
-    target_color_format: Format,
-    target_depth_format: Format,
-) -> Result<GraphicsPipeline, graal::Error> {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[BinRastArguments::LAYOUT],
-            push_constants_size: mem::size_of::<BinRastPushConstants>(),
-        },
-        vertex_input: Default::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::MeshShading {
-            task: Some(ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_binning.glsl"))),
-                entry_point: "main",
-            }),
-            mesh: ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_binning.glsl"))),
-                entry_point: "main",
-            },
-        },
-        rasterization: RasterizationState {
-            polygon_mode: PolygonMode::Fill,
-            cull_mode: Default::default(),
-            front_face: FrontFace::CounterClockwise,
-            conservative_rasterization_mode: ConservativeRasterizationMode::Disabled,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint {
-            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_binning.glsl"))),
-            entry_point: "main",
-        },
-        depth_stencil: DepthStencilState {
-            depth_write_enable: true,
-            depth_compare_op: CompareOp::LessOrEqual,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info)
-}
-
-fn create_draw_curves_pipeline(device: &Device) -> Result<ComputePipeline, graal::Error> {
-    let create_info = ComputePipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[DrawCurvesArguments::LAYOUT],
-            push_constants_size: mem::size_of::<DrawCurvesPushConstants>(),
-        },
-        compute_shader: ShaderEntryPoint {
-            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_binning_render.comp"))),
-            entry_point: "main",
-        },
-    };
-    device.create_compute_pipeline(create_info)
-}
-
 fn create_curves_oit_pipeline(
     device: &Device,
     target_color_format: Format,

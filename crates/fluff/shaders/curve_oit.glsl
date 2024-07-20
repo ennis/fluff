@@ -1,5 +1,5 @@
 #version 460 core
-#include "common.glsl"
+#include "common.inc.glsl"
 
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_scalar_block_layout : require
@@ -31,8 +31,8 @@ const int MAX_FRAGMENTS_PER_PIXEL = 8;
 
 // A range of control points in the controlPoints buffer that describes a single curve.
 struct CurveDescriptor {
-    vec4 widthProfile; // polynomial coefficients
-    vec4 opacityProfile; // polynomial coefficients
+    vec4 widthProfile;// polynomial coefficients
+    vec4 opacityProfile;// polynomial coefficients
     uint start;
     uint size;
     uvec2 padding;
@@ -51,11 +51,11 @@ struct ControlPoint {
 
 //////////////////////////////////////////////////////////
 
-layout(set=0,binding=0,scalar) buffer PositionBuffer {
+layout(set=0, binding=0, scalar) buffer PositionBuffer {
     ControlPoint controlPoints[];
 };
 
-layout(set=0,binding=1,scalar) buffer CurveBuffer {
+layout(set=0, binding=1, scalar) buffer CurveBuffer {
     CurveDescriptor curves[];
 };
 
@@ -102,14 +102,14 @@ RationalCubicBezier3DSegment loadProjectedCubicBezierSegment(uint baseControlPoi
     vec4 p3_proj = project(p3);
 
     return RationalCubicBezier3DSegment(
-        p0_proj.xyz,
-        p1_proj.xyz,
-        p2_proj.xyz,
-        p3_proj.xyz,
-        p0_proj.w,
-        p1_proj.w,
-        p2_proj.w,
-        p3_proj.w);
+    p0_proj.xyz,
+    p1_proj.xyz,
+    p2_proj.xyz,
+    p3_proj.xyz,
+    p0_proj.w,
+    p1_proj.w,
+    p2_proj.w,
+    p3_proj.w);
 
 
     //vec3 p0 = ndcToWindow(project(controlPoints[baseControlPoint + segmentIndex*3 + 0]));
@@ -127,9 +127,9 @@ struct PositionAndParam {
 // Calculates the closest point on a bezier curve to a given point in screen space
 void distCubicBezier3DProj(RationalCubicBezier3DSegment segment, vec2 pos, out vec3 closestPoint, out float t, out float closestDist) {
     // initial search
-    const int maxStep = 16;      // max step for the initial search
-    float minDist = 99999999.; // current minimum distance
-    int index = 0; // index of the closest point
+    const int maxStep = 16;// max step for the initial search
+    float minDist = 99999999.;// current minimum distance
+    int index = 0;// index of the closest point
     for (int i = 0; i <= maxStep; ++i) {
         float d = distance(pos, evalRationalCubicBezier3D(segment, float(i) / maxStep).xy);
         if (d < minDist) {
@@ -138,14 +138,14 @@ void distCubicBezier3DProj(RationalCubicBezier3DSegment segment, vec2 pos, out v
         }
     }
 
-    float t_prev = float(max(index - 1, 0))  / maxStep ;
-    float t_next = float(min(index + 1, maxStep) ) / maxStep;
+    float t_prev = float(max(index - 1, 0))  / maxStep;
+    float t_next = float(min(index + 1, maxStep)) / maxStep;
     float t_mid = float(index) / maxStep;
 
     PositionAndParam points[3] = PositionAndParam[3](
-        PositionAndParam(evalRationalCubicBezier3D(segment, t_prev), t_prev),
-        PositionAndParam(evalRationalCubicBezier3D(segment, t_mid), t_mid),
-        PositionAndParam(evalRationalCubicBezier3D(segment, t_next), t_next));
+    PositionAndParam(evalRationalCubicBezier3D(segment, t_prev), t_prev),
+    PositionAndParam(evalRationalCubicBezier3D(segment, t_mid), t_mid),
+    PositionAndParam(evalRationalCubicBezier3D(segment, t_next), t_next));
 
     // refinement
     const int numRefineSteps = 6;
@@ -154,8 +154,8 @@ void distCubicBezier3DProj(RationalCubicBezier3DSegment segment, vec2 pos, out v
         PositionAndParam next = points[2];
         PositionAndParam mid = points[1];
 
-        vec3 mid_prev = evalRationalCubicBezier3D(segment, .5 * (prev.t + mid.t)); // halfway bewteen prev and mid
-        vec3 mid_next = evalRationalCubicBezier3D(segment, .5 * (next.t + mid.t)); // halfway between next and mid
+        vec3 mid_prev = evalRationalCubicBezier3D(segment, .5 * (prev.t + mid.t));// halfway bewteen prev and mid
+        vec3 mid_next = evalRationalCubicBezier3D(segment, .5 * (next.t + mid.t));// halfway between next and mid
 
         float d_prev = distance(pos, mid_prev.xy);
         float d_next = distance(pos, mid_next.xy);
@@ -263,7 +263,7 @@ void main()
     }
 }
 
-#endif  // __MESH__
+#endif// __MESH__
 
 //////////////////////////////////////////////////////////
 
@@ -278,11 +278,11 @@ layout(location=0) flat in int i_curveIndex;
 layout(location=0) out vec4 o_color;
 
 // Fragment buffer
-layout(set=0,binding=2) coherent buffer FragmentBuffer {
+layout(set=0, binding=2) coherent buffer FragmentBuffer {
     FragmentData[] fragments;
 };
 
-layout(set=0,binding=3) coherent buffer FragmentCountBuffer {
+layout(set=0, binding=3) coherent buffer FragmentCountBuffer {
     uint[] fragmentCount;
 };
 
@@ -321,7 +321,7 @@ void main() {
     //color = mix(color, vec3(0.0,0.0,0.0), outerStrokeMask);
     FragmentData frag = FragmentData(mask * opacity * vec4(color, 1.0), depth);
 
-#ifdef USE_OIT
+    #ifdef USE_OIT
     // Insert in fragment buffer
     beginInvocationInterlockARB();
     uint pixelIndex = coord.y * viewportSize.x + coord.x;
@@ -343,7 +343,7 @@ void main() {
     }
     memoryBarrierBuffer();
     endInvocationInterlockARB();
-#else
+    #else
     //beginInvocationInterlockARB();
     //uint pixelIndex = coord.y * viewportSize.x + coord.x;
     //uint fragCount = fragmentCount[pixelIndex];
@@ -351,7 +351,7 @@ void main() {
     //fragmentCount[pixelIndex] = 1;
     //memoryBarrierBuffer();
     //endInvocationInterlockARB();
-#endif
+    #endif
 
 
     //o_color = vec4(0.0,0.0,0.0,0.2);

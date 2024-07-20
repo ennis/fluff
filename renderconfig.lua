@@ -94,7 +94,7 @@ passes {
     -- coarse shading pass
     mesh_shading {
         id = 'CURVE_BINNING',
-        shader = { file = 'crates/fluff/shaders/curve_binning_stripped.glsl' },
+        shader = { file = 'crates/fluff/shaders/bin_curves.glsl' },
         rasterizerState = {
             polygonMode = 'fill',
             cullMode = 'back',

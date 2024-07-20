@@ -1,14 +1,14 @@
 #version 460 core
-
-layout(set=0, binding=0, rgba8) uniform readonly image2D frame;
-layout(set=0, binding=1, rgba8) uniform coherent image2D temporalAverage;
+#include "bindless.glsl"
 
 // Push constants
-layout(std140, push_constant) uniform PushConstants {
+layout(scalar, push_constant) uniform PushConstants {
     int viewport_width;
     int viewport_height;
     int frame_index;
     float alpha;
+    image2DHandle new_frame;
+    image2DHandle avg_frame;
 };
 
 layout(local_size_x=16, local_size_y=16) in;
@@ -21,9 +21,9 @@ void main() {
         return;
     }
 
-    vec4 current = imageLoad(frame, ivec2(coord));
-    vec4 average = imageLoad(temporalAverage, ivec2(coord));
+    vec4 new = imageLoad(new_frame, ivec2(coord));
+    vec4 average = imageLoad(avg_frame, ivec2(coord));
     // exponential moving average
-    vec4 new_average = mix(average, current, alpha);
-    imageStore(temporalAverage, ivec2(coord), new_average);
+    vec4 new_average = mix(average, new, alpha);
+    imageStore(avg_frame, ivec2(coord), new_average);
 }

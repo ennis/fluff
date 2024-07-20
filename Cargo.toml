@@ -1,11 +1,12 @@
 [workspace]
-members = ["crates/fluff", "crates/houdinio"]
+members = ["crates/fluff", "crates/houdinio", "crates/shader-bridge"]
 resolver = "2"
 
 [workspace.dependencies]
 graal = { path = "../graal/graal" }
 #openimageio = { path = "../openimageio-rs" }
 houdinio = { path = "crates/houdinio" }
+shader-bridge = { path = "crates/shader-bridge" }
 
 [profile.release]
 debug = true

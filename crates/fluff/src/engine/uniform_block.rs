@@ -1,7 +1,7 @@
 //! Uniform data blocks to be sent to the GPU.
 use std::collections::BTreeMap;
 use bytemuck::cast_slice;
-use crate::engine2::Error;
+use crate::engine::Error;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum UniformType {

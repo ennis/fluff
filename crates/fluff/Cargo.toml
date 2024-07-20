@@ -9,7 +9,7 @@ edition = "2021"
 winit = "0.29.3"
 obj = "0.10.2"
 glam = "0.24.2"
-inline-spirv = "0.1.4"
+#inline-spirv = "0.1.4"
 regex = "1.10.2"
 imgui = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
 imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
@@ -35,3 +35,6 @@ tracing = "0.1.40"
 bytemuck = "1.16.1"
 bitflags = "2.6.0"
 scoped-tls = "1.0.1"
+
+[build-dependencies]
+shader-bridge = { workspace = true }

@@ -1,11 +1,14 @@
 #version 460 core
-#include "common.glsl"
+#include "bindless.inc.glsl"
+#include "common.inc.glsl"
+#include "shared.inc.glsl"
+#include "bezier.inc.glsl"
 
 #extension GL_EXT_mesh_shader : require
 #extension GL_ARB_fragment_shader_interlock : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-
+/*
 // Push constants
 layout(push_constant, scalar) uniform PushConstants {
     ControlPointBuffer b_controlPoints;
@@ -14,56 +17,65 @@ layout(push_constant, scalar) uniform PushConstants {
     TileData b_tileData;
     mat4 viewProjectionMatrix;
     uvec2 viewportSize;
-    float strokeWidth;
+    float u.strokeWidth;
     int baseCurveIndex;
     int curveCount;
     int tilesCountX;
     int tilesCountY;
     int frame;
+};*/
+
+layout(push_constant, scalar) uniform PushConstants {
+    BinCurvesParams u;
 };
 
+/*
 struct PositionAndParam {
     vec3 pos;
     float t;
-};
+};*/
 
 //////////////////////////////////////////////////////////
 
 // Converts normalized device coordinates (NDC) to window coordinates.
 vec3 ndc2win(vec3 ndc) {
-    return (ndc * .5 + .5) * vec3(vec2(viewportSize), 1.);
+    return (ndc * .5 + .5) * vec3(vec2(u.viewportSize), 1.);
 }
 
 // Converts window coordinates to normalized device coordinates (NDC).
 vec3 win2ndc(vec3 window) {
-    return window / vec3(vec2(viewportSize), 1.) * 2. - 1.;
+    return window / vec3(vec2(u.viewportSize), 1.) * 2. - 1.;
 }
 
 vec4 project(vec3 pos)
 {
     vec4 p = vec4(pos, 1.);
-    vec4 clip = viewProjectionMatrix * vec4(pos, 1.);
+    vec4 clip = u.viewProjectionMatrix * vec4(pos, 1.);
     clip.y = -clip.y;
     return vec4(ndc2win(clip.xyz/clip.w), clip.w);
 }
 
-// Load a bezier segment from an index into the control point buffer
-RationalCubicBezier3DSegment loadProjectedCubicBezierSegment(uint firstCPIndex)
+uint loadCurveFirstCP(uint curveIndex)
 {
-    vec4 proj0 = project(b_controlPoints[firstCPIndex+0].pos);
-    vec4 proj1 = project(b_controlPoints[firstCPIndex+1].pos);
-    vec4 proj2 = project(b_controlPoints[firstCPIndex+2].pos);
-    vec4 proj3 = project(b_controlPoints[firstCPIndex+3].pos);
+    return u.curves.d[u.baseCurveIndex + curveIndex].start;
+}
+
+// Load a bezier segment from an index into the control point buffer
+RationalCubicBezier3DSegment loadProjectedCubicBezierSegment(uint curveIndex)
+{
+    uint firstCP = loadCurveFirstCP(curveIndex);
+    vec4 proj0 = project(u.controlPoints.d[firstCP + 0].pos);
+    vec4 proj1 = project(u.controlPoints.d[firstCP + 1].pos);
+    vec4 proj2 = project(u.controlPoints.d[firstCP + 2].pos);
+    vec4 proj3 = project(u.controlPoints.d[firstCP + 3].pos);
     return RationalCubicBezier3DSegment(proj0.xyz, proj1.xyz, proj2.xyz, proj3.xyz, proj0.w, proj1.w, proj2.w, proj3.w);
 }
 
 const int SUBDIV_LEVEL_OFFSET = 2; // minimum 4 subdivisions
 const int SUBDIV_LEVEL_COUNT = 4; // 4,8,16,32
 
-// NOTE: need to be in sync with application code
-const int TASK_WORKGROUP_SIZE = 64;
-const int MAX_VERTICES_PER_CURVE = 64;
-const int MAX_CURVES_PER_SUBDIV_LEVEL = TASK_WORKGROUP_SIZE;
+//const int MAX_VERTICES_PER_CURVE = 64;
+const uint MAX_CURVES_PER_SUBDIV_LEVEL = BINNING_TASK_WORKGROUP_SIZE;
 
 
 // Returns the number of points of a subdivided curve at the given level.
@@ -93,8 +105,7 @@ struct TaskData {
 
 #ifdef __TASK__
 
-layout(local_size_x=TASK_WORKGROUP_SIZE) in;
-
+layout(local_size_x=BINNING_TASK_WORKGROUP_SIZE) in;
 
 taskPayloadSharedEXT TaskData taskData;
 
@@ -113,12 +124,12 @@ void main() {
     // Determine if this invocation is valid, or if this is a slack invocation due to the number of curves not being
     // a multiple of the workgroup size, in which case this invocation should do nothing.
     // NOTE: don't return early because there is a barrier() call below that must be executed in uniform control flow.
-    bool enabled = curveIndex < curveCount;
+    bool enabled = curveIndex < u.curveCount;
     //curveIndex = min(curveIndex, curveCount - 1);
 
     if (enabled) {
         // Load and project the cubic Bézier segment
-        RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(b_curves[curveIndex].start);
+        RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(curveIndex);
 
         // Determine the subdivision count of the curve.
         // Adapted from https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#section.10.6
@@ -136,7 +147,7 @@ void main() {
         // add curve to the corresponding subdivision bucket
         uint bucket = findMSB(n >> 2);
         uint index = atomicAdd(taskData.countForBin[bucket], 1);
-        taskData.subdivBins[bucket*TASK_WORKGROUP_SIZE + index] = curveIndex;
+        taskData.subdivBins[bucket*BINNING_TASK_WORKGROUP_SIZE + index] = curveIndex;
     }
 
     barrier();
@@ -218,12 +229,12 @@ void main()
     // so do nothing in this case.
     // As in the task shader, don't return early, because there is a barrier() call below that must be executed
     // in uniform control flow.
-    bool enabled = curveIndex < curveCount;
+    bool enabled = curveIndex < u.curveCount;
 
     // Evaluate the position, normal, tangents on the curve at the current t parameters
     // and store them in shared memory.
     if (enabled) {
-        RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(b_curves[curveIndex].start);
+        RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(curveIndex);
         vec3 position = evalRationalCubicBezier3D(segment, t);
         vec2 tangent = normalize(evalRationalCubicBezier3DTangent(segment, t).xy);
         vec2 normal = vec2(-tangent.y, tangent.x);
@@ -233,7 +244,7 @@ void main()
     barrier();
 
     if (enabled) {
-        float hw_aa = strokeWidth + conservative;
+        float hw_aa = u.strokeWidth + conservative;
 
         // Emit geometry
         SetMeshOutputsEXT(4 * sampleCount * numCurvesInWorkgroup, 2 * (sampleCount * numCurvesInWorkgroup - 1));
@@ -254,13 +265,13 @@ void main()
             o_curveIndex[invocation*4 + 2] = int(curveIndex);
             o_curveIndex[invocation*4 + 3] = int(curveIndex);
 
-            vec2 pr = b_curves[curveIndex].paramRange;
+            vec2 pr = u.curves.d[u.baseCurveIndex + curveIndex].paramRange;
             o_uv[invocation*4 + 0] = vec2(remap(t, 0., 1., pr.x, pr.y), hw_aa);
             o_uv[invocation*4 + 1] = vec2(remap(t, 0., 1., pr.x, pr.y), -hw_aa);
             o_uv[invocation*4 + 2] = vec2(remap(t, 0., 1., pr.x, pr.y), hw_aa);
             o_uv[invocation*4 + 3] = vec2(remap(t, 0., 1., pr.x, pr.y), -hw_aa);
 
-            vec3 cd = b_controlPoints[b_curves[curveIndex].start].color;
+            vec3 cd = u.controlPoints.d[u.curves.d[u.baseCurveIndex + curveIndex].start].color;
             o_color[invocation*4 + 0] = cd;
             o_color[invocation*4 + 1] = cd;
             o_color[invocation*4 + 2] = cd;
@@ -294,12 +305,12 @@ layout(location=3) perprimitiveEXT in vec4 i_line;
 layout(location=0) out vec4 o_color;
 
 void main() {
-    int tileIndex = int(gl_FragCoord.x) + int(gl_FragCoord.y) * tilesCountX;
+    uint tileIndex = uint(gl_FragCoord.x) + uint(gl_FragCoord.y) * u.tileCountX;
 
-    int count = atomicAdd(b_tileLineCount[tileIndex].count, 1);
+    uint count = atomicAdd(u.tileLineCount.d[tileIndex], 1);
     if (count < MAX_LINES_PER_TILE) {
-        b_tileData[tileIndex].entries[count].line = i_line;
-        b_tileData[tileIndex].entries[count].curveIndex = i_curveIndex;
+        u.tileData.d[tileIndex].lines[count].coords = i_line;
+        u.tileData.d[tileIndex].lines[count].curveIndex = i_curveIndex;
     }
 
     o_color = vec4(0., 1., 0., 0.2);

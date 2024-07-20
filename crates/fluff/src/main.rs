@@ -7,7 +7,6 @@ use std::{
 };
 
 use graal::vk;
-use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use winit::{
     event::{Event, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
@@ -22,10 +21,10 @@ mod camera_control;
 mod egui_backend;
 //mod imgui_backend;
 mod overlay;
-mod shaders;
 //mod ui;
-mod engine2;
+mod engine;
 mod util;
+mod shaders;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

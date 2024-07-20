@@ -1,0 +1,49 @@
+#version 460
+#include "bindless.inc.glsl"
+#include "common.inc.glsl"
+#include "shared.inc.glsl"
+
+layout(push_constant) uniform PushConstants {
+    DrawCurvesPushConstants u;
+};
+
+// One thread per pixel in a tile
+layout(local_size_x=BINNING_TILE_SIZE, local_size_y=BINNING_TILE_SIZE) in;
+
+//////////////////////////////////////////////////////////
+
+shared TileLineData[MAX_LINES_PER_TILE] s_lines;
+
+
+void main() {
+    uvec2 tileCoord = gl_WorkGroupID.xy;
+    uint tileIndex = tileCoord.y * u.tileCountX + tileCoord.x;
+    uint lineCount = min(u.tileLineCount.d[tileIndex], MAX_LINES_PER_TILE);
+    uvec2 coord = gl_GlobalInvocationID.xy;
+
+    // load lines in shared memory
+    if (gl_LocalInvocationIndex < lineCount) {
+        s_lines[gl_LocalInvocationIndex] = u.tileData.d[tileIndex].lines[gl_LocalInvocationIndex];
+    }
+    barrier();
+
+    vec4 color = vec4(0.0);
+    for (int i = 0; i < lineCount; i++) {
+        float width = u.strokeWidth;
+        float h = width * 0.5;
+        float y = distSeg(vec2(coord)+vec2(0.5), s_lines[i].coords.xy, s_lines[i].coords.zw);
+        float filterWidth = 1.5;
+        float halfFilterWidth = filterWidth * 0.5;
+        float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
+        color += 0.2 * alpha;
+        //color += vec4(1.0) * (1.0 - smoothstep(0.0, 3.0, y));
+    }
+
+    /*uvec2 localCoord = gl_LocalInvocationID.xy;
+    if (localCoord.x == 0 || localCoord.y == 0) {
+        color = vec4(1.0, 0.0, 0.0, 1.0);
+    }*/
+
+    imageStore(u.outputImage, ivec2(coord), vec4(color.rg, float(lineCount)/float(MAX_LINES_PER_TILE), 1.0));
+    //imageStore(outputImage, ivec2(coord), vec4(vec3(float(lineCount)/float(MAX_LINES_PER_TILE)), 1.0));
+}

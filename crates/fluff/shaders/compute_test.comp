@@ -23,7 +23,7 @@ layout(scalar, push_constant) uniform PushConstants {
     uint element_count;
     BufferData data;
     CurveControlPoints2 controlPoints;
-    image2DIndex output_image;
+    image2DHandle output_image;
 };
 
 layout(local_size_x=64) in;

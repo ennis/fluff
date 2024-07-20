@@ -5,7 +5,7 @@ use std::{ffi::c_void, mem, ptr, sync::{
 }};
 use graal::vk::Handle;
 use tracing::debug;
-use crate::engine2::Image;
+use crate::engine::Image;
 
 pub(super) const MAX_INDEXED_TEX_COUNT: u32 = 4096;
 pub(super) const MAX_INDEXED_SAMPLER_COUNT: u32 = 4096;

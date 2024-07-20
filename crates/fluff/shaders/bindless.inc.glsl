@@ -16,10 +16,10 @@ layout(set=1, binding=0) uniform restrict iimage2D bindless_iimage2D[];
 layout(set=2, binding=0) uniform sampler bindless_sampler[];
 
 // resource indexing structs
-struct samplerIndex { uint idx; };
-struct texture2DIndex { uint idx; };
-struct image2DIndex { uint idx; };
-struct iimage2DIndex { uint idx; };
+struct samplerHandle { uint idx; };
+struct texture2DHandle { uint idx; };
+struct image2DHandle { uint idx; };
+struct iimage2DHandle { uint idx; };
 
 /*
 // Default sampler index
@@ -34,9 +34,9 @@ const samplerIndex s_nearest_clamp = samplerIndex(3);*/
 
 //-----------------------------------------------------------------------------
 
-vec4 sampleTexture2D(texture2DIndex tex, samplerIndex samp, vec2 P) { return texture(C_SAMPLER2D(tex, samp), P); }
-vec4 imageLoad(image2DIndex image, ivec2 P) { return imageLoad(bindless_image2D[image.idx], P); }
-void imageStore(image2DIndex image, ivec2 P, vec4 data) { imageStore(bindless_image2D[image.idx], P, data); }
+vec4 sampleTexture2D(texture2DHandle tex, samplerHandle samp, vec2 P) { return texture(C_SAMPLER2D(tex, samp), P); }
+vec4 imageLoad(image2DHandle image, ivec2 P) { return imageLoad(bindless_image2D[image.idx], P); }
+void imageStore(image2DHandle image, ivec2 P, vec4 data) { imageStore(bindless_image2D[image.idx], P, data); }
 
 
 #undef C_SAMPLER2D
