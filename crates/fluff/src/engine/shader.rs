@@ -6,6 +6,7 @@ use graal::{
 };
 use spirv_reflect::types::ReflectTypeFlags;
 use std::{collections::BTreeMap, path::Path};
+use std::rc::Rc;
 use tracing::{error, warn};
 
 #[derive(Default)]
@@ -32,7 +33,7 @@ pub(super) fn compile_shader_stage(
         Err(error) => {
             return Err(Error::ShaderReadError {
                 path: file_path.to_path_buf(),
-                error,
+                error: error.into(),
             });
         }
     };
@@ -103,7 +104,7 @@ pub(super) fn compile_shader_stage(
         Ok(artifact) => artifact,
         Err(err) => {
             error!("failed to compile shader `{display_path}`: {err}");
-            return Err(err.into());
+            return Err(Rc::new(err).into());
         }
     };
 
@@ -223,7 +224,7 @@ pub(super) fn compile_shader_stage(
                 let Some(tydesc) = var.type_description.as_ref() else { continue };
                 let offset = var.absolute_offset;
 
-                eprintln!("name: {:?} offset {:?} size {:?}", var.name, offset, var.size);
+                //eprintln!("name: {:?} offset {:?} size {:?}", var.name, offset, var.size);
 
                 if tydesc.type_flags.contains(ReflectTypeFlags::FLOAT) {
                     if tydesc.traits.numeric.scalar.width == 32 {
@@ -268,7 +269,7 @@ pub(super) fn compile_shader_stage(
                 } else if tydesc.type_flags.contains(ReflectTypeFlags::REF) {
                     add_constant(&var.name, offset, UniformType::DeviceAddress);
                 } else {
-                    warn!("`{display_path}`: unsupported push constant type: `{} {};`", tydesc.type_name, var.name);
+                    //warn!("`{display_path}`: unsupported push constant type: `{} {};`", tydesc.type_name, var.name);
                     continue;
                 }
             }

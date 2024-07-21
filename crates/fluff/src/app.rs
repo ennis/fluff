@@ -1,4 +1,4 @@
-use egui::{Align2, Color32, FontId, Frame, Margin, Response, Rounding, Ui, Widget};
+use egui::{Align2, Color32, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Ui, Widget};
 use egui_extras::{Column, TableBuilder};
 use glam::{dvec2, mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2};
 use graal::{
@@ -13,12 +13,12 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
-use tracing::trace;
+use tracing::{info, trace};
 
 use houdinio::Geo;
 use winit::{
     event::{MouseButton, TouchPhase},
-    keyboard::{Key, NamedKey},
+    keyboard::NamedKey,
 };
 
 use crate::{
@@ -29,6 +29,7 @@ use crate::{
     shaders::shared::{CurveDesc, TemporalAverageParams, BINNING_TILE_SIZE},
     util::resolve_file_sequence,
 };
+use crate::shaders::shared::TileData;
 
 /// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
 ///
@@ -443,44 +444,7 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const BIN_RAST_SAMPLE_COUNT: u32 = 16;
-const CURVE_BINNING_TILE_SIZE: u32 = 16;
-const CURVE_BINNING_MAX_LINES_PER_TILE: usize = 64;
 const CURVES_OIT_MAX_FRAGMENTS_PER_PIXEL: usize = 8;
-
-type CurveIndex = u32;
-
-#[derive(Copy, Clone)]
-struct BinRastPushConstants {
-    view_proj: glam::Mat4,
-    viewport_size: glam::UVec2,
-    stroke_width: f32,
-    base_curve_index: u32,
-    curve_count: u32,
-    /// Number of tiles in the X direction.
-    tile_count_x: u32,
-    /// Number of tiles in the Y direction.
-    tile_count_y: u32,
-    frame: i32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct TileEntry {
-    line: [f32; 4],
-    param_range: [f32; 2],
-    curve_index: CurveIndex,
-}
-
-const _: () = assert!(mem::size_of::<TileEntry>() == 28);
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct BinRastTile {
-    lines: [TileEntry; CURVE_BINNING_MAX_LINES_PER_TILE],
-}
-
-const _: () = assert!(mem::size_of::<BinRastTile>() == 28 * CURVE_BINNING_MAX_LINES_PER_TILE);
 
 /*#[derive(Attachments)]
 struct RenderAttachments<'a> {
@@ -623,6 +587,24 @@ struct Tweak {
     autofocus: bool,
 }
 
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct SavedSettings {
+    tweaks: Vec<Tweak>,
+    last_geom_file: Option<PathBuf>,
+}
+
+impl SavedSettings {
+    fn save(&self) {
+        fs::write("settings.json", serde_json::to_string(self).unwrap()).expect("failed to save settings");
+    }
+
+    fn load() -> Result<Self, anyhow::Error> {
+        let str = fs::read_to_string("settings.json")?;
+        let data = serde_json::from_str(&str)?;
+        Ok(data)
+    }
+}
+
 pub struct App {
     // Keep a copy of the device so we don't have to pass it around everywhere.
     device: Device,
@@ -668,8 +650,8 @@ pub struct App {
     pen_points: Vec<PenSample>,
     drawn_curves: AppendBuffer<CurveDesc>,
     drawn_control_points: AppendBuffer<ControlPoint>,
-    tweaks: Vec<Tweak>,
-    tweaks_need_update: bool,
+    settings: SavedSettings,
+    tweaks_changed: bool,
     engine: Engine,
 }
 
@@ -688,9 +670,23 @@ impl App {
         let temporal_average_falloff = self.temporal_average_alpha;
         let debug_tile_line_overflow = self.debug_tile_line_overflow;
 
-        let tile_count_x = width.div_ceil(CURVE_BINNING_TILE_SIZE);
-        let tile_count_y = height.div_ceil(CURVE_BINNING_TILE_SIZE);
+        let tile_count_x = width.div_ceil(BINNING_TILE_SIZE);
+        let tile_count_y = height.div_ceil(BINNING_TILE_SIZE);
         //engine.define_global("TILE_SIZE", CURVE_BINNING_TILE_SIZE.to_string());
+        let camera = self.camera_control.camera();
+        let scene_params = shaders::shared::SceneParams {
+            view: camera.view,
+            proj: camera.projection,
+            view_proj: camera.view_projection(),
+            eye: self.camera_control.eye().as_vec3(),
+            // TODO frustum parameters
+            near: 0.0,
+            far: 0.0,
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        };
 
         let mut rg = engine.create_graph();
 
@@ -707,6 +703,7 @@ impl App {
         let temporal_average = rg.import_image("temporal_average", self.temporal_avg_image.clone());
         let color_target = rg.import_image("color_target", color_target);
         let depth_target = rg.import_image("depth_buffer", self.depth_buffer.clone());
+        let scene_params_buf = rg.upload_data("scene_params", &scene_params);
 
         ////////////////////////////////////////////////////////////
         // Curve binning test
@@ -716,7 +713,7 @@ impl App {
         );
         let tile_buffer = rg.create_buffer(
             "TILE_BUFFER",
-            tile_count_x as usize * tile_count_y as usize * size_of::<BinRastTile>(),
+            tile_count_x as usize * tile_count_y as usize * size_of::<TileData>(),
         );
 
         {
@@ -773,7 +770,7 @@ impl App {
 
                 encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
                 encoder.push_constants(&shaders::shared::BinCurvesParams {
-                    view_projection_matrix: view_proj,
+                    scene_params: scene_params_buf.device_address(),
                     viewport_size: uvec2(width, height),
                     stroke_width,
                     base_curve_index,
@@ -895,38 +892,37 @@ impl App {
         }
     }
 
-    fn load_geo(&mut self) {
-        use rfd::FileDialog;
-        let file = FileDialog::new().add_filter("Houdini JSON geometry", &["geo"]).pick_file();
+    fn load_geo_file(&mut self, path: &Path) {
+        let file_sequence = match resolve_file_sequence(path) {
+            Ok(seq) => seq,
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                return;
+            }
+        };
 
-        if let Some(ref file) = file {
-            let file_sequence = match resolve_file_sequence(file) {
-                Ok(seq) => seq,
+        let mut geo_files = vec![];
+        for (frame_index, file_path) in file_sequence {
+            eprint!("Loading: `{}`...", file_path.display());
+            match Geo::load_json(file_path) {
+                Ok(geometry) => {
+                    geo_files.push(GeoFileData {
+                        index: frame_index,
+                        geometry,
+                    });
+                    eprintln!("OK")
+                }
                 Err(err) => {
                     eprintln!("Error: {}", err);
-                    return;
-                }
-            };
-
-            let mut geo_files = vec![];
-            for (frame_index, file_path) in file_sequence {
-                eprint!("Loading: `{}`...", file_path.display());
-                match Geo::load_json(file_path) {
-                    Ok(geometry) => {
-                        geo_files.push(GeoFileData {
-                            index: frame_index,
-                            geometry,
-                        });
-                        eprintln!("OK")
-                    }
-                    Err(err) => {
-                        eprintln!("Error: {}", err);
-                    }
                 }
             }
-            self.animation = Some(convert_animation_data(&self.device, &geo_files));
         }
+        self.settings.last_geom_file = Some(path.to_path_buf());
+        self.settings.save();
+        self.animation = Some(convert_animation_data(&self.device, &geo_files));
     }
+
+    fn load_last_geo_file(&mut self) {}
 
     /*fn render_curves_oit(&mut self, cmd: &mut CommandStream) {
         let color_target = &self.frame_image;
@@ -1134,16 +1130,7 @@ impl App {
         let drawn_control_points = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
 
         // load tweaks
-        let tweaks = match fs::read_to_string("global-settings.json") {
-            Ok(json) => serde_json::from_str::<Vec<Tweak>>(&json).unwrap_or_else(|err| {
-                eprintln!("Error loading tweaks: {}", err);
-                vec![]
-            }),
-            Err(err) => {
-                eprintln!("Error loading tweaks: {}", err);
-                vec![]
-            }
-        };
+        let settings = SavedSettings::load().unwrap_or_default();
 
         let mut app = App {
             device: device.clone(),
@@ -1176,9 +1163,9 @@ impl App {
             temporal_average_alpha: 0.25,
             engine: Engine::new(device.clone()),
             drawn_control_points,
-            tweaks,
+            settings,
             debug_tile_line_overflow: false,
-            tweaks_need_update: false,
+            tweaks_changed: false,
         };
         app.reload_shaders();
         app
@@ -1226,8 +1213,8 @@ impl App {
         self.camera_control.cursor_moved(pos);
     }
 
-    pub fn key_input(&mut self, key: &Key, pressed: bool) {
-        if *key == Key::Named(NamedKey::F5) && pressed {
+    pub fn key_input(&mut self, key: &winit::keyboard::Key, pressed: bool) {
+        if *key == winit::keyboard::Key::Named(NamedKey::F5) && pressed {
             self.reload_shaders();
         }
     }
@@ -1367,10 +1354,30 @@ impl App {
         let dt = ctx.input(|input| input.unstable_dt);
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            let reload_shortcut = egui::KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
+            if ui.input_mut(|input| input.consume_shortcut(&reload_shortcut)) {
+                if let Some(path) = self.settings.last_geom_file.clone() {
+                    self.load_geo_file(&path);
+                }
+            }
+
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Load .geo...").clicked() {
-                        self.load_geo()
+                        use rfd::FileDialog;
+                        let file = FileDialog::new().add_filter("Houdini JSON geometry", &["geo"]).pick_file();
+                        if let Some(ref file) = file {
+                            self.load_geo_file(file);
+                        }
+                    }
+                    if egui::Button::new("Reload last geometry")
+                        .shortcut_text(ui.ctx().format_shortcut(&reload_shortcut))
+                        .ui(ui)
+                        .clicked()
+                    {
+                        if let Some(path) = self.settings.last_geom_file.clone() {
+                            self.load_geo_file(&path);
+                        }
                     }
                 })
             });
@@ -1443,7 +1450,6 @@ impl App {
                     .ui(ui);
             }
 
-
             ui.heading("Global settings");
             TableBuilder::new(ui)
                 .column(Column::auto().resizable(true))
@@ -1461,7 +1467,7 @@ impl App {
                 })
                 .body(|mut body| {
                     let mut delete = None;
-                    for (i, t) in self.tweaks.iter_mut().enumerate() {
+                    for (i, t) in self.settings.tweaks.iter_mut().enumerate() {
                         body.row(18.0, |mut row| {
                             row.col(|ui| {
                                 let resp = ui.text_edit_singleline(&mut t.name);
@@ -1470,64 +1476,67 @@ impl App {
                                     t.autofocus = false;
                                 }
                                 if resp.changed() {
-                                    self.tweaks_need_update = true;
+                                    self.tweaks_changed = true;
                                 }
                             });
                             row.col(|ui| {
                                 if ui.text_edit_singleline(&mut t.value).changed() {
-                                    self.tweaks_need_update = true;
+                                    self.tweaks_changed = true;
                                 }
                             });
                             row.col(|ui| {
                                 if ui.checkbox(&mut t.enabled, "").changed() {
-                                    self.tweaks_need_update = true;
+                                    self.tweaks_changed = true;
                                 }
                             });
                             row.col(|ui| {
                                 if icon_button(ui, egui_phosphor::fill::TRASH, egui::Color32::WHITE).clicked() {
                                     delete = Some(i);
-                                    self.tweaks_need_update = true;
+                                    self.tweaks_changed = true;
                                 }
                             });
                         });
                     }
                     if let Some(i) = delete {
-                        self.tweaks.remove(i);
+                        self.settings.tweaks.remove(i);
                     }
                     body.row(18.0, |mut row| {
                         row.col(|ui| {
                             if ui.button("Add tweak").clicked() {
-                                self.tweaks.push(Tweak {
-                                    name: format!("TWEAK_VALUE_{}", self.tweaks.len()),
+                                self.settings.tweaks.push(Tweak {
+                                    name: format!("TWEAK_VALUE_{}", self.settings.tweaks.len()),
                                     value: "0".to_string(),
                                     enabled: true,
                                     autofocus: true,
                                 });
-                                self.tweaks_need_update = true;
+                                self.tweaks_changed = true;
                             }
                         });
                     });
                 });
 
-            ui.add_enabled_ui(self.tweaks_need_update, |ui| {
-                if ui.button("Update tweaks").clicked() {
-                    let defines = self
-                        .tweaks
-                        .iter()
-                        .filter(|t| t.enabled)
-                        .map(|t| (t.name.clone(), t.value.clone()))
-                        .collect();
-                    self.engine.set_global_defines(defines);
-                    self.tweaks_need_update = false;
+            if self.tweaks_changed {
+                self.settings.save();
+                self.tweaks_changed = false;
+            }
 
-                    // Save the tweaks to a json file
-                    fs::write("global-settings.json", serde_json::to_string(&self.tweaks).unwrap()).unwrap();
-                }
-            });
+            if ui.button("Reload shaders").clicked() {
+                let defines = self
+                    .settings
+                    .tweaks
+                    .iter()
+                    .filter(|t| t.enabled)
+                    .map(|t| (t.name.clone(), t.value.clone()))
+                    .collect();
+                info!("Will reload shaders on the next frame");
+                self.engine.set_global_defines(defines);
+            }
         });
     }
 
-    pub fn on_exit(&mut self) {}
+    pub fn on_exit(&mut self) {
+        self.settings.save();
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1628,62 +1637,5 @@ fn create_curves_oit_v2_pipeline(
     };
 
     device.create_graphics_pipeline(create_info)
-}
-
-fn create_curves_oit_resolve_pipeline(
-    device: &Device,
-    target_color_format: Format,
-    target_depth_format: Format,
-) -> Result<GraphicsPipeline, graal::Error> {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[CurvesOITResolveArguments::LAYOUT],
-            push_constants_size: mem::size_of::<CurvesOITResolvePushConstants>(),
-        },
-        vertex_input: Default::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::vertex_shader_from_source_file(Path::new(
-            "crates/fluff/shaders/curve_oit_resolve.glsl",
-        )),
-        rasterization: RasterizationState {
-            polygon_mode: PolygonMode::Fill,
-            cull_mode: Default::default(),
-            front_face: FrontFace::CounterClockwise,
-            conservative_rasterization_mode: ConservativeRasterizationMode::Disabled,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/curve_oit_resolve.glsl")),
-        depth_stencil: DepthStencilState {
-            depth_write_enable: false,
-            depth_compare_op: CompareOp::Always,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info)
-}
-
-fn create_temporal_avg_pipeline(device: &Device) -> Result<ComputePipeline, graal::Error> {
-    let create_info = ComputePipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[TemporalAverageArguments::LAYOUT],
-            push_constants_size: mem::size_of::<TemporalAveragePushConstants>(),
-        },
-        compute_shader: ShaderEntryPoint {
-            code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/temporal_average.comp"))),
-            entry_point: "main",
-        },
-    };
-    device.create_compute_pipeline(create_info)
 }
 */

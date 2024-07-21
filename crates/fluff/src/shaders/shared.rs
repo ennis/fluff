@@ -7,6 +7,28 @@ use glam::{Mat4, UVec2, Vec2, Vec4};
 
 use super::types::*;
 
+/// Scene camera parameters.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct SceneParams {
+    /// View matrix.
+    pub view: Mat4,
+    /// Projection matrix.
+    pub proj: Mat4,
+    /// View-projection matrix.
+    pub view_proj: Mat4,
+    /// Position of the camera in world space.
+    pub eye: Vec3,
+    /// Near clip plane position in view space.
+    pub near: f32,
+    /// far clip plane position in view space.
+    pub far: f32,
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
 /// 3D bezier control point.
 #[repr(C)]
 pub struct ControlPoint {
@@ -34,7 +56,7 @@ pub struct CurveDesc {
 }
 
 /// Maximum number of line segments per tile.
-pub const MAX_LINES_PER_TILE: usize = 64;
+pub const MAX_LINES_PER_TILE: usize = 256;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -57,7 +79,7 @@ pub struct BinCurvesParams {
     pub curves: BufferAddress<[CurveDesc]>,
     pub tile_line_count: BufferAddress<[u32]>,
     pub tile_data: BufferAddress<[TileData]>,
-    pub view_projection_matrix: Mat4,
+    pub scene_params: BufferAddress<SceneParams>,
     pub viewport_size: UVec2,
     pub stroke_width: f32,
     pub base_curve_index: u32,
@@ -103,6 +125,7 @@ pub struct DrawCurvesPushConstants {
     pub output_image: ImageHandle,
     pub debug_overflow: u32,
 }
+
 
 pub const BINNING_TILE_SIZE: u32 = 16;
 pub const BINNING_TASK_WORKGROUP_SIZE: u32 = 64;

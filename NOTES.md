@@ -230,4 +230,29 @@ Also, don't split user-defined coats.
 * falloff (transverse opacity profile)
 * stamp
 * color procedural
-* blending 
+* blending
+
+## Degenerate strokes
+
+Strokes that point toward or away from the camera. Stroke centerline mostly aligned with view direction.
+Very small footprint on the screen because it's facing the camera.
+
+In this case: remove the stroke.
+
+In general: strokes make sense **if they have a significant curve-like footprint on the screen**. I.e. they have to
+actually be
+strokes, not points.
+
+Observation: most strokes can be embedded into a 3D plane. Consider the normal of this 3D plane. If it's perpendicular
+to the screen, then don't draw it (it's a degenerate stroke).
+
+Painting strokes:
+
+## Mixed-order compositing
+
+https://people.csail.mit.edu/ibaran/papers/2011-ASIA-MixedOrder.pdf
+
+Paintings have max 30k strokes; let's target a round 100k strokes per frame. And say 32 subdivs per stroke, that's
+3.2 million lines to store in the tiles (possibly more than once, given that lines may affect more than one tile).
+
+At 1920x1080 with 16x16 tiles we have 8100 tiles; thus ~400 lines per tile assuming uniform stroke distribution.

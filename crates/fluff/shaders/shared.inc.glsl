@@ -31,6 +31,27 @@ layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat3Slice { ma
 layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat4Slice { mat4[] d; };
 
 
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer SceneParamsPtr;
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer SceneParamsSlice;
+
+//  Scene camera parameters.
+struct SceneParams {
+    mat4 view;
+    mat4 proj;
+    mat4 viewProj;
+    vec3 eye;
+    float near;
+    float far;
+    float left;
+    float right;
+    float top;
+    float bottom;
+};
+
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer SceneParamsPtr {SceneParams d;};
+layout(buffer_reference, scalar, buffer_reference_align=8) buffer SceneParamsSlice {SceneParams[] d;};
+
+
 layout(buffer_reference, scalar, buffer_reference_align=8) buffer ControlPointPtr;
 layout(buffer_reference, scalar, buffer_reference_align=8) buffer ControlPointSlice;
 
@@ -61,7 +82,7 @@ layout(buffer_reference, scalar, buffer_reference_align=8) buffer CurveDescSlice
 
 
 //  Maximum number of line segments per tile.
-const uint MAX_LINES_PER_TILE = 64;
+const uint MAX_LINES_PER_TILE = 256;
 
 
 struct TileLineData {
@@ -88,7 +109,7 @@ struct BinCurvesParams {
     CurveDescSlice curves;
     uintSlice tileLineCount;
     TileDataSlice tileData;
-    mat4 viewProjectionMatrix;
+    SceneParamsPtr sceneParams;
     uvec2 viewportSize;
     float strokeWidth;
     uint baseCurveIndex;

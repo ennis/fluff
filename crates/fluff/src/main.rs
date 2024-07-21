@@ -142,6 +142,7 @@ fn main() {
                         }
                         WindowEvent::CloseRequested => {
                             println!("The close button was pressed; stopping");
+                            app.on_exit();
                             event_loop.exit();
                         }
                         WindowEvent::Resized(size) => unsafe {

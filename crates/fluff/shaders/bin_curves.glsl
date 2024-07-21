@@ -8,32 +8,11 @@
 #extension GL_ARB_fragment_shader_interlock : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-/*
-// Push constants
-layout(push_constant, scalar) uniform PushConstants {
-    ControlPointBuffer b_controlPoints;
-    CurveBuffer b_curves;
-    TileLineCountData b_tileLineCount;
-    TileData b_tileData;
-    mat4 viewProjectionMatrix;
-    uvec2 viewportSize;
-    float u.strokeWidth;
-    int baseCurveIndex;
-    int curveCount;
-    int tilesCountX;
-    int tilesCountY;
-    int frame;
-};*/
 
 layout(push_constant, scalar) uniform PushConstants {
     BinCurvesParams u;
 };
 
-/*
-struct PositionAndParam {
-    vec3 pos;
-    float t;
-};*/
 
 //////////////////////////////////////////////////////////
 
@@ -49,8 +28,14 @@ vec3 win2ndc(vec3 window) {
 
 vec4 project(vec3 pos)
 {
-    vec4 p = vec4(pos, 1.);
-    vec4 clip = u.viewProjectionMatrix * vec4(pos, 1.);
+    vec4 clip = u.sceneParams.d.viewProj * vec4(pos, 1.);
+    clip.y = -clip.y;
+    return vec4(ndc2win(clip.xyz/clip.w), clip.w);
+}
+
+vec4 projectDir(vec3 dir)
+{
+    vec4 clip = u.sceneParams.d.viewProj * vec4(dir, 0.);
     clip.y = -clip.y;
     return vec4(ndc2win(clip.xyz/clip.w), clip.w);
 }
@@ -77,6 +62,9 @@ const int SUBDIV_LEVEL_COUNT = 4; // 4,8,16,32
 //const int MAX_VERTICES_PER_CURVE = 64;
 const uint MAX_CURVES_PER_SUBDIV_LEVEL = BINNING_TASK_WORKGROUP_SIZE;
 
+#ifndef DEGENERATE_CURVE_THRESHOLD
+const float DEGENERATE_CURVE_THRESHOLD = 0.01;
+#endif
 
 // Returns the number of points of a subdivided curve at the given level.
 uint subdivPointCount(uint level) {
@@ -127,27 +115,44 @@ void main() {
     bool enabled = curveIndex < u.curveCount;
     //curveIndex = min(curveIndex, curveCount - 1);
 
+    // View direction vector
+    //vec3 viewDir = normalize(u.sceneParams[3].xyz);
+
     if (enabled) {
-        // Load and project the cubic Bézier segment
-        RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(curveIndex);
+        // Load the control points of the curve
+        uint firstCP = loadCurveFirstCP(curveIndex);
+        vec3 p_0 = (u.sceneParams.d.view * vec4(u.controlPoints.d[firstCP + 0].pos, 1.0)).xyz;
+        vec3 p_1 = (u.sceneParams.d.view * vec4(u.controlPoints.d[firstCP + 1].pos, 1.0)).xyz;
+        vec3 p_2 = (u.sceneParams.d.view * vec4(u.controlPoints.d[firstCP + 2].pos, 1.0)).xyz;
+        vec3 p_3 = (u.sceneParams.d.view * vec4(u.controlPoints.d[firstCP + 3].pos, 1.0)).xyz;
 
-        // Determine the subdivision count of the curve.
-        // Adapted from https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#section.10.6
-        float ddx = 6.0 * max(abs(segment.p3.x - 2.0 * segment.p2.x + segment.p1.x), abs(segment.p2.x - 2.0 * segment.p1.x + segment.p0.x));
-        float ddy = 6.0 * max(abs(segment.p3.y - 2.0 * segment.p2.y + segment.p1.y), abs(segment.p2.y - 2.0 * segment.p1.y + segment.p0.y));
-        float ddz = 6.0 * max(abs(segment.p3.z - 2.0 * segment.p2.z + segment.p1.z), abs(segment.p2.z - 2.0 * segment.p1.z + segment.p0.z));
-        const float tolerance = 1.0;
-        float dd = length(vec3(ddx, ddy, ddz));
-        int n = int(ceil(sqrt(0.25 * dd / tolerance)));
+        // Assume that the curve is mostly planar, retrieve the plane normal from the first 3 control points.
+        vec3 n = normalize(cross(p_1 - p_0, p_2 - p_0));
 
-        // Clamp the maximum subdivision level, and round to next power of 2
-        n = clamp(n, 1 << SUBDIV_LEVEL_OFFSET, 1 << SUBDIV_LEVEL_OFFSET + SUBDIV_LEVEL_COUNT - 1);
-        n = 1 << 1 + findMSB(n - 1);
+        // If the curve is aligned with the view direction, remove it (it points towards the camera, so the curve
+        // doesn't have a meaningful footprint on screen).
+        if (abs(n.z) > DEGENERATE_CURVE_THRESHOLD) {
+            // Load and project the cubic Bézier segment
+            RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(curveIndex);
 
-        // add curve to the corresponding subdivision bucket
-        uint bucket = findMSB(n >> 2);
-        uint index = atomicAdd(taskData.countForBin[bucket], 1);
-        taskData.subdivBins[bucket*BINNING_TASK_WORKGROUP_SIZE + index] = curveIndex;
+            // Determine the subdivision count of the curve.
+            // Adapted from https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#section.10.6
+            float ddx = 6.0 * max(abs(segment.p3.x - 2.0 * segment.p2.x + segment.p1.x), abs(segment.p2.x - 2.0 * segment.p1.x + segment.p0.x));
+            float ddy = 6.0 * max(abs(segment.p3.y - 2.0 * segment.p2.y + segment.p1.y), abs(segment.p2.y - 2.0 * segment.p1.y + segment.p0.y));
+            float ddz = 6.0 * max(abs(segment.p3.z - 2.0 * segment.p2.z + segment.p1.z), abs(segment.p2.z - 2.0 * segment.p1.z + segment.p0.z));
+            const float tolerance = 1.0;
+            float dd = length(vec3(ddx, ddy, ddz));
+            int n = int(ceil(sqrt(0.25 * dd / tolerance)));
+
+            // Clamp the maximum subdivision level, and round to next power of 2
+            n = clamp(n, 1 << SUBDIV_LEVEL_OFFSET, 1 << SUBDIV_LEVEL_OFFSET + SUBDIV_LEVEL_COUNT - 1);
+            n = 1 << 1 + findMSB(n - 1);
+
+            // add curve to the corresponding subdivision bucket
+            uint bucket = findMSB(n >> 2);
+            uint index = atomicAdd(taskData.countForBin[bucket], 1);
+            taskData.subdivBins[bucket*BINNING_TASK_WORKGROUP_SIZE + index] = curveIndex;
+        }
     }
 
     barrier();

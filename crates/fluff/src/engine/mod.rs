@@ -22,20 +22,15 @@ use graal::{
 use scoped_tls::scoped_thread_local;
 use slotmap::SlotMap;
 use spirv_reflect::types::{ReflectDescriptorType, ReflectTypeFlags};
-use std::{
-    borrow::Cow,
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::{Cell, RefCell}, collections::BTreeMap, path::{Path, PathBuf}, rc::Rc, slice};
 use std::marker::PhantomData;
+use graal::util::DeviceExt;
 use tracing::{debug, error, warn};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Error type for the rendering engine.
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum Error {
     #[error("Failed to load configuration file")]
     ConfigLoadError,
@@ -48,11 +43,11 @@ pub enum Error {
     #[error("Resource not found: {0}")]
     ResourceNotFound(String),
     #[error("File I/O error: {0}")]
-    IO(#[from] std::io::Error),
+    IO(#[from] Rc<std::io::Error>),
     #[error("could not read shader file `{}`: {}", .path.display(), .error)]
-    ShaderReadError { path: PathBuf, error: std::io::Error },
+    ShaderReadError { path: PathBuf, error: Rc<std::io::Error> },
     #[error("Shader compilation error: {0}")]
-    ShaderCompilation(#[from] shaderc::Error),
+    ShaderCompilation(#[from] Rc<shaderc::Error>),
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
     #[error("Vulkan error: {0}")]
@@ -62,7 +57,7 @@ pub enum Error {
     #[error("Invalid field type: {0}")]
     InvalidFieldType(String),
     #[error("Vulkan error: {0}")]
-    VulkanError(graal::Error),
+    VulkanError(Rc<graal::Error>),
 }
 
 /// Handle to a buffer object in a render graph.
@@ -679,6 +674,13 @@ impl RenderGraph {
         BufferHandle(descriptor_index)
     }
 
+    pub fn upload_data<T: Copy>(&mut self, name: &str, data: &T) -> BufferHandle {
+        // no need to create a buffer in the render graph, upload the data directly in a
+        // host-visible buffer, and import it. It will be freed when the render graph is dropped.
+        let buffer = self.device.upload_array_buffer(BufferUsage::STORAGE_BUFFER, slice::from_ref(data));
+        self.import_buffer(name, buffer.untyped)
+    }
+
     pub fn create_sampler(&mut self, create_info: SamplerCreateInfo) -> SamplerHandle {
         let sampler = self.device.create_sampler(&create_info);
         self.samplers.push(sampler);
@@ -692,8 +694,10 @@ pub struct Engine {
     /// Defines added to every compiled shader
     global_defs: BTreeMap<String, String>,
     bindless_layout: BindlessLayout,
-    mesh_render_pipelines: BTreeMap<String, MeshRenderPipeline>,
-    compute_pipelines: BTreeMap<String, ComputePipeline>,
+    /// Cached mesh render pipelines compilation results
+    mesh_render_pipelines: BTreeMap<String, Result<MeshRenderPipeline, Error>>,
+    /// Cached compute pipelines compilation results
+    compute_pipelines: BTreeMap<String, Result<ComputePipeline, Error>>,
 }
 
 impl Engine {
@@ -729,9 +733,15 @@ impl Engine {
         //let device = &self.engine.device;
         for image in graph.resources.images.iter() {
             image.ensure_allocated(&self.device);
+            // Not sure we need both here
+            cmd.reference_resource(&image.view());
+            cmd.reference_resource(&image.image());
         }
         for buffer in graph.resources.buffers.iter() {
             buffer.ensure_allocated(&self.device);
+            // It's important to reference the buffers explicitly because often we use only use
+            // their addresses in push constant blocks, and we can't track those usages automatically.
+            cmd.reference_resource(&buffer.buffer());
         }
 
         // 2. build descriptors
@@ -866,7 +876,7 @@ impl Engine {
 
     pub fn create_compute_pipeline(&mut self, name: &str, desc: ComputePipelineDesc) -> Result<ComputePipeline, Error> {
         if let Some(pipeline) = self.compute_pipelines.get(name) {
-            return Ok(pipeline.clone());
+            return pipeline.clone();
         }
 
         let file_path = &desc.shader;
@@ -878,7 +888,9 @@ impl Engine {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile compute shader: {err}");
-                return Err(err).into();
+                let result = Err(err.into());
+                self.compute_pipelines.insert(name.to_string(), result.clone());
+                return result;
             }
         };
 
@@ -903,7 +915,7 @@ impl Engine {
                     push_constants_layout: ci.push_cst_map,
                     push_constants_size: ci.push_cst_size,
                 }));
-                self.compute_pipelines.insert(name.to_string(), pipeline.clone());
+                self.compute_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
                 Ok(pipeline)
             }
             Err(err) => {
@@ -914,7 +926,7 @@ impl Engine {
 
     pub fn create_mesh_render_pipeline(&mut self, name: &str, desc: MeshRenderPipelineDesc) -> Result<MeshRenderPipeline, Error> {
         if let Some(pipeline) = self.mesh_render_pipelines.get(name) {
-            return Ok(pipeline.clone());
+            return pipeline.clone();
         }
 
         let file_path = &desc.shader;
@@ -926,21 +938,27 @@ impl Engine {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile task shader: {err}");
-                return Err(err).into();
+                let result = Err(err.into());
+                self.mesh_render_pipelines.insert(name.to_string(), result.clone());
+                return result;
             }
         };
         let mesh_spv = match compile_shader_stage(&file_path, &gdefs, &defs, ShaderKind::Mesh, &mut ci) {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile mesh shader: {err}");
-                return Err(err).into();
+                let result = Err(err.into());
+                self.mesh_render_pipelines.insert(name.to_string(), result.clone());
+                return result;
             }
         };
         let fragment_spv = match compile_shader_stage(&file_path, &gdefs, &defs, ShaderKind::Fragment, &mut ci) {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile fragment shader: {err}");
-                return Err(err).into();
+                let result = Err(err.into());
+                self.mesh_render_pipelines.insert(name.to_string(), result.clone());
+                return result;
             }
         };
 
@@ -981,7 +999,7 @@ impl Engine {
                     desc,
                     pipeline,
                 }));
-                self.mesh_render_pipelines.insert(name.to_string(), pipeline.clone());
+                self.mesh_render_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
                 Ok(pipeline)
             }
             Err(err) => {

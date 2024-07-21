@@ -108,6 +108,11 @@ impl CameraControl {
         self.screen_size = dvec2(width as f64, height as f64);
     }
 
+    /// Returns the current eye position.
+    pub fn eye(&self) -> DVec3 {
+        self.frame.eye
+    }
+
     fn handle_pan(&mut self, orig: &CameraFrame, delta_screen: glam::DVec2) {
         let delta = delta_screen / self.screen_size;
         let dir = orig.center - orig.eye;
