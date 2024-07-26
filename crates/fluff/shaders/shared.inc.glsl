@@ -149,6 +149,7 @@ struct DrawCurvesPushConstants {
     uint frame;
     TileDataSlice tileData;
     uintSlice tileLineCount;
+    texture2DRange brushTextures;
     image2DHandle outputImage;
     uint debugOverflow;
 };
@@ -162,5 +163,16 @@ const uint BINNING_TASK_WORKGROUP_SIZE = 64;
 
 
 const uint MAX_VERTICES_PER_CURVE = 64;
+
+
+const uint SAT_LOG2_SIZE = 7;
+
+
+struct SummedAreaTableParams {
+    uint pass;
+    image2DHandle inputImage;
+    image2DHandle outputImage;
+};
+
 
 

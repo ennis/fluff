@@ -1,12 +1,7 @@
 use std::{collections::HashMap, mem, path::Path, slice};
 
 use egui::{epaint::Primitive, ClippedPrimitive, ImageData};
-use graal::{
-    prelude::*,
-    util::CommandStreamExt,
-    vk::{AttachmentLoadOp, AttachmentStoreOp, ImageAspectFlags, Offset3D},
-    ColorAttachment, ImageAccess, ImageCopyView, RenderPassDescriptor, Size3D, Vertex,
-};
+use graal::{prelude::*, util::CommandStreamExt, vk::{AttachmentLoadOp, AttachmentStoreOp, ImageAspectFlags, Offset3D}, ColorAttachment, ImageAccess, ImageCopyView, RenderPassInfo, Size3D, Vertex, Barrier};
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]
@@ -135,7 +130,8 @@ impl Renderer {
                 Size3D { width, height, depth: 1 },
                 data,
             );
-            cmd.use_image(&texture.image, ImageAccess::SAMPLED_READ);
+
+            cmd.barrier(Barrier::new().sample_read_image(&texture.image));
         }
     }
 
@@ -176,12 +172,10 @@ impl Renderer {
         }
 
         // encode draw commands
-        let mut enc = cmd.begin_rendering(RenderPassDescriptor {
+        let mut enc = cmd.begin_rendering(RenderPassInfo {
             color_attachments: &[ColorAttachment {
-                image_view: color_target.clone(),
-                load_op: AttachmentLoadOp::LOAD,
-                store_op: AttachmentStoreOp::STORE,
-                clear_value: [0.0, 0.0, 0.0, 0.0],
+                image_view: color_target,
+                clear_value: None,
             }],
             depth_stencil_attachment: None,
         });

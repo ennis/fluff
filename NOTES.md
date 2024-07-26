@@ -245,8 +245,7 @@ strokes, not points.
 
 Observation: most strokes can be embedded into a 3D plane. Consider the normal of this 3D plane. If it's perpendicular
 to the screen, then don't draw it (it's a degenerate stroke).
-
-Painting strokes:
+Issue: a lot of strokes are straight lines and are not embedded into only one plane.
 
 ## Mixed-order compositing
 

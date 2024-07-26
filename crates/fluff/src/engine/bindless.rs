@@ -1,10 +1,8 @@
 //! Bindless pipeline layout & descriptor set creation
-use graal::{vk, BufferRangeUntyped, Device, ImageView, Sampler, GpuResource, RenderEncoder, ComputeEncoder, DescriptorSetLayout};
-use std::{ffi::c_void, mem, ptr, sync::{
-    atomic::{AtomicU64, Ordering},
-}};
-use graal::vk::Handle;
-use tracing::debug;
+use std::{ffi::c_void, mem, ptr, sync::atomic::{AtomicU64, Ordering}};
+
+use graal::{ComputeEncoder, DescriptorSetLayout, Device, GpuResource, ImageView, RenderEncoder, Sampler, vk};
+
 use crate::engine::Image;
 
 pub(super) const MAX_INDEXED_TEX_COUNT: u32 = 4096;

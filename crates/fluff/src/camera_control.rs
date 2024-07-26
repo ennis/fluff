@@ -1,7 +1,11 @@
-use crate::aabb::AABB;
-use glam::{dvec2, vec3, DVec2, DVec3, Mat4, Vec3};
 use std::{f32::consts::PI, f64::consts::TAU};
-use winit::{dpi::PhysicalPosition, event::MouseButton};
+use std::cell::Cell;
+
+use glam::{dvec2, DVec2, DVec3, dvec3, Mat4, vec3, Vec3, Vec3Swizzles, Vec4Swizzles};
+use tracing::debug;
+use winit::event::MouseButton;
+
+use crate::aabb::AABB;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Frustum {
@@ -24,23 +28,82 @@ pub struct Camera {
     // view matrix
     // (World -> View)
     pub view: Mat4,
+    pub view_inverse: Mat4,
     // projection matrix
     // (View -> clip?)
     pub projection: Mat4,
+    pub projection_inverse: Mat4,
+    pub screen_size: DVec2,
 }
 
 impl Camera {
     pub fn view_projection(&self) -> Mat4 {
         self.projection * self.view
     }
+
+    pub fn screen_to_ndc(&self, screen_pos: DVec3) -> DVec3 {
+        // Note: Vulkan NDC space (depth 0->1) is different from OpenGL  (-1 -> 1)
+        self.screen_to_ndc_2d(screen_pos.xy()).extend(screen_pos.z)
+    }
+
+    pub fn screen_to_ndc_2d(&self, screen_pos: DVec2) -> DVec2 {
+        dvec2(
+            2.0 * screen_pos.x / self.screen_size.x - 1.0,
+            1.0 - 2.0 * screen_pos.y / self.screen_size.y,
+        )
+    }
+
+    /// Unprojects a screen-space position to a view-space ray direction.
+    ///
+    /// This assumes a normalized depth range of `[0, 1]`.
+    pub fn screen_to_view(&self, screen_pos: DVec3) -> DVec3 {
+        // Undo viewport transformation
+        let ndc = self.screen_to_ndc(screen_pos).as_vec3();
+        // TODO matrix ops as f64?
+        let inv_proj = self.projection.inverse();
+        let clip = inv_proj * ndc.extend(1.0);
+        (clip.xyz() / clip.w).as_dvec3()
+    }
+
+    /// Unprojects a screen-space position to a view-space ray direction.
+    ///
+    /// This assumes a normalized depth range of `[0, 1]`.
+    pub fn screen_to_view_dir(&self, screen_pos: DVec2) -> DVec3 {
+        self.screen_to_view(dvec3(screen_pos.x, screen_pos.y, 0.0)).normalize()
+    }
+
+    pub fn screen_to_world(&self, screen_pos: DVec3) -> DVec3 {
+        let view_pos = self.screen_to_view(screen_pos).as_vec3();
+        let world_pos = self.view.inverse() * view_pos.extend(1.0);
+        world_pos.xyz().as_dvec3()
+    }
+
+    pub fn eye(&self) -> DVec3 {
+        self.view_inverse.transform_point3(Vec3::ZERO).as_dvec3()
+    }
+
+    pub fn screen_to_world_ray(&self, screen_pos: DVec2) -> (DVec3, DVec3) {
+        let world_pos = self.screen_to_world(screen_pos.extend(0.0));
+        let eye_pos = self.view_inverse.transform_point3(Vec3::ZERO).as_dvec3();
+        (eye_pos, (world_pos - eye_pos).normalize())
+    }
 }
 
 impl Default for Camera {
     fn default() -> Self {
+        let view = Mat4::look_at_rh(vec3(0.0, 0.0, -1.0), vec3(0.0, 0.0, 0.0), Vec3::Y);
+        let view_inverse = view.inverse();
+        let projection = Mat4::perspective_rh(PI / 2.0, 1.0, 0.01, 10.0);
+        let projection_inverse = projection.inverse();
+
         Camera {
+            // TODO
             frustum: Default::default(),
-            view: Mat4::look_at_rh(vec3(0.0, 0.0, -1.0), vec3(0.0, 0.0, 0.0), Vec3::Y),
-            projection: Mat4::perspective_rh(PI / 2.0, 1.0, 0.001, 10.0),
+            view,
+            view_inverse,
+            projection,
+            projection_inverse,
+            screen_size: Default::default(),
         }
     }
 }
@@ -72,6 +135,7 @@ pub struct CameraControl {
     cursor_pos: Option<DVec2>,
     frame: CameraFrame,
     input_mode: CameraInputMode,
+    last_cam: Cell<Option<Camera>>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -100,12 +164,14 @@ impl CameraControl {
                 center: glam::dvec3(0.0, 0.0, 0.0),
             },
             input_mode: CameraInputMode::None,
+            last_cam: Cell::new(None),
         }
     }
 
     /// Call when the size of the screen changes.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.screen_size = dvec2(width as f64, height as f64);
+        self.last_cam.set(None);
     }
 
     /// Returns the current eye position.
@@ -118,9 +184,9 @@ impl CameraControl {
         let dir = orig.center - orig.eye;
         let right = dir.normalize().cross(orig.up);
         let dist = dir.length();
-
         self.frame.eye = orig.eye + dist * (-delta.x * right + delta.y * orig.up);
         self.frame.center = orig.center + dist * (-delta.x * right + delta.y * orig.up);
+        self.last_cam.set(None);
     }
 
     fn to_ndc(&self, p: glam::DVec2) -> DVec2 {
@@ -136,6 +202,7 @@ impl CameraControl {
         let new_up = r * orig.up;
         self.frame.eye = new_eye;
         self.frame.up = new_up;
+        self.last_cam.set(None);
     }
 
     /// Call when receiving mouse button input.
@@ -148,7 +215,7 @@ impl CameraControl {
                             self.input_mode = CameraInputMode::Pan {
                                 anchor_screen: pos,
                                 orig_frame: self.frame,
-                            }
+                            };
                         }
                         CameraInputMode::Pan { orig_frame, anchor_screen } if !pressed => {
                             self.handle_pan(&orig_frame, pos - anchor_screen);
@@ -165,7 +232,7 @@ impl CameraControl {
                             self.input_mode = CameraInputMode::Tumble {
                                 anchor_screen: pos,
                                 orig_frame: self.frame,
-                            }
+                            };
                         }
                         CameraInputMode::Tumble { orig_frame, anchor_screen } if !pressed => {
                             self.handle_tumble(&orig_frame, anchor_screen, pos);
@@ -202,6 +269,7 @@ impl CameraControl {
         // TODO orthographic projection
         let delta = -0.1 * delta / 120.0;
         self.frame.eye = self.frame.center + (1.0 + delta) * (self.frame.eye - self.frame.center);
+        self.last_cam.set(None);
     }
 
     /// Call when receiving cursor events
@@ -238,8 +306,9 @@ impl CameraControl {
         self.z_near = 0.1 * cam_dist;
         self.z_far = 10.0 * cam_dist;
         self.fov_y_radians = fov_y_radians;
+        self.last_cam.set(None);
 
-        eprintln!(
+        debug!(
             "center_on_bounds: eye={}, center={}, z_near={}, z_far={}",
             self.frame.eye, self.frame.center, self.z_near, self.z_far
         );
@@ -252,16 +321,28 @@ impl CameraControl {
 
     /// Returns a `Camera` for the current viewpoint.
     pub fn camera(&self) -> Camera {
-        let aspect_ratio = self.screen_size.x / self.screen_size.y;
-        Camera {
-            frustum: Default::default(),
-            view: self.get_look_at(),
-            projection: Mat4::perspective_rh(
-                self.fov_y_radians as f32,
-                aspect_ratio as f32,
-                self.z_near as f32,
-                self.z_far as f32,
-            ),
+        if let Some(cam) = self.last_cam.get() {
+            return cam;
         }
+        let aspect_ratio = self.screen_size.x / self.screen_size.y;
+        let view = self.get_look_at();
+        let view_inverse = view.inverse();
+        let projection = Mat4::perspective_rh(
+            self.fov_y_radians as f32,
+            aspect_ratio as f32,
+            self.z_near as f32,
+            self.z_far as f32,
+        );
+        let projection_inverse = projection.inverse();
+        let cam = Camera {
+            frustum: Default::default(),        //TODO
+            view,
+            view_inverse,
+            projection,
+            projection_inverse,
+            screen_size: self.screen_size,
+        };
+        self.last_cam.set(Some(cam));
+        cam
     }
 }

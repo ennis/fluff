@@ -1,31 +1,35 @@
-mod bindless;
-mod shader;
-mod uniform_block;
-
-use crate::engine::{
-    bindless::{BindlessLayout, ResourceDescriptorBindExt, ResourceDescriptors, IMG_SET, TEX_SET},
-    shader::{compile_shader_stage, CompilationInfo},
-    uniform_block::{UniformBlock, UniformType, UniformValue},
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    marker::PhantomData,
+    path::{Path, PathBuf},
+    rc::Rc,
+    slice,
 };
-use bitflags::bitflags;
-use bytemuck::cast_slice;
+
 use graal::{
-    get_shader_compiler, shaderc,
-    shaderc::{EnvVersion, ShaderKind, SpirvVersion, TargetEnv},
-    vk,
-    vk::{Pipeline, Viewport},
-    BufferAccess, BufferRangeUntyped, BufferUsage, ColorTargetState, CommandStream, ComputeEncoder, ComputePipelineCreateInfo,
-    DepthStencilAttachment, DepthStencilState, Device, FragmentState, GraphicsPipelineCreateInfo, ImageAccess, ImageCreateInfo,
-    ImageSubresourceLayers, ImageUsage, ImageView, MemoryLocation, MultisampleState, Point3D, PreRasterizationShaders, RasterizationState,
-    Rect3D, RenderEncoder, RenderPassDescriptor, SamplerCreateInfo, ShaderCode, ShaderEntryPoint,
+    BufferAccess, BufferRangeUntyped,
+    BufferUsage,
+    ColorTargetState,
+    CommandStream,
+    ComputeEncoder,
+    ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, DepthStencilState, Device, FragmentState, get_shader_compiler,
+    GraphicsPipeline, GraphicsPipelineCreateInfo, ImageAccess, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
+    ImageView, MemoryLocation, MultisampleState, Point3D, PreRasterizationShaders, RasterizationState, Rect3D,
+    RenderEncoder, RenderPassInfo, SamplerCreateInfo, shaderc, shaderc::{EnvVersion, ShaderKind, SpirvVersion, TargetEnv}, ShaderCode, ShaderEntryPoint, util::DeviceExt,
+    vk, vk::{Pipeline, Viewport},
 };
 use scoped_tls::scoped_thread_local;
 use slotmap::SlotMap;
 use spirv_reflect::types::{ReflectDescriptorType, ReflectTypeFlags};
-use std::{borrow::Cow, cell::{Cell, RefCell}, collections::BTreeMap, path::{Path, PathBuf}, rc::Rc, slice};
-use std::marker::PhantomData;
-use graal::util::DeviceExt;
 use tracing::{debug, error, warn};
+
+use crate::engine::shader::{CompilationInfo, compile_shader_stage};
+
+//mod bindless;
+mod shader;
+//mod uniform_block;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -60,6 +64,7 @@ pub enum Error {
     VulkanError(Rc<graal::Error>),
 }
 
+/*
 /// Handle to a buffer object in a render graph.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct BufferHandle(u32);
@@ -96,6 +101,22 @@ impl ImageHandle {
     }
 }
 
+/// Handle to a set of image objects in a render graph.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ImageSet {
+    pub start: ImageHandle,
+    pub count: u32,
+}
+
+impl ImageSet {
+    pub fn device_handle(self) -> crate::shaders::types::Texture2DHandleRange {
+        crate::shaders::types::Texture2DHandleRange {
+            index: self.start.0,
+            count: self.count,
+        }
+    }
+}
+
 /// Handle to a sampler object in a render graph.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(transparent)]
@@ -113,7 +134,9 @@ pub struct ImageDesc {
     pub height: u32,
     pub format: vk::Format,
 }
+*/
 
+/*
 /// Describes an image resource.
 ///
 /// # Dimensions
@@ -215,7 +238,9 @@ impl std::hash::Hash for Image {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Rc::as_ptr(&self.0).hash(state);
     }
-}
+}*/
+
+/*
 
 /// Describes a buffer resource.
 ///
@@ -296,6 +321,9 @@ impl std::hash::Hash for Buffer {
     }
 }
 
+*/
+
+/*
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 struct AccessTracker {
     used_images: BTreeMap<ImageHandle, ImageAccess>,
@@ -324,17 +352,17 @@ impl AccessTracker {
     }
 
     fn transition_resources(&self, ctx: &mut RecordContext) {
-        for (image, access) in self.used_images.iter() {
+        /*for (image, access) in self.used_images.iter() {
             ctx.cmd.use_image_view(&image.view(), *access);
         }
         for (buffer, access) in self.used_buffers.iter() {
             ctx.cmd.use_buffer(&buffer.buffer(), *access);
-        }
+        }*/
     }
-}
+}*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-pub struct ColorAttachmentDesc {
+/*pub struct ColorAttachmentDesc {
     pub image: ImageHandle,
     pub clear_value: Option<[f64; 4]>,
 }
@@ -343,19 +371,11 @@ pub struct DepthStencilAttachmentDesc {
     pub image: ImageHandle,
     pub depth_clear_value: Option<f64>,
     pub stencil_clear_value: Option<u32>,
-}
+}*/
 
-pub struct MeshRenderPipelineDesc {
-    pub shader: PathBuf,
-    pub defines: BTreeMap<String, String>,
-    pub color_targets: Vec<ColorTargetState>,
-    pub rasterization_state: RasterizationState,
-    pub depth_stencil_state: Option<DepthStencilState>,
-    pub multisample_state: MultisampleState,
-}
+//type UniformBlockLayout = BTreeMap<String, (u32, UniformType)>;
 
-type UniformBlockLayout = BTreeMap<String, (u32, UniformType)>;
-
+/*
 struct MeshRenderPipelineInner {
     desc: MeshRenderPipelineDesc,
     pipeline: graal::GraphicsPipeline,
@@ -363,7 +383,9 @@ struct MeshRenderPipelineInner {
 
 #[derive(Clone)]
 pub struct MeshRenderPipeline(Rc<MeshRenderPipelineInner>);
+*/
 
+/*
 struct MeshRenderPass {
     tracker: AccessTracker,
     pipeline: MeshRenderPipeline,
@@ -440,22 +462,21 @@ impl<'a> MeshRenderBuilder<'a> {
     }
 }
 
+ */
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-pub struct ComputePipelineDesc {
-    pub shader: PathBuf,
-    pub defines: BTreeMap<String, String>,
-}
 
+/*
 struct ComputePipelineInner {
     desc: ComputePipelineDesc,
     pipeline: graal::ComputePipeline,
     push_constants_layout: UniformBlockLayout,
     push_constants_size: usize,
-}
+}*/
 
-#[derive(Clone)]
-pub struct ComputePipeline(Rc<ComputePipelineInner>);
+//#[derive(Clone)]
+//pub struct ComputePipeline(Rc<ComputePipelineInner>);
 
+/*
 struct ComputePass {
     base: AccessTracker,
     pipeline: ComputePipeline,
@@ -509,9 +530,11 @@ impl<'a> ComputePassBuilder<'a> {
         })
     }
 }
+*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/*
 /// `vkCmdBlitImage` pass.
 struct BlitPass {
     src: ImageHandle,
@@ -561,31 +584,31 @@ impl RenderGraph {
         self.resources.images[image.0 as usize].add_usage(usage);
     }
 
-    pub fn record_compute_pass(&mut self, name: impl Into<String>, pipeline: ComputePipeline) -> ComputePassBuilder<'_> {
+    pub fn record_compute_pass(&mut self, pipeline: &ComputePipeline) -> ComputePassBuilder<'_> {
         ComputePassBuilder {
             rg: self,
-            name: name.into(),
+            name: "".into(),
             pass: ComputePass {
                 base: AccessTracker {
                     used_images: Default::default(),
                     used_buffers: Default::default(),
                 },
-                pipeline,
+                pipeline: pipeline.clone(),
                 func: None,
             },
         }
     }
 
-    pub fn record_mesh_render_pass(&mut self, name: impl Into<String>, pipeline: MeshRenderPipeline) -> MeshRenderBuilder<'_> {
+    pub fn record_mesh_render_pass(&mut self, pipeline: &MeshRenderPipeline) -> MeshRenderBuilder<'_> {
         MeshRenderBuilder {
             rg: self,
-            name: name.into(),
+            name: "".into(),
             pass: MeshRenderPass {
                 tracker: AccessTracker {
                     used_images: Default::default(),
                     used_buffers: Default::default(),
                 },
-                pipeline,
+                pipeline: pipeline.clone(),
                 color_attachments: Default::default(),
                 depth_stencil_attachment: Default::default(),
                 func: None,
@@ -593,31 +616,31 @@ impl RenderGraph {
         }
     }
 
-    pub fn record_blit(&mut self, name: impl Into<String>, src: ImageHandle, dst: ImageHandle) {
+    pub fn record_blit(&mut self, src: ImageHandle, dst: ImageHandle) {
         self.add_image_usage(src, ImageUsage::TRANSFER_SRC);
         self.add_image_usage(dst, ImageUsage::TRANSFER_DST);
         self.passes.push(Pass {
-            name: name.into(),
+            name: "".into(),
             kind: PassKind::Blit(BlitPass { src, dst }),
         });
     }
 
-    pub fn record_fill_buffer(&mut self, name: impl Into<String>, buffer: BufferHandle, value: u32) {
+    pub fn record_fill_buffer(&mut self, buffer: BufferHandle, value: u32) {
         self.add_buffer_usage(buffer, BufferUsage::TRANSFER_DST);
         self.passes.push(Pass {
-            name: name.into(),
+            name: "".into(),
             kind: PassKind::FillBuffer(FillBufferPass { buffer, value }),
         });
     }
 
-    pub fn import_buffer(&mut self, name: &str, buffer: graal::BufferUntyped) -> BufferHandle {
+    pub fn import_buffer(&mut self, buffer: &graal::BufferUntyped) -> BufferHandle {
         let descriptor_index = self.resources.buffers.len() as u32;
         let buffer_inner = BufferResource {
-            name: name.to_string(),
+            name: "".to_string(),
             inferred_usage: Cell::new(buffer.usage()),
             inferred_memory_properties: Default::default(),
             byte_size: buffer.byte_size() as usize,
-            buffer: RefCell::new(Some(buffer)),
+            buffer: RefCell::new(Some(buffer.clone())),
             descriptor_index,
         };
         let buffer = Buffer(Rc::new(buffer_inner));
@@ -625,10 +648,10 @@ impl RenderGraph {
         BufferHandle(descriptor_index)
     }
 
-    pub fn import_image(&mut self, name: &str, image: graal::Image) -> ImageHandle {
+    pub fn import_image(&mut self, image: &graal::Image) -> ImageHandle {
         let descriptor_index = self.resources.images.len() as u32;
         let image_inner = ImageResource {
-            name: name.to_string(),
+            name: "".to_string(),
             desc: ImageDesc {
                 width: image.width(),
                 height: image.height(),
@@ -644,10 +667,20 @@ impl RenderGraph {
         ImageHandle(descriptor_index)
     }
 
-    pub fn create_image(&mut self, name: &str, desc: ImageDesc) -> ImageHandle {
+    pub fn import_image_set(&mut self, images: impl IntoIterator<Item=graal::Image>) -> ImageSet {
+        let start = self.resources.images.len() as u32;
+        let mut count = 0;
+        for image in images.into_iter() {
+            self.import_image(&image);
+            count += 1;
+        }
+        ImageSet { start: ImageHandle(start), count }
+    }
+
+    pub fn create_image(&mut self, desc: ImageDesc) -> ImageHandle {
         let descriptor_index = self.resources.images.len() as u32;
         let image_inner = ImageResource {
-            name: name.to_string(),
+            name: "".to_string(),
             desc,
             inferred_usage: Default::default(),
             descriptor_index,
@@ -659,10 +692,10 @@ impl RenderGraph {
         ImageHandle(descriptor_index)
     }
 
-    pub fn create_buffer(&mut self, name: &str, byte_size: usize) -> BufferHandle {
+    pub fn create_buffer(&mut self, byte_size: usize) -> BufferHandle {
         let descriptor_index = self.resources.buffers.len() as u32;
         let buffer_inner = BufferResource {
-            name: name.to_string(),
+            name: "".to_string(),
             inferred_usage: Cell::new(Default::default()),
             inferred_memory_properties: Cell::new(Default::default()),
             byte_size,
@@ -674,11 +707,11 @@ impl RenderGraph {
         BufferHandle(descriptor_index)
     }
 
-    pub fn upload_data<T: Copy>(&mut self, name: &str, data: &T) -> BufferHandle {
+    pub fn upload_data<T: Copy>(&mut self, data: &T) -> BufferHandle {
         // no need to create a buffer in the render graph, upload the data directly in a
         // host-visible buffer, and import it. It will be freed when the render graph is dropped.
         let buffer = self.device.upload_array_buffer(BufferUsage::STORAGE_BUFFER, slice::from_ref(data));
-        self.import_buffer(name, buffer.untyped)
+        self.import_buffer(&buffer.untyped)
     }
 
     pub fn create_sampler(&mut self, create_info: SamplerCreateInfo) -> SamplerHandle {
@@ -687,37 +720,41 @@ impl RenderGraph {
         SamplerHandle(self.samplers.len() as u32 - 1)
     }
 }
+*/
+
+pub struct MeshRenderPipelineDesc {
+    pub shader: PathBuf,
+    pub defines: BTreeMap<String, String>,
+    pub color_targets: Vec<ColorTargetState>,
+    pub rasterization_state: RasterizationState,
+    pub depth_stencil_state: Option<DepthStencilState>,
+    pub multisample_state: MultisampleState,
+}
+
+pub struct ComputePipelineDesc {
+    pub shader: PathBuf,
+    pub defines: BTreeMap<String, String>,
+}
 
 /// Rendering engine instance.
 pub struct Engine {
     device: Device,
     /// Defines added to every compiled shader
     global_defs: BTreeMap<String, String>,
-    bindless_layout: BindlessLayout,
+    //bindless_layout: BindlessLayout,
     /// Cached mesh render pipelines compilation results
-    mesh_render_pipelines: BTreeMap<String, Result<MeshRenderPipeline, Error>>,
+    mesh_render_pipelines: BTreeMap<String, Result<GraphicsPipeline, Error>>,
     /// Cached compute pipelines compilation results
     compute_pipelines: BTreeMap<String, Result<ComputePipeline, Error>>,
 }
 
 impl Engine {
     pub fn new(device: Device) -> Self {
-        let layout = BindlessLayout::new(&device);
         Self {
             device,
             global_defs: Default::default(),
-            bindless_layout: layout,
             mesh_render_pipelines: Default::default(),
             compute_pipelines: Default::default(),
-        }
-    }
-
-    pub fn create_graph(&mut self) -> RenderGraph {
-        RenderGraph {
-            device: self.device.clone(),
-            passes: Default::default(),
-            resources: Default::default(),
-            samplers: Default::default(),
         }
     }
 
@@ -728,7 +765,7 @@ impl Engine {
         self.compute_pipelines.clear();
     }
 
-    pub fn submit_graph(&mut self, graph: RenderGraph, cmd: &mut CommandStream) {
+    /*pub fn submit_graph(&mut self, graph: RenderGraph, cmd: &mut CommandStream) {
         // 1. allocate resources
         //let device = &self.engine.device;
         for image in graph.resources.images.iter() {
@@ -840,7 +877,7 @@ impl Engine {
                         }
 
                         pass.tracker.transition_resources(ctx);
-                        let mut encoder = ctx.cmd.begin_rendering(RenderPassDescriptor {
+                        let mut encoder = ctx.cmd.begin_rendering(RenderPassInfo {
                             color_attachments: &color_attachments[..],
                             depth_stencil_attachment,
                         });
@@ -868,7 +905,7 @@ impl Engine {
         });
 
         cmd.flush(&[], &[]).unwrap()
-    }
+    }*/
 
     pub fn define_global(&mut self, define: &str, value: impl ToString) {
         self.global_defs.insert(define.to_string(), value.to_string());
@@ -895,11 +932,7 @@ impl Engine {
         };
 
         let cpci = ComputePipelineCreateInfo {
-            set_layouts: &[
-                self.bindless_layout.textures.clone(),
-                self.bindless_layout.images.clone(),
-                self.bindless_layout.samplers.clone(),
-            ],
+            set_layouts: &[],
             push_constants_size: ci.push_cst_size,
             compute_shader: ShaderEntryPoint {
                 code: ShaderCode::Spirv(&compute_spv),
@@ -909,12 +942,6 @@ impl Engine {
 
         match self.device.create_compute_pipeline(cpci) {
             Ok(pipeline) => {
-                let pipeline = ComputePipeline(Rc::new(ComputePipelineInner {
-                    desc,
-                    pipeline,
-                    push_constants_layout: ci.push_cst_map,
-                    push_constants_size: ci.push_cst_size,
-                }));
                 self.compute_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
                 Ok(pipeline)
             }
@@ -924,7 +951,7 @@ impl Engine {
         }
     }
 
-    pub fn create_mesh_render_pipeline(&mut self, name: &str, desc: MeshRenderPipelineDesc) -> Result<MeshRenderPipeline, Error> {
+    pub fn create_mesh_render_pipeline(&mut self, name: &str, desc: MeshRenderPipelineDesc) -> Result<GraphicsPipeline, Error> {
         if let Some(pipeline) = self.mesh_render_pipelines.get(name) {
             return pipeline.clone();
         }
@@ -963,11 +990,7 @@ impl Engine {
         };
 
         let gpci = GraphicsPipelineCreateInfo {
-            set_layouts: &[
-                self.bindless_layout.textures.clone(),
-                self.bindless_layout.images.clone(),
-                self.bindless_layout.samplers.clone(),
-            ],
+            set_layouts: &[],
             push_constants_size: ci.push_cst_size,
             vertex_input: Default::default(),
             pre_rasterization_shaders: PreRasterizationShaders::MeshShading {
@@ -995,10 +1018,6 @@ impl Engine {
 
         match self.device.create_graphics_pipeline(gpci) {
             Ok(pipeline) => {
-                let pipeline = MeshRenderPipeline(Rc::new(MeshRenderPipelineInner {
-                    desc,
-                    pipeline,
-                }));
                 self.mesh_render_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
                 Ok(pipeline)
             }

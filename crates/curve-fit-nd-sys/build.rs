@@ -14,7 +14,7 @@ fn main() {
     for s in &source_files {
         build.file(s);
     }
-    build.compile("spirv_reflect_cpp");
+    build.compile("curve-fit-nd");
 
     // Generate bindings
     let bindings = bindgen::Builder::default()

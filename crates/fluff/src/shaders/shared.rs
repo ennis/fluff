@@ -30,6 +30,7 @@ pub struct SceneParams {
 }
 
 /// 3D bezier control point.
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ControlPoint {
     /// Position.
@@ -75,11 +76,11 @@ pub struct TileData {
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct BinCurvesParams {
-    pub control_points: BufferAddress<[ControlPoint]>,
-    pub curves: BufferAddress<[CurveDesc]>,
-    pub tile_line_count: BufferAddress<[u32]>,
-    pub tile_data: BufferAddress<[TileData]>,
-    pub scene_params: BufferAddress<SceneParams>,
+    pub control_points: DeviceAddress<[ControlPoint]>,
+    pub curves: DeviceAddress<[CurveDesc]>,
+    pub tile_line_count: DeviceAddress<[u32]>,
+    pub tile_data: DeviceAddress<[TileData]>,
+    pub scene_params: DeviceAddress<SceneParams>,
     pub viewport_size: UVec2,
     pub stroke_width: f32,
     pub base_curve_index: u32,
@@ -103,8 +104,8 @@ pub struct TemporalAverageParams {
 #[repr(C)]
 pub struct ComputeTestParams {
     pub element_count: u32,
-    pub data: BufferAddress<[TileData]>,
-    pub control_points: BufferAddress<[ControlPoint]>,
+    pub data: DeviceAddress<[TileData]>,
+    pub control_points: DeviceAddress<[ControlPoint]>,
     pub output_image: ImageHandle,
 }
 
@@ -120,8 +121,9 @@ pub struct DrawCurvesPushConstants {
     /// Number of tiles in the Y direction.
     pub tile_count_y: u32,
     pub frame: u32,
-    pub tile_data: BufferAddress<[TileData]>,
-    pub tile_line_count: BufferAddress<[u32]>,
+    pub tile_data: DeviceAddress<[TileData]>,
+    pub tile_line_count: DeviceAddress<[u32]>,
+    pub brush_textures: Texture2DHandleRange,
     pub output_image: ImageHandle,
     pub debug_overflow: u32,
 }
@@ -130,3 +132,13 @@ pub struct DrawCurvesPushConstants {
 pub const BINNING_TILE_SIZE: u32 = 16;
 pub const BINNING_TASK_WORKGROUP_SIZE: u32 = 64;
 pub const MAX_VERTICES_PER_CURVE: u32 = 64;
+
+pub const SAT_LOG2_SIZE: u32 = 7;
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct SummedAreaTableParams {
+    pub pass: u32,      // 0: horizontal, 1: vertical
+    pub input_image: ImageHandle,
+    pub output_image: ImageHandle,
+}

@@ -27,6 +27,12 @@ bitflags! {
     }
 }
 
+impl Default for CalcFlags {
+    fn default() -> Self {
+        CalcFlags::empty()
+    }
+}
+
 /// Result of the `curve_fit_cubic_to_points_db` function.
 pub struct CurveFitCubicResult {
     /// Resulting array of tangents and knots, formatted as follows `r_cubic_array[r_cubic_array_len][3][dims]`
@@ -35,7 +41,7 @@ pub struct CurveFitCubicResult {
     pub cubic_orig_index: Option<Vec<u32>>,
 }
 
-unsafe fn buffer_into_vec<T>(buffer: *mut T, len: usize) -> Option<Vec<T>> {
+unsafe fn buffer_into_vec<T: Clone>(buffer: *mut T, len: usize) -> Option<Vec<T>> {
     if buffer.is_null() {
         return None;
     }
@@ -71,10 +77,13 @@ pub fn curve_fit_cubic_to_points_f64(
     let mut r_corner_index_array = ptr::null_mut();
     let mut r_corner_index_len = 0;
 
+    assert!(dims > 0);
+    assert!(points.len() % dims == 0);
+
     unsafe {
         let r = curve_fit_nd_sys::curve_fit_cubic_to_points_db(
             points.as_ptr(),
-            points.len() as u32,
+            (points.len() / dims) as u32,
             dims as u32,
             error_threshold,
             calc_flag.bits(),
@@ -88,7 +97,7 @@ pub fn curve_fit_cubic_to_points_f64(
         );
 
         let cubic_array =
-            buffer_into_vec(r_cubic_array, r_cubic_array_len as usize).expect("curve_fit_cubic_to_points_db returned null pointer");
+            buffer_into_vec(r_cubic_array, r_cubic_array_len as usize * dims * 3).expect("curve_fit_cubic_to_points_db returned null pointer");
         let corner_index_array = buffer_into_vec(r_corner_index_array, r_corner_index_len as usize);
         let cubic_orig_index = buffer_into_vec(r_cubic_orig_index, r_cubic_array_len as usize);
 

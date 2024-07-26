@@ -27,6 +27,8 @@ void main() {
     }
     barrier();
 
+    //sampleIndexedTexture2D(u.brushTextures, nonuniformEXT(index), );
+
     vec4 color = vec4(0.0);
     for (int i = 0; i < lineCount; i++) {
         float width = u.strokeWidth;

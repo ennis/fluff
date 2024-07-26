@@ -56,8 +56,9 @@ pub(crate) enum Type {
     Array { elem_ty: Box<Type>, size: Box<syn::Expr> },
     Slice(Box<Type>),
     Ref(String),
-    BufferAddress(Box<Type>),
+    DeviceAddress(Box<Type>),
     ImageHandle,
+    Texture2DHandleRange,
     SamplerHandle,
 }
 
@@ -85,8 +86,9 @@ impl fmt::Debug for Type {
             Type::Mat4 => write!(f, "Mat4"),
             Type::Array { elem_ty, .. } => write!(f, "[{:?}; ...]", elem_ty),
             Type::Ref(name) => write!(f, "{}", name),
-            Type::BufferAddress(elem_ty) => write!(f, "BufferAddress<{:?}>", elem_ty),
+            Type::DeviceAddress(elem_ty) => write!(f, "DeviceAddress<{:?}>", elem_ty),
             Type::ImageHandle => write!(f, "ImageHandle"),
+            Type::Texture2DHandleRange => write!(f, "Texture2DHandleRange"),
             Type::SamplerHandle => write!(f, "SamplerHandle"),
             Type::Slice(elem_ty) => write!(f, "Slice<{:?}>", elem_ty),
         }
@@ -98,17 +100,17 @@ impl Type {
     fn has_struct_ref(&self) -> Option<&str> {
         match self {
             Type::Ref(name) => Some(name),
-            Type::BufferAddress(inner_ty) => inner_ty.has_struct_ref(),
+            Type::DeviceAddress(inner_ty) => inner_ty.has_struct_ref(),
             Type::Array { elem_ty, .. } => elem_ty.has_struct_ref(),
             Type::Slice(elem_ty) => elem_ty.has_struct_ref(),
             _ => None,
         }
     }
 
-    /// If the type contains a reference to a struct type via BufferAddress, return the name of the struct.
+    /// If the type contains a reference to a struct type via DeviceAddress, return the name of the struct.
     fn has_struct_buffer_ref(&self) -> Option<&str> {
         match self {
-            Type::BufferAddress(inner_ty) => inner_ty.has_struct_ref(),
+            Type::DeviceAddress(inner_ty) => inner_ty.has_struct_ref(),
             _ => None,
         }
     }
@@ -181,9 +183,11 @@ impl Type {
                         Ok(Type::SamplerHandle)
                     } else if p.is_ident("ImageHandle") {
                         Ok(Type::ImageHandle)
+                    } else if p.is_ident("Texture2DHandleRange") {
+                        Ok(Type::Texture2DHandleRange)
                     } else if p.segments.len() == 1 {
                         let seg = &p.segments[0];
-                        if seg.ident == "BufferAddress" {
+                        if seg.ident == "DeviceAddress" {
                             // buffer reference
                             let elem_ty = match seg.arguments {
                                 syn::PathArguments::AngleBracketed(ref args) => {
@@ -198,7 +202,7 @@ impl Type {
                                 }
                                 _ => return Err(Error::new_spanned(seg, "expected a type argument")),
                             };
-                            Ok(Type::BufferAddress(Box::new(elem_ty)))
+                            Ok(Type::DeviceAddress(Box::new(elem_ty)))
                         } else {
                             // struct reference
                             if !seg.arguments.is_empty() {
@@ -540,9 +544,9 @@ mod tests {
             _ => panic!("expected array type"),
         }
 
-        assert!(matches!(parse_type("BufferHandle<f32>"), Type::BufferAddress(b) if matches!(*b, Type::F32)));
-        assert!(matches!(parse_type("BufferHandle<Vec2>"), Type::BufferAddress(b) if matches!(*b, Type::Vec2)));
-        assert!(matches!(parse_type("BufferHandle<BufferHandle<f32>>"), Type::BufferAddress(b) if matches!(*b, Type::BufferAddress(ref b) if matches!(**b, Type::F32))));
+        assert!(matches!(parse_type("BufferHandle<f32>"), Type::DeviceAddress(b) if matches!(*b, Type::F32)));
+        assert!(matches!(parse_type("BufferHandle<Vec2>"), Type::DeviceAddress(b) if matches!(*b, Type::Vec2)));
+        assert!(matches!(parse_type("BufferHandle<BufferHandle<f32>>"), Type::DeviceAddress(b) if matches!(*b, Type::DeviceAddress(ref b) if matches!(**b, Type::F32))));
 
         assert!(matches!(parse_type("SomeStruct"), Type::Ref(r) if r == "SomeStruct"));
     }

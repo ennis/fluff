@@ -35,7 +35,7 @@ impl fmt::Display for DisplayTypeGLSL<'_> {
             Type::Bool => write!(f, "bool"),
             Type::I64 => write!(f, "int64_t"),
             Type::U64 => write!(f, "uint64_t"),
-            Type::BufferAddress(inner_ty) => {
+            Type::DeviceAddress(inner_ty) => {
                 // just assume this is a buffer reference
                 match **inner_ty {
                     Type::Slice(ref elem_ty) => write!(f, "{}Slice", DisplayTypeGLSL(elem_ty)),
@@ -47,6 +47,7 @@ impl fmt::Display for DisplayTypeGLSL<'_> {
             Type::Ref(r) => write!(f, "{r}"),
             Type::ImageHandle => write!(f, "image2DHandle"),
             Type::SamplerHandle => write!(f, "samplerHandle"),
+            Type::Texture2DHandleRange => write!(f, "texture2DRange"),
             Type::Slice(elem_ty) => {
                 // just assume this is a buffer reference
                 write!(f, "{}", DisplayTypeGLSL(elem_ty))

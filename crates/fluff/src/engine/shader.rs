@@ -1,4 +1,4 @@
-use crate::engine::{uniform_block::UniformType, Error};
+use crate::engine::Error;
 use graal::{
     get_shader_compiler, shaderc,
     shaderc::{EnvVersion, ShaderKind, SpirvVersion, TargetEnv},
@@ -13,7 +13,6 @@ use tracing::{error, warn};
 pub(super) struct CompilationInfo {
     pub(super) used_images: BTreeMap<String, ImageAccess>,
     pub(super) used_buffers: BTreeMap<String, BufferAccess>,
-    pub(super) push_cst_map: BTreeMap<String, (u32, UniformType)>,
     pub(super) push_cst_size: usize,
 }
 
@@ -132,7 +131,7 @@ pub(super) fn compile_shader_stage(
 
 
     // remap resource bindings
-    let mut module = spirv_reflect::create_shader_module(compilation_artifact.as_binary_u8()).unwrap();
+    let module = spirv_reflect::create_shader_module(compilation_artifact.as_binary_u8()).unwrap();
     /*let descriptor_bindings = module.enumerate_descriptor_bindings(Some("main")).unwrap();
     for refl in descriptor_bindings.iter() {
         let ty = refl.descriptor_type;
@@ -211,7 +210,7 @@ pub(super) fn compile_shader_stage(
         if block.offset != 0 {
             warn!("`{display_path}`: push constant blocks at non-zero offset are not supported");
         } else {
-            let mut add_constant = |name: &str, offset: u32, ty: UniformType| {
+            /*let mut add_constant = |name: &str, offset: u32, ty: UniformType| {
                 if let Some(c) = info.push_cst_map.insert(name.to_string(), (offset, ty)) {
                     if c != (offset, ty) {
                         warn!("`{display_path}` push constant `{name}` redefined with different offset or type");
@@ -272,7 +271,8 @@ pub(super) fn compile_shader_stage(
                     //warn!("`{display_path}`: unsupported push constant type: `{} {};`", tydesc.type_name, var.name);
                     continue;
                 }
-            }
+            }*/
+
             info.push_cst_size = info.push_cst_size.max(block.size as usize);
         }
     }

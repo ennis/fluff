@@ -127,11 +127,11 @@ void main() {
         vec3 p_3 = (u.sceneParams.d.view * vec4(u.controlPoints.d[firstCP + 3].pos, 1.0)).xyz;
 
         // Assume that the curve is mostly planar, retrieve the plane normal from the first 3 control points.
-        vec3 n = normalize(cross(p_1 - p_0, p_2 - p_0));
+        float screenAlignFade = abs(dot(normalize(p_3 - p_0), normalize(p_0)));
 
         // If the curve is aligned with the view direction, remove it (it points towards the camera, so the curve
         // doesn't have a meaningful footprint on screen).
-        if (abs(n.z) > DEGENERATE_CURVE_THRESHOLD) {
+        if (screenAlignFade < DEGENERATE_CURVE_THRESHOLD) {
             // Load and project the cubic Bézier segment
             RationalCubicBezier3DSegment segment = loadProjectedCubicBezierSegment(curveIndex);
 

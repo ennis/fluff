@@ -18,8 +18,11 @@ layout(set=2, binding=0) uniform sampler bindless_sampler[];
 // resource indexing structs
 struct samplerHandle { uint idx; };
 struct texture2DHandle { uint idx; };
+struct texture2DRange { uint idx; uint count; };
 struct image2DHandle { uint idx; };
 struct iimage2DHandle { uint idx; };
+
+
 
 /*
 // Default sampler index
@@ -31,12 +34,18 @@ const samplerIndex s_nearest_clamp = samplerIndex(3);*/
 //-----------------------------------------------------------------------------
 // sampler constructors
 #define C_SAMPLER2D(tex, samp) sampler2D(bindless_texture2D[tex.idx], bindless_sampler[samp.idx])
+#define C_SAMPLER2D_IDX(tex, offset, samp) sampler2D(bindless_texture2D[tex.idx + offset], bindless_sampler[samp.idx])
 
 //-----------------------------------------------------------------------------
 
 vec4 sampleTexture2D(texture2DHandle tex, samplerHandle samp, vec2 P) { return texture(C_SAMPLER2D(tex, samp), P); }
+vec4 sampleIndexedTexture2D(texture2DRange texRange, uint offset, samplerHandle samp, vec2 P) { return texture(C_SAMPLER2D_IDX(texRange, offset, samp), P); }
+
 vec4 imageLoad(image2DHandle image, ivec2 P) { return imageLoad(bindless_image2D[image.idx], P); }
 void imageStore(image2DHandle image, ivec2 P, vec4 data) { imageStore(bindless_image2D[image.idx], P, data); }
+
+ivec4 imageLoad(iimage2DHandle image, ivec2 P) { return imageLoad(bindless_iimage2D[image.idx], P); }
+void imageStore(iimage2DHandle image, ivec2 P, ivec4 data) { imageStore(bindless_iimage2D[image.idx], P, data); }
 
 
 #undef C_SAMPLER2D

@@ -1,6 +1,7 @@
-#version 450 core
+#version 460 core
+#extension GL_EXT_scalar_block_layout : require
 
-layout(std140, push_constant) uniform PushConstants {
+layout(scalar, push_constant) uniform PushConstants {
     mat4 matrix;
     float width;
 };
