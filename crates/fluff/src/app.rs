@@ -1,6 +1,6 @@
-use egui::{Align2, Color32, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Ui, Widget};
+use egui::{Align2, Color32, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, Ui, Widget};
 use egui_extras::{Column, TableBuilder};
-use glam::{dvec2, mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2, DVec3, Vec4Swizzles, DVec4, dvec3};
+use glam::{dvec2, mat4, uvec2, vec2, vec3, vec4, DVec2, Vec2, DVec3, Vec4Swizzles, DVec4, dvec3, Vec3Swizzles};
 use graal::{prelude::*, vk::{AttachmentLoadOp, AttachmentStoreOp}, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, Descriptor, ImageAccess, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassInfo, Barrier, Texture2DHandleRange, DeviceAddress};
 use std::{
     collections::BTreeMap,
@@ -333,8 +333,8 @@ struct AnimationFrame {
 }
 
 struct AnimationData {
-    point_count: usize,
-    curve_count: usize,
+    //point_count: usize,
+    //curve_count: usize,
     frames: Vec<AnimationFrame>,
     position_buffer: AppendBuffer<ControlPoint>,
     curve_buffer: AppendBuffer<CurveDesc>,
@@ -370,9 +370,9 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
 
     // Curve buffer: contains (start, end) pairs of curves in the point buffer
 
-    let position_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, point_count);
+    let mut position_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, point_count);
     position_buffer.set_name("control point buffer");
-    let curve_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
+    let mut curve_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
     curve_buffer.set_name("curve buffer");
 
     let mut frames = vec![];
@@ -440,11 +440,13 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                 curve_segments,
             });
         }
+        position_buffer.set_len(point_count);
+        curve_buffer.set_len(curve_count);
     }
 
     AnimationData {
-        point_count,
-        curve_count,
+        //point_count,
+        //curve_count,
         frames,
         position_buffer,
         curve_buffer,
@@ -665,6 +667,9 @@ pub struct App {
     tweaks_changed: bool,
     engine: Engine,
     draw_origin: glam::Vec2,
+    fit_tolerance: f64,
+    curve_embedding_factor: f64,
+
 }
 
 impl App {
@@ -1333,6 +1338,8 @@ impl App {
             debug_tile_line_overflow: false,
             tweaks_changed: false,
             draw_origin: Default::default(),
+            fit_tolerance: 1.0,
+            curve_embedding_factor: 1.0,
         };
         app.reload_shaders();
         app
@@ -1417,12 +1424,35 @@ impl App {
             if touch_event.phase == TouchPhase::Ended {
                 self.is_drawing = false;
 
-                // project points on random plane
+                // points bounding box
+                let min_pos = self.pen_points.iter().map(|p| p.position).fold(dvec2(f64::INFINITY, f64::INFINITY), |a, b| a.min(b));
+                let max_pos = self.pen_points.iter().map(|p| p.position).fold(dvec2(f64::NEG_INFINITY, f64::NEG_INFINITY), |a, b| a.max(b));
+                let width = max_pos.x - min_pos.x;
+                let height = max_pos.y - min_pos.y;
 
+                // project points on random plane
                 let (eye, dir) = camera.screen_to_world_ray(self.pen_points.first().unwrap().position);
                 let ground_plane = Plane::new(dvec3(0.0, 1.0, 0.0), dvec3(0.0, 0.0, 0.0));
+
                 if let Some(ground_pos) = ground_plane.intersect(eye, dir) {
-                    let angle = thread_rng().gen_range(0.0..std::f64::consts::PI);
+                    let mut apparent_distances = vec![];
+                    for a in 0..10 {
+                        let alpha = (a as f64 / 10.0) * std::f64::consts::PI;
+                        let v = dvec3(alpha.sin(), 0.0, alpha.cos());
+                        let (a, b) = camera.world_to_screen_line(ground_pos, v);
+                        let d = a.xy().distance(b.xy());
+                        apparent_distances.push((alpha, d));
+                    }
+                    let (minalpha, closest_dist) = apparent_distances.iter().fold((0.0, f64::INFINITY), |(minalpha, mindist), &(alpha, dist)| {
+                        if (dist - width).abs() < mindist {
+                            (alpha, (dist - width).abs())
+                        } else {
+                            (minalpha, mindist)
+                        }
+                    });
+
+                    //let angle = thread_rng().gen_range(0.0..std::f64::consts::PI);
+                    let angle = minalpha;
                     let plane = Plane::new(dvec3(angle.sin(), 0.0, angle.cos()), ground_pos);
 
                     let proj_points = self.pen_points.iter().filter_map(|p| {
@@ -1433,7 +1463,7 @@ impl App {
                     // fit a curve to the pen points
                     trace!("projected points: {:#?}", proj_points);
                     let points_f64 = proj_points.iter().map(|p| p.to_array()).flatten().collect::<Vec<f64>>();
-                    match curve_fit_nd::curve_fit_cubic_to_points_f64(&points_f64, 3, 5.0, Default::default(), None) {
+                    match curve_fit_nd::curve_fit_cubic_to_points_f64(&points_f64, 3, self.fit_tolerance, Default::default(), None) {
                         Ok(curve) => {
                             let mut control_points = curve.cubic_array.chunks_exact(3).map(|chunk| {
                                 dvec3(chunk[0], chunk[1], chunk[2])
@@ -1451,12 +1481,13 @@ impl App {
 
                             if let Some(ref mut anim) = self.animation.as_mut() {
                                 //let base = anim.frames[self.bin_rast_current_frame].curve_range.start;
+                                let frame = &mut anim.frames[0];
                                 let mut base = anim.position_buffer.len() as u32;
                                 for point in control_points.chunks_exact(4) {
                                     let p0 = point[0];
                                     let p1 = point[1];
-                                    let p3 = point[3];
                                     let p2 = point[2];
+                                    let p3 = point[3];
                                     anim.position_buffer.push(ControlPoint {
                                         pos: p0.as_vec3().to_array(),
                                         color: [0.1, 0.3, 0.9],
@@ -1480,8 +1511,10 @@ impl App {
                                         start: base,
                                         param_range: vec2(0.0, 1.0),
                                     });
-                                    anim.curve_count += 1;
-                                    anim.point_count += 4;
+                                    frame.curve_range.count += 1;
+                                    //anim.curve_count += 1;
+                                    //anim.point_count += 4;
+                                    error!("append curve @ {base}");
                                     base += 4;
                                 }
                             }
@@ -1793,6 +1826,12 @@ impl App {
                 info!("Will reload shaders on the next frame");
                 self.engine.set_global_defines(defines);
             }
+
+            ui.add(Slider::new(&mut self.fit_tolerance, 1.0..=40.0).text("Curve fit tolerance"));
+            ui.add(Slider::new(&mut self.curve_embedding_factor, 1.0..=40.0).text("Curve fit tolerance"));
+            //ui.add(Slider::new(&mut self.oit_stroke_width, 0.1..=40.0).text("OIT Stroke Width"));
+            //ui.add(Slider::new(&mut self.overlay_line_width, 0.1..=40.0).text("Overlay Line Width"));
+            //ui.add(Slider::new(&mut self.overlay_filter_width, 0.01..=10.0).text("Overlay Filter Width"));
         });
     }
 

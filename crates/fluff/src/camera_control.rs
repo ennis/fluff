@@ -87,6 +87,22 @@ impl Camera {
         let eye_pos = self.view_inverse.transform_point3(Vec3::ZERO).as_dvec3();
         (eye_pos, (world_pos - eye_pos).normalize())
     }
+
+    pub fn world_to_screen(&self, world_pos: DVec3) -> DVec3 {
+        let view_pos = self.view * world_pos.extend(1.0).as_vec4();
+        let clip_pos = self.projection * view_pos;
+        let ndc = clip_pos.xyz() / clip_pos.w;
+        let ndc = ndc.as_dvec3();
+        dvec3(
+            0.5 * (ndc.x + 1.0) * self.screen_size.x,
+            0.5 * (1.0 - ndc.y) * self.screen_size.y,
+            ndc.z,
+        )
+    }
+
+    pub fn world_to_screen_line(&self, a: DVec3, b: DVec3) -> (DVec3, DVec3) {
+        (self.world_to_screen(a), self.world_to_screen(b))
+    }
 }
 
 impl Default for Camera {
