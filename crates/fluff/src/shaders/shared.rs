@@ -130,7 +130,7 @@ pub struct DrawCurvesPushConstants {
 
 
 pub const BINNING_TILE_SIZE: u32 = 16;
-pub const BINNING_TASK_WORKGROUP_SIZE: u32 = 64;
+pub const BINPACK_SUBGROUP_SIZE: u32 = 32;
 pub const MAX_VERTICES_PER_CURVE: u32 = 64;
 
 pub const SAT_LOG2_SIZE: u32 = 7;

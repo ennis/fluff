@@ -25,7 +25,7 @@ use crate::{
     shaders::shared::{CurveDesc, DrawCurvesPushConstants, SummedAreaTableParams, TemporalAverageParams, TileData, BINNING_TILE_SIZE},
     util::resolve_file_sequence,
 };
-use crate::shaders::shared::ControlPoint;
+use crate::shaders::shared::{BINPACK_SUBGROUP_SIZE, ControlPoint};
 
 /// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
 ///
@@ -893,7 +893,7 @@ impl App {
             tile_line_count: tile_line_count_buffer.device_address(),
             tile_data: tile_buffer.device_address(),
         });
-        encoder.draw_mesh_tasks(curve_count.div_ceil(64), 1, 1);
+        encoder.draw_mesh_tasks(curve_count.div_ceil(BINPACK_SUBGROUP_SIZE), 1, 1);
         encoder.finish();
 
         cmd.barrier(Barrier::new().shader_storage_read().shader_write_image(&color_target));
