@@ -1,5 +1,10 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_NV_shader_subgroup_partitioned : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
 #include "bindless.inc.glsl"
 #include "common.inc.glsl"
 #include "shared.inc.glsl"
@@ -8,53 +13,185 @@ layout(push_constant) uniform PushConstants {
     DrawCurvesPushConstants u;
 };
 
-// One thread per pixel in a tile
-layout(local_size_x=BINNING_TILE_SIZE, local_size_y=BINNING_TILE_SIZE) in;
+layout(local_size_x=DRAW_CURVES_WORKGROUP_SIZE_X, local_size_y=DRAW_CURVES_WORKGROUP_SIZE_Y) in;
 
 //////////////////////////////////////////////////////////
 
 shared TileLineData[MAX_LINES_PER_TILE] s_lines;
+shared uint[MAX_LINES_PER_TILE] s_orderByCurve;
 
+float linearDepth(float z) {
+    const float near = u.sceneParams.d.nearClip;
+    const float far = u.sceneParams.d.farClip;
+    return 2.0 * near * far / (far + near - z * (far - near));
+}
+
+float evalPolynomial(vec4 coeffs, float x) {
+    float x2 = x * x;
+    float x3 = x2 * x;
+    return clamp(dot(coeffs, vec4(1.0, x, x2, x3)), 0.0, 1.0);
+}
 
 void main() {
-    uvec2 tileCoord = gl_WorkGroupID.xy;
+    uvec2 tileCoord = uvec2(gl_WorkGroupID.x, gl_WorkGroupID.y / (BINNING_TILE_SIZE / DRAW_CURVES_WORKGROUP_SIZE_Y));
     uint tileIndex = tileCoord.y * u.tileCountX + tileCoord.x;
     uint lineCount = min(u.tileLineCount.d[tileIndex], MAX_LINES_PER_TILE);
     uvec2 coord = gl_GlobalInvocationID.xy;
 
-    // load lines in shared memory
+    uint laneID = gl_SubgroupInvocationID;
+    uint uniqueCurveCount;
+    if (laneID < lineCount) {
+        TileLineData line = u.tileData.d[tileIndex].lines[laneID];
+        s_lines[laneID] = line;
+
+        uint curveID = line.curveId;
+        uvec4 ballot = subgroupPartitionNV(curveID);
+        uint count = subgroupBallotBitCount(ballot);// how many lines in this cluster
+        uint binIdx = subgroupBallotExclusiveBitCount(ballot);// index of this line in this cluster
+        uint first = subgroupBallotFindLSB(ballot);// first lane in this cluster
+        bool isFirst = laneID == first;// are we the first lane in this cluster?
+        uint binOffset = subgroupExclusiveAdd(isFirst ? count : 0);//
+        binOffset = subgroupShuffle(binOffset, first);
+        s_orderByCurve[binOffset + binIdx] = laneID;
+
+        uvec4 firsts = subgroupBallot(laneID == first);
+        //uint curveBucketID = subgroupBallotExclusiveBitCount(firsts);
+        uniqueCurveCount = subgroupBallotBitCount(firsts);
+    }
+
+    // FIXME: there are still overlaps for strokes composed of more than one Bézier curve segment
+    uniqueCurveCount = subgroupBroadcastFirst(uniqueCurveCount);
+
+    subgroupBarrier();
+
+
+    // color, weights per line
+    vec4 color = vec4(0.0);
+    float w = 0.;
+    float dist = 1e6;
+    float depth = 1.0;
+    float param = 0.0;
+    TileLineData data = s_lines[s_orderByCurve[0]];
+    uint lastCurveID = data.curveId;
+
+    for (int i = 1; i <= lineCount; i++) {
+
+        float a;
+        float y = distSeg(vec2(coord)+vec2(0.5), data.lineCoords.xy, data.lineCoords.zw, a);
+        if (y < dist) {
+            dist = y;
+            depth = data.depth;
+            param = remap(a, 0., 1., data.paramRange.x, data.paramRange.y);
+        }
+
+        // load next curve
+        uint lineIdx = s_orderByCurve[min(i, lineCount-1)];
+        data = s_lines[min(lineIdx, lineCount-1)];
+        uint curveID = data.curveId;
+        if (i == lineCount || lastCurveID != data.curveId) {
+            CurveDesc c = u.curves.d[lastCurveID];
+            float width = u.strokeWidth * evalPolynomial(c.widthProfile, param);
+            float opacity = 0.5 * pow(evalPolynomial(c.opacityProfile, param), 6.0);
+
+            vec4 lineColor = vec4(u.controlPoints.d[c.start].color, 1.0);
+            //float width = u.strokeWidth;
+            float h = width * 0.5;
+            float y = dist;
+            float filterWidth = 1.5;
+            float halfFilterWidth = filterWidth * 0.5;
+            float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
+
+            float wd = pow(1.0 / linearDepth(depth), u.strokeBleedExp);
+            color += lineColor * alpha * opacity;
+            w += 1.0;
+            dist = 1e6;
+        }
+        lastCurveID = curveID;
+    }
+
+    // color /= max(w, 0.0001);
+
+    /*if (laneID < lineCount) {
+        TileLineData line = u.tileData.d[tileIndex].lines[laneID];
+        uint curveID = line.curveId;
+        uvec4 ballot = subgroupPartitionNV(curveID);
+        color = bitfieldExtract(ballot.x, int(gl_LocalInvocationIndex), 1) == 1 ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 1.0);
+    }*/
+
+
+    /*// load lines in shared memory
     if (gl_LocalInvocationIndex < lineCount) {
         s_lines[gl_LocalInvocationIndex] = u.tileData.d[tileIndex].lines[gl_LocalInvocationIndex];
-    }
-    barrier();
+        uint curveID = s_lines[gl_LocalInvocationIndex].curveId;
+        s_curves[gl_LocalInvocationIndex] = u.curves.d[curveID];
+    }*/
 
-    //sampleIndexedTexture2D(u.brushTextures, nonuniformEXT(index), );
+    // For each pixel, for each line:
+    // - distance to line
+    // - curveID
+    // - depth (on the curve)
+    // - color
+    // - parameter (on the curve)
+    // - blend mode (of the curve)
+    // - brush (of the curve)
+    // -> looking for some precomputation that can be done for each line in the tile, instead of per-pixel
+    // -> assumption: depth of a line stays relatively constant within a tile (do something else for curves at grazing angles / not facing the camera)
 
-    // Within a subgroup, partition by curveID,
-
-
+    /*// Evaluate the contribution of each curve
     vec4 color = vec4(0.0);
     for (int i = 0; i < lineCount; i++) {
+        CurveDesc c = s_curves[i];
+        vec4 lineColor = vec4(u.controlPoints.d[c.start].color, 1.0);
         float width = u.strokeWidth;
         float h = width * 0.5;
-        float y = distSeg(vec2(coord)+vec2(0.5), s_lines[i].coords.xy, s_lines[i].coords.zw);
+        float y = distSeg(vec2(coord)+vec2(0.5), s_lines[i].lineCoords.xy, s_lines[i].lineCoords.zw);
         float filterWidth = 1.5;
         float halfFilterWidth = filterWidth * 0.5;
         float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
-        color += 0.2 * alpha;
+        color += lineColor * 0.2 * alpha;
         //color += vec4(1.0) * (1.0 - smoothstep(0.0, 3.0, y));
+    }*/
+    /*float ws = 0.0;
+    for (int i = 0; i < lineCount; i++) {
+        CurveDesc c = s_curves[i];
+        vec4 lineColor = vec4(u.controlPoints.d[c.start].color, 1.0);
+        vec4 line = s_lines[i].lineCoords;
+        float width = u.strokeWidth;
+        float y = distSeg(vec2(coord) + .5, line.xy, line.zw);
+        float w = pow(1.0 / linearDepth(s_lines[i].depth), u.strokeBleedExp);
+        float filterWidth = 1.5;
+        float halfFilterWidth = filterWidth * 0.5;
+        float h = width * 0.5;
+        float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
+        color += w * lineColor * alpha;
+        ws += w * alpha;
     }
-
+    ws = max(ws, 0.0001);
+    color /= ws;
+*/
 
     if (u.debugOverflow == 1 && lineCount >= MAX_LINES_PER_TILE) {
         color = vec4(1.0, 0.0, 0.0, 1.0);
     }
 
-    /*uvec2 localCoord = gl_LocalInvocationID.xy;
-    if (localCoord.x == 0 || localCoord.y == 0) {
-        color = vec4(1.0, 0.0, 0.0, 1.0);
-    }*/
 
-    imageStore(u.outputImage, ivec2(coord), vec4(color.rg, float(lineCount)/float(MAX_LINES_PER_TILE), 1.0));
+    #ifdef SHOW_CURVE_COUNT_PER_TILE
+    color.rgb = lineCount != 0 && laneID < uniqueCurveCount && gl_LocalInvocationID.y == 0 ? vec3(1., 0., 0.) : color.rgb;
+    #endif
+
+    #ifdef SHOW_LINE_COUNT_PER_TILE
+    color.rgb = lineCount != 0 && (laneID - DRAW_CURVES_WORKGROUP_SIZE_X) < lineCount && gl_LocalInvocationID.y == 1 ? vec3(1., 1., 0.) : color.rgb;
+    //color.b += float(lineCount)/float(MAX_LINES_PER_TILE);
+    #endif
+
+    uvec2 localCoord = gl_LocalInvocationID.xy;
+
+    #ifdef SHOW_TILE_GRID
+    if (localCoord.x == 0 || localCoord.y == 0) {
+        color.rgb += vec3(0.02, 0.02, 0.02);
+    }
+    #endif
+
+    imageStore(u.outputImage, ivec2(coord), color);
     //imageStore(outputImage, ivec2(coord), vec4(vec3(float(lineCount)/float(MAX_LINES_PER_TILE)), 1.0));
 }

@@ -7,13 +7,14 @@ vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d)
 }
 
 // 2D Distance from a point to a segment.
-float distSeg(vec2 p, vec2 a, vec2 b) {
+float distSeg(vec2 p, vec2 a, vec2 b, out float alpha) {
     vec2 ab = b - a;
     vec2 ap = p - a;
     float side = sign(cross(vec3(ab, 0.0), vec3(ap, 0.0)).z);
     float d = dot(p - a, ab) / dot(ab, ab);
     d = clamp(d, 0.0, 1.0);
     vec2 p0 = a + d * ab;
+    alpha = d;
     //float taper = max(0.0, 80.0 - distance(p,b)) / 80.0;
     return distance(p, p0);
 }

@@ -40,8 +40,8 @@ struct SceneParams {
     mat4 proj;
     mat4 viewProj;
     vec3 eye;
-    float near;
-    float far;
+    float nearClip;
+    float farClip;
     float left;
     float right;
     float top;
@@ -82,13 +82,14 @@ layout(buffer_reference, scalar, buffer_reference_align=8) buffer CurveDescSlice
 
 
 //  Maximum number of line segments per tile.
-const uint MAX_LINES_PER_TILE = 256;
+const uint MAX_LINES_PER_TILE = 32;
 
 
 struct TileLineData {
-    vec4 coords;
+    vec4 lineCoords;
     vec2 paramRange;
-    uint curveIndex;
+    uint curveId;
+    float depth;
 };
 
 
@@ -141,8 +142,10 @@ struct ComputeTestParams {
 
 
 struct DrawCurvesPushConstants {
-    mat4 viewProj;
-    uint baseCurve;
+    ControlPointSlice controlPoints;
+    CurveDescSlice curves;
+    SceneParamsPtr sceneParams;
+    uint baseCurveIndex;
     float strokeWidth;
     uint tileCountX;
     uint tileCountY;
@@ -152,11 +155,18 @@ struct DrawCurvesPushConstants {
     texture2DRange brushTextures;
     image2DHandle outputImage;
     uint debugOverflow;
+    float strokeBleedExp;
 };
 
 
 
 const uint BINNING_TILE_SIZE = 16;
+
+
+const uint DRAW_CURVES_WORKGROUP_SIZE_X = 16;
+
+
+const uint DRAW_CURVES_WORKGROUP_SIZE_Y = 2;
 
 
 const uint BINPACK_SUBGROUP_SIZE = 32;

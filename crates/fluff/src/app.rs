@@ -25,7 +25,7 @@ use crate::{
     shaders::shared::{CurveDesc, DrawCurvesPushConstants, SummedAreaTableParams, TemporalAverageParams, TileData, BINNING_TILE_SIZE},
     util::resolve_file_sequence,
 };
-use crate::shaders::shared::{BINPACK_SUBGROUP_SIZE, ControlPoint};
+use crate::shaders::shared::{BINPACK_SUBGROUP_SIZE, ControlPoint, DRAW_CURVES_WORKGROUP_SIZE_Y};
 
 /// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
 ///
@@ -669,6 +669,7 @@ pub struct App {
     draw_origin: glam::Vec2,
     fit_tolerance: f64,
     curve_embedding_factor: f64,
+    stroke_bleed_exp: f32,
 
 }
 
@@ -774,8 +775,8 @@ impl App {
             view_proj: camera.view_projection(),
             eye: self.camera_control.eye().as_vec3(),
             // TODO frustum parameters
-            near: 0.0,
-            far: 0.0,
+            near_clip: camera.frustum.near_plane,
+            far_clip: camera.frustum.far_plane,
             left: 0.0,
             right: 0.0,
             top: 0.0,
@@ -903,8 +904,11 @@ impl App {
         let mut encoder = cmd.begin_compute();
         encoder.bind_compute_pipeline(&draw_curves_pipeline);
         encoder.push_constants(&DrawCurvesPushConstants {
-            view_proj,
-            base_curve: base_curve_index,
+            control_points: animation.position_buffer.device_address(),
+            curves: animation.curve_buffer.device_address(),
+            //view_proj,
+            scene_params: scene_params_buf.device_address(),
+            base_curve_index,
             stroke_width,
             tile_count_x,
             tile_count_y,
@@ -914,8 +918,9 @@ impl App {
             brush_textures: Texture2DHandleRange { index: 0, count: 0 }, //brush_textures.device_handle(),
             output_image: color_target_view.device_image_handle(),
             debug_overflow: debug_tile_line_overflow as u32,
+            stroke_bleed_exp: self.stroke_bleed_exp,
         });
-        encoder.dispatch(tile_count_x, tile_count_y, 1);
+        encoder.dispatch(tile_count_x, tile_count_y * (BINNING_TILE_SIZE / DRAW_CURVES_WORKGROUP_SIZE_Y), 1);
         encoder.finish();
 
         if self.temporal_average {
@@ -1342,6 +1347,7 @@ impl App {
             draw_origin: Default::default(),
             fit_tolerance: 1.0,
             curve_embedding_factor: 1.0,
+            stroke_bleed_exp: 1.0,
         };
         app.reload_shaders();
         app
@@ -1506,9 +1512,11 @@ impl App {
                                         pos: p3.as_vec3().to_array(),
                                         color: [0.1, 0.3, 0.9],
                                     });
+                                    let width_profile = lagrange_interpolation(vec2(0.0, 0.0), vec2(0.2, 0.8), vec2(0.5, 0.8), vec2(1.0, 0.0));
+                                    let opacity_profile = lagrange_interpolation(vec2(0.0, 0.7), vec2(0.3, 1.0), vec2(0.6, 1.0), vec2(1.0, 0.0));
                                     anim.curve_buffer.push(CurveDesc {
-                                        width_profile: Default::default(),
-                                        opacity_profile: Default::default(),
+                                        width_profile,
+                                        opacity_profile,
                                         count: 4,
                                         start: base,
                                         param_range: vec2(0.0, 1.0),
@@ -1754,6 +1762,7 @@ impl App {
             }
 
             ui.heading("Global settings");
+
             TableBuilder::new(ui)
                 .column(Column::auto().resizable(true))
                 .column(Column::remainder())
@@ -1790,6 +1799,7 @@ impl App {
                             row.col(|ui| {
                                 if ui.checkbox(&mut t.enabled, "").changed() {
                                     self.tweaks_changed = true;
+                                    //toggled_tweak = true;
                                 }
                             });
                             row.col(|ui| {
@@ -1818,12 +1828,8 @@ impl App {
                     });
                 });
 
-            if self.tweaks_changed {
-                self.settings.save();
-                self.tweaks_changed = false;
-            }
 
-            if ui.button("Reload shaders").clicked() {
+            if ui.button("Reload shaders").clicked() || self.tweaks_changed {
                 let defines = self
                     .settings
                     .tweaks
@@ -1835,8 +1841,14 @@ impl App {
                 self.engine.set_global_defines(defines);
             }
 
+            if self.tweaks_changed {
+                self.settings.save();
+                self.tweaks_changed = false;
+            }
+
             ui.add(Slider::new(&mut self.fit_tolerance, 1.0..=40.0).text("Curve fit tolerance"));
-            ui.add(Slider::new(&mut self.curve_embedding_factor, 1.0..=40.0).text("Curve fit tolerance"));
+            ui.add(Slider::new(&mut self.curve_embedding_factor, 1.0..=40.0).text("Curve embedding factor"));
+            ui.add(Slider::new(&mut self.stroke_bleed_exp, 1.0..=40.0).text("Stroke bleeding exponent"));
             //ui.add(Slider::new(&mut self.oit_stroke_width, 0.1..=40.0).text("OIT Stroke Width"));
             //ui.add(Slider::new(&mut self.overlay_line_width, 0.1..=40.0).text("Overlay Line Width"));
             //ui.add(Slider::new(&mut self.overlay_filter_width, 0.01..=10.0).text("Overlay Filter Width"));

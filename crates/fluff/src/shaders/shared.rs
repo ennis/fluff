@@ -20,9 +20,9 @@ pub struct SceneParams {
     /// Position of the camera in world space.
     pub eye: Vec3,
     /// Near clip plane position in view space.
-    pub near: f32,
+    pub near_clip: f32,
     /// far clip plane position in view space.
-    pub far: f32,
+    pub far_clip: f32,
     pub left: f32,
     pub right: f32,
     pub top: f32,
@@ -57,14 +57,15 @@ pub struct CurveDesc {
 }
 
 /// Maximum number of line segments per tile.
-pub const MAX_LINES_PER_TILE: usize = 256;
+pub const MAX_LINES_PER_TILE: usize = 32;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct TileLineData {
-    pub coords: Vec4,
+    pub line_coords: Vec4,
     pub param_range: Vec2,
-    pub curve_index: u32,
+    pub curve_id: u32,
+    pub depth: f32,
 }
 
 #[derive(Copy, Clone)]
@@ -112,9 +113,12 @@ pub struct ComputeTestParams {
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct DrawCurvesPushConstants {
-    pub view_proj: Mat4,
+    pub control_points: DeviceAddress<[ControlPoint]>,
+    pub curves: DeviceAddress<[CurveDesc]>,
+    pub scene_params: DeviceAddress<SceneParams>,
+    //pub view_proj: Mat4,
     /// Base index into the curve buffer.
-    pub base_curve: u32,
+    pub base_curve_index: u32,
     pub stroke_width: f32,
     /// Number of tiles in the X direction.
     pub tile_count_x: u32,
@@ -126,10 +130,14 @@ pub struct DrawCurvesPushConstants {
     pub brush_textures: Texture2DHandleRange,
     pub output_image: ImageHandle,
     pub debug_overflow: u32,
+    pub stroke_bleed_exp: f32,
 }
 
 
 pub const BINNING_TILE_SIZE: u32 = 16;
+pub const DRAW_CURVES_WORKGROUP_SIZE_X: u32 = 16;
+pub const DRAW_CURVES_WORKGROUP_SIZE_Y: u32 = 2;
+
 pub const BINPACK_SUBGROUP_SIZE: u32 = 32;
 pub const MAX_VERTICES_PER_CURVE: u32 = 64;
 

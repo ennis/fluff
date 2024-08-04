@@ -55,10 +55,9 @@ const float DEGENERATE_CURVE_THRESHOLD = 0.01;
 #endif
 
 struct PackedCurve {
-    uint curveID;    // relative
-    uint subdiv;     // (4,8,16,32) number of points in the subdivided curve
-    uint wgroupMatch;  // if the entry is the first of a bin, this is the first workgroup ID of the bin, otherwise it's the first workgroup ID of the next bin
-    uint dummy;
+    uint8_t curveID;    // relative
+    uint8_t subdiv;     // (4,8,16,32) number of points in the subdivided curve
+    uint16_t wgroupMatch;  // if the entry is the first of a bin, this is the first workgroup ID of the bin, otherwise it's the first workgroup ID of the next bin
 };
 
 // Shared task payload.
@@ -136,7 +135,7 @@ uint binPack(uint subdiv) {
     // retrieve the first of the bin with `subgroupBallot(wgroupID >= wgroupMatch) / subgroupFindMSB()`.
     wgroupMatch = isBinFirst ? wgroupMatch : wgroupMatch + wgroupCount;
 
-    taskData.curves[outID] = PackedCurve(laneID, subdiv, wgroupMatch, 0);
+    taskData.curves[outID] = PackedCurve(uint8_t(laneID), uint8_t(subdiv), uint16_t(wgroupMatch));
     uint wgroupTotalCount = subgroupAdd(isBinFirst ? wgroupCount : 0);
     return wgroupTotalCount;
 }
@@ -146,7 +145,7 @@ void main() {
     uint curveIdx = gl_GlobalInvocationID.x;
 
     // Initialize task data
-    taskData.curves[gl_SubgroupInvocationID] = PackedCurve(0, 0, 2*SUBGROUP_SIZE, 0);
+    taskData.curves[gl_SubgroupInvocationID] = PackedCurve(uint8_t(0), uint8_t(0), uint16_t(2*SUBGROUP_SIZE));
     subgroupBarrier();
 
     // Determine if this invocation is valid, or if this is a slack invocation due to the number of curves not being
@@ -217,14 +216,12 @@ layout(local_size_x=SUBGROUP_SIZE) in;
 // Output: triangle mesh tessellation of the curve
 // 2 vertices per sample, 2 triangles subdivision
 layout(triangles, max_vertices=4*SUBGROUP_SIZE, max_primitives=4*(SUBGROUP_SIZE - 1)) out;
-layout(location=0) flat out int[] o_curveIndex;
-layout(location=1) out vec2[] o_uv;
-layout(location=2) out vec3[] o_color;
-layout(location=3) perprimitiveEXT out vec4[] o_line;
+layout(location=0) perprimitiveEXT flat out uint[] o_curveID;
+layout(location=1) perprimitiveEXT out vec4[] o_line;
+layout(location=2) perprimitiveEXT out vec2[] o_paramRange;
+//layout(location=1) out vec2[] o_uv;
+//layout(location=2) out vec3[] o_color;
 
-shared vec4[SUBGROUP_SIZE] s_curvePositions;
-//shared vec3[MAX_VERTICES_PER_CURVE] s_curveColors;
-shared vec2[SUBGROUP_SIZE] s_curveNormals;
 
 taskPayloadSharedEXT TaskData taskData;
 
@@ -243,16 +240,6 @@ bool binUnpack(uint wgroupID,
         return false;
     }
     uint binStart = subgroupBallotFindMSB(vote);
-
-    // partID for curves that need two workgroups to process (e.g. 64 subdivisions)
-    // for subdiv < 64, partID is always 0
-    //uint partID = wgroupID - subgroupShuffle(wgroupForLane, inID);
-
-    // packed curve == a curve that is processed in parallel with other curves in the same workgroup
-
-    // 32 curves, subdiv 4, all in the same bin
-    // 4 threads per curve, 8 curves per workgroup, so 4 workgroups to spawn
-    //
 
     packThreads = taskData.curves[binStart].subdiv;     // number of threads per packed curve
     uint wgroupStart = taskData.curves[binStart].wgroupMatch;   // first workgroup of the bin
@@ -344,7 +331,6 @@ void main()
         vec4 posNext = evalRCubicBezier3D(RCubicBezier3D(p0, p1, p2, p3), tNext);
         // screen-space line between this point and the next
         vec2 viewportSize = u.viewportSize;
-        vec4 line = (vec4(pos.xy/pos.w, posNext.xy/posNext.w) + 1.) * 0.5 * viewportSize.xyxy;
         vec2 tangent = evalCubicBezier2D_T(CubicBezier2D(p0.xy/p0.w, p1.xy/p1.w, p2.xy/p2.w, p3.xy/p3.w), t);
         //if (length(tangent) < 1e-3) {
         //    tangent = vec2(1., 0.);
@@ -390,22 +376,26 @@ void main()
         gl_MeshVerticesEXT[vertOffset + 1].gl_Position = b;
         gl_MeshVerticesEXT[vertOffset + 2].gl_Position = c;
         gl_MeshVerticesEXT[vertOffset + 3].gl_Position = d;
-        o_curveIndex[vertOffset] = int(curveID);
-        o_curveIndex[vertOffset + 1] = int(curveID);
-        o_curveIndex[vertOffset + 2] = int(curveID);
-        o_curveIndex[vertOffset + 3] = int(curveID);
-        o_uv[vertOffset] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
-        o_uv[vertOffset + 1] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
-        o_uv[vertOffset + 2] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
-        o_uv[vertOffset + 3] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
-        o_color[vertOffset] = color;
-        o_color[vertOffset + 1] = color;
-        o_color[vertOffset + 2] = color;
-        o_color[vertOffset + 3] = color;
+        //o_uv[vertOffset] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
+        //o_uv[vertOffset + 1] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
+        //o_uv[vertOffset + 2] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
+        //o_uv[vertOffset + 3] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
+        //o_color[vertOffset] = color;
+        //o_color[vertOffset + 1] = color;
+        //o_color[vertOffset + 2] = color;
+        //o_color[vertOffset + 3] = color;
 
         if (primOffset < primCount - 1) {
+            vec4 line = (vec4(pos.xy/pos.w, posNext.xy/posNext.w) + 1.) * 0.5 * viewportSize.xyxy;
             o_line[primOffset] = line;
             o_line[primOffset+1] = line;
+            o_curveID[primOffset] = int(curveID);
+            o_curveID[primOffset + 1] = int(curveID);
+            vec2 paramRange = vec2(
+                remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y),
+                remap(tNext, 0., 1., curve.paramRange.x, curve.paramRange.y));
+            o_paramRange[primOffset] = paramRange;
+            o_paramRange[primOffset + 1] = paramRange;
 
             gl_PrimitiveTriangleIndicesEXT[primOffset] = uvec3(vertOffset, vertOffset+2, vertOffset+1);
             gl_PrimitiveTriangleIndicesEXT[primOffset+1] = uvec3(vertOffset+1, vertOffset+2, vertOffset+3);
@@ -421,19 +411,24 @@ void main()
 
 #ifdef __FRAGMENT__
 
-layout(location=0) flat in int i_curveIndex;
-layout(location=1) in vec2 i_uv;
-layout(location=2) in vec3 i_color;
-layout(location=3) perprimitiveEXT in vec4 i_line;
+//layout(location=0) flat in int i_curveIndex;
+//layout(location=1) in vec2 i_uv;
+//layout(location=2) in vec3 i_color;
+layout(location=0) perprimitiveEXT flat in int i_curveID;
+layout(location=1) perprimitiveEXT in vec4 i_line;
+layout(location=2) perprimitiveEXT in vec2 i_paramRange;
 layout(location=0) out vec4 o_color;
 
 void main() {
     uint tileIndex = uint(gl_FragCoord.x) + uint(gl_FragCoord.y) * u.tileCountX;
 
+    // FIXME: this is often called twice for each line (but not always), one for each triangle of the quad; find a way to deduplicate
     uint count = atomicAdd(u.tileLineCount.d[tileIndex], 1);
     if (count < MAX_LINES_PER_TILE) {
-        u.tileData.d[tileIndex].lines[count].coords = i_line;
-        u.tileData.d[tileIndex].lines[count].curveIndex = i_curveIndex;
+        u.tileData.d[tileIndex].lines[count].lineCoords = i_line;
+        u.tileData.d[tileIndex].lines[count].curveId = i_curveID;
+        u.tileData.d[tileIndex].lines[count].paramRange = i_paramRange;
+        u.tileData.d[tileIndex].lines[count].depth = gl_FragCoord.z;
     }
 
     o_color = vec4(0., 1., 0., 0.2);

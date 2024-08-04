@@ -351,7 +351,14 @@ impl CameraControl {
         );
         let projection_inverse = projection.inverse();
         let cam = Camera {
-            frustum: Default::default(),        //TODO
+            frustum: Frustum {
+                left: -aspect_ratio as f32,
+                right: aspect_ratio as f32,
+                top: 1.0,
+                bottom: -1.0,
+                near_plane: self.z_near as f32,
+                far_plane: self.z_far as f32,
+            },
             view,
             view_inverse,
             projection,
