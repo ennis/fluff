@@ -723,7 +723,9 @@ impl RenderGraph {
 */
 
 pub struct MeshRenderPipelineDesc {
-    pub shader: PathBuf,
+    pub task_shader: PathBuf,
+    pub mesh_shader: PathBuf,
+    pub fragment_shader: PathBuf,
     pub defines: BTreeMap<String, String>,
     pub color_targets: Vec<ColorTargetState>,
     pub rasterization_state: RasterizationState,
@@ -956,12 +958,14 @@ impl Engine {
             return pipeline.clone();
         }
 
-        let file_path = &desc.shader;
+        let task_file_path = &desc.task_shader;
+        let mesh_file_path = &desc.mesh_shader;
+        let frag_file_path = &desc.fragment_shader;
         let gdefs = &self.global_defs;
         let defs = &desc.defines;
         let mut ci = CompilationInfo::default();
 
-        let task_spv = match compile_shader_stage(&file_path, &gdefs, &defs, ShaderKind::Task, &mut ci) {
+        let task_spv = match compile_shader_stage(&task_file_path, &gdefs, &defs, ShaderKind::Task, &mut ci) {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile task shader: {err}");
@@ -970,7 +974,7 @@ impl Engine {
                 return result;
             }
         };
-        let mesh_spv = match compile_shader_stage(&file_path, &gdefs, &defs, ShaderKind::Mesh, &mut ci) {
+        let mesh_spv = match compile_shader_stage(&mesh_file_path, &gdefs, &defs, ShaderKind::Mesh, &mut ci) {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile mesh shader: {err}");
@@ -979,7 +983,7 @@ impl Engine {
                 return result;
             }
         };
-        let fragment_spv = match compile_shader_stage(&file_path, &gdefs, &defs, ShaderKind::Fragment, &mut ci) {
+        let fragment_spv = match compile_shader_stage(&frag_file_path, &gdefs, &defs, ShaderKind::Fragment, &mut ci) {
             Ok(spv) => spv,
             Err(err) => {
                 error!("failed to compile fragment shader: {err}");

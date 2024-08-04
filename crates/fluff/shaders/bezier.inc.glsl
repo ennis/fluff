@@ -1,26 +1,26 @@
 // Bezier curve evaluation functions
 
-struct CubicBezier2DSegment {
+struct CubicBezier2D {
     vec2 p0;
     vec2 p1;
     vec2 p2;
     vec2 p3;
 };
 
-vec2 evalCubicBezier2D(CubicBezier2DSegment segment, float t) {
+vec2 evalCubicBezier2D(CubicBezier2D c, float t) {
     float t2 = t * t;
     float t3 = t2 * t;
     float mt = 1.0 - t;
     float mt2 = mt * mt;
     float mt3 = mt2 * mt;
-    return mt3 * segment.p0 + 3.0 * mt2 * t * segment.p1 + 3.0 * mt * t2 * segment.p2 + t3 * segment.p3;
+    return mt3 * c.p0 + 3.0 * mt2 * t * c.p1 + 3.0 * mt * t2 * c.p2 + t3 * c.p3;
 }
 
-vec2 evalCubicBezier2DTangent(CubicBezier2DSegment segment, float t) {
+vec2 evalCubicBezier2D_T(CubicBezier2D c, float t) {
     float t2 = t * t;
     float mt = 1.0 - t;
     float mt2 = mt * mt;
-    return 3.0 * mt2 * (segment.p1 - segment.p0) + 6.0 * mt * t * (segment.p2 - segment.p1) + 3.0 * t2 * (segment.p3 - segment.p2);
+    return 3.0 * mt2 * (c.p1 - c.p0) + 6.0 * mt * t * (c.p2 - c.p1) + 3.0 * t2 * (c.p3 - c.p2);
 }
 
 struct CubicBezier3D {

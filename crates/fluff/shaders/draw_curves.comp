@@ -1,4 +1,5 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
 #include "bindless.inc.glsl"
 #include "common.inc.glsl"
 #include "shared.inc.glsl"
@@ -28,6 +29,9 @@ void main() {
     barrier();
 
     //sampleIndexedTexture2D(u.brushTextures, nonuniformEXT(index), );
+
+    // Within a subgroup, partition by curveID,
+
 
     vec4 color = vec4(0.0);
     for (int i = 0; i < lineCount; i++) {

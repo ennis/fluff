@@ -1,4 +1,4 @@
-#version 460 core
+
 #include "bindless.inc.glsl"
 #include "common.inc.glsl"
 #include "shared.inc.glsl"
@@ -55,9 +55,10 @@ const float DEGENERATE_CURVE_THRESHOLD = 0.01;
 #endif
 
 struct PackedCurve {
-    uint8_t curveID; // relative
-    uint8_t subdiv;     // (4,8,16,32) number of points in the subdivided curve
-    uint16_t wgroupID;
+    uint curveID;    // relative
+    uint subdiv;     // (4,8,16,32) number of points in the subdivided curve
+    uint wgroupMatch;  // if the entry is the first of a bin, this is the first workgroup ID of the bin, otherwise it's the first workgroup ID of the next bin
+    uint dummy;
 };
 
 // Shared task payload.
@@ -79,7 +80,6 @@ taskPayloadSharedEXT TaskData taskData;
 // Inspired by https://github.com/nvpro-samples/vk_displacement_micromaps/blob/main/micromesh_binpack.glsl
 // Returns the total number of workgroups to launch for the given bin.
 uint binPack(uint subdiv) {
-    uint taskwgroupID = gl_WorkGroupID.x;
     uint laneID = gl_SubgroupInvocationID;
 
     uvec4 vote;
@@ -116,8 +116,12 @@ uint binPack(uint subdiv) {
 
     // lane   : 0  6  7 10 15  2  4  5  1 11 13  3 12  14   8   9
     // subd   : 4  4  4  4  4  8  8  8  8  8  8 16 16  16  16  16
-    // scan   : 4  8 12 16 20 28 36 44 52 60 68 84 100 116 132
-    // wgroup : 0  0  0  0  0  0  1  1  1  1  2  2  3   3   4   4
+
+    // wgroup : 0  1  1  1  1  1  2  2  2  2  2  2  3   3   4   4
+
+    // subd    : 64 64 32 32 32 16 16 16 16 16 4  4   4   4
+    //           0  2  3  4  5  6  6  7  7  8  9  9   9   9
+    //         : 0  2  3  4  5  6  7  7  8  8  9  10  10  10
 
     // Determine number of workgroups for the bin (or equivalently the number of meshlets
     // since each workgroup produces one meshlet).
@@ -125,54 +129,81 @@ uint binPack(uint subdiv) {
     uint wgroupCount = (binSize * threadCount + SUBGROUP_SIZE - 1) / SUBGROUP_SIZE;
 
     // First workgroup of the bin
-    uint wgroupOffset = subgroupExclusiveAdd(isBinFirst ? wgroupCount : 0);
-    wgroupOffset = subgroupShuffle(wgroupOffset, binFirst);
+    uint wgroupMatch = subgroupExclusiveAdd(isBinFirst ? wgroupCount : 0);
+    wgroupMatch = subgroupShuffle(wgroupMatch, binFirst);
+    // Subtlety: for the first entry in the bin, store the actual first workgroup for the bin,
+    // but for others, store the first workgroup of the **next bin**, so that in the mesh shader we can
+    // retrieve the first of the bin with `subgroupBallot(wgroupID >= wgroupMatch) / subgroupFindMSB()`.
+    wgroupMatch = isBinFirst ? wgroupMatch : wgroupMatch + wgroupCount;
 
-    uint wgroupID = wgroupOffset + (binPrefix * threadCount) / SUBGROUP_SIZE;
-    taskData.curves[outID] = PackedCurve(uint8_t(laneID), uint8_t(subdiv), uint16_t(wgroupID));
-
+    taskData.curves[outID] = PackedCurve(laneID, subdiv, wgroupMatch, 0);
     uint wgroupTotalCount = subgroupAdd(isBinFirst ? wgroupCount : 0);
-
-    if (isBinFirst && taskwgroupID == 0) {
-        debugPrintfEXT("Subdiv level %d: binSize=%d, binStartIdx=%d, binPrefix=%d, wgroupCount=%d, wgroupID(first)=%d\n", subdiv, binSize, binStartIdx, binPrefix, wgroupCount,  wgroupID);
-    }
-
     return wgroupTotalCount;
 }
 
 void main() {
+
     uint curveIdx = gl_GlobalInvocationID.x;
+
+    // Initialize task data
+    taskData.curves[gl_SubgroupInvocationID] = PackedCurve(0, 0, 2*SUBGROUP_SIZE, 0);
+    subgroupBarrier();
 
     // Determine if this invocation is valid, or if this is a slack invocation due to the number of curves not being
     // a multiple of the workgroup size, in which case this invocation should do nothing.
     // NOTE: don't return early because there is a barrier() call below that must be executed in uniform control flow.
     bool enabled = curveIdx < u.curveCount;
-    curveIdx = min(curveIdx, u.curveCount - 1);
-
-    uint cpIdx = u.curves.d[u.baseCurveIndex + curveIdx].start;
-    vec3 p0 = project(u.controlPoints.d[cpIdx + 0].pos).xyz;
-    vec3 p1 = project(u.controlPoints.d[cpIdx + 1].pos).xyz;
-    vec3 p2 = project(u.controlPoints.d[cpIdx + 2].pos).xyz;
-    vec3 p3 = project(u.controlPoints.d[cpIdx + 3].pos).xyz;
-
-    // Determine the subdivision count of the curve.
-    // Adapted from https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#section.10.6
-    vec3 ddv = 6.0 * max(abs(p3 - 2.0 * p2 + p1), abs(p2 - 2.0 * p1 + p0));
-    //debugPrintfEXT("ddv = %f %f %f\n", ddv.x, ddv.y, ddv.z);
-    const float tolerance = 1.0;
-    int n = int(ceil(sqrt(0.25 * length(ddv) / tolerance)));
-    // Clamp the maximum subdivision level, and round to next power of 2
-    n = clamp(n, 4, 64);
-    n = 1 << 1 + findMSB(n - 1);    // n = 4,8,16 or 32
-
-    taskData.baseCurveID = u.baseCurveIndex + gl_WorkGroupID.x * SUBGROUP_SIZE;
+    //curveIdx = min(curveIdx, u.curveCount - 1);
 
     if (enabled) {
+        uint cpIdx = u.curves.d[u.baseCurveIndex + curveIdx].start;
+        vec3 p0 = project(u.controlPoints.d[cpIdx + 0].pos).xyz;
+        vec3 p1 = project(u.controlPoints.d[cpIdx + 1].pos).xyz;
+        vec3 p2 = project(u.controlPoints.d[cpIdx + 2].pos).xyz;
+        vec3 p3 = project(u.controlPoints.d[cpIdx + 3].pos).xyz;
+
+        // Determine the subdivision count of the curve.
+        // Adapted from https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#section.10.6
+        vec3 ddv = 6.0 * max(abs(p3 - 2.0 * p2 + p1), abs(p2 - 2.0 * p1 + p0));
+        //debugPrintfEXT("ddv = %f %f %f\n", ddv.x, ddv.y, ddv.z);
+        const float tolerance = 1.0;
+        int n = int(ceil(sqrt(0.25 * length(ddv) / tolerance)));
+        // Clamp the maximum subdivision level, and round to next power of 2
+        n = clamp(n, 4, 32);
+        n = 1 << 1 + findMSB(n - 1);    // n = 4,8,16 or 32
+
         uint wgroupCount = binPack(n);
+
         if (gl_LocalInvocationIndex == 0) {
             EmitMeshTasksEXT(wgroupCount, 1, 1);
         }
     }
+
+    if (gl_SubgroupInvocationID == 0) {
+        taskData.baseCurveID = u.baseCurveIndex + gl_WorkGroupID.x * SUBGROUP_SIZE;
+    }
+
+   //if (gl_WorkGroupID.x == 0) {
+   //    debugPrintfEXT("taskData(%4d.%4d) = { subdiv=%2d, idx=%4d+%2d, wgroupMatch=%d }\n",
+   //    gl_WorkGroupID.x,
+   //    gl_SubgroupInvocationID,
+   //    uint(taskData.curves[gl_SubgroupInvocationID].subdiv),
+   //    taskData.baseCurveID,
+   //    uint(taskData.curves[gl_SubgroupInvocationID].curveID),
+   //    uint(taskData.curves[gl_SubgroupInvocationID].wgroupMatch));
+   //}
+
+    subgroupBarrier();
+
+    /*if (taskData.curves[gl_SubgroupInvocationID].curveID + taskData.baseCurveID >= 51802) {
+        debugPrintfEXT("INVALID taskData(%4d.%4d) = { subdiv=%2d, idx=%4d+%2d, wgroupMatch=%d }\n",
+        gl_WorkGroupID.x,
+        gl_SubgroupInvocationID,
+        taskData.curves[gl_SubgroupInvocationID].subdiv,
+        taskData.baseCurveID,
+        taskData.curves[gl_SubgroupInvocationID].curveID,
+        taskData.curves[gl_SubgroupInvocationID].wgroupMatch);
+    }*/
 }
 
 #endif
@@ -185,37 +216,62 @@ layout(local_size_x=SUBGROUP_SIZE) in;
 
 // Output: triangle mesh tessellation of the curve
 // 2 vertices per sample, 2 triangles subdivision
-layout(triangles, max_vertices=2*SUBGROUP_SIZE, max_primitives=2*(SUBGROUP_SIZE - 1)) out;
+layout(triangles, max_vertices=4*SUBGROUP_SIZE, max_primitives=4*(SUBGROUP_SIZE - 1)) out;
 layout(location=0) flat out int[] o_curveIndex;
 layout(location=1) out vec2[] o_uv;
 layout(location=2) out vec3[] o_color;
 layout(location=3) perprimitiveEXT out vec4[] o_line;
 
-shared vec4[MAX_VERTICES_PER_CURVE] s_curvePositions;
+shared vec4[SUBGROUP_SIZE] s_curvePositions;
 //shared vec3[MAX_VERTICES_PER_CURVE] s_curveColors;
-//shared vec2[MAX_VERTICES_PER_CURVE] s_curveNormals;
+shared vec2[SUBGROUP_SIZE] s_curveNormals;
 
 taskPayloadSharedEXT TaskData taskData;
 
-void binUnpack(uint wgroupID,
+bool binUnpack(uint wgroupID,
             out uint curveID,
             out uint packThreads,    // subdivision point count (4,8,16,32)
             out uint packSize,       // how many curves processed in parallel by this workgroup
             out uint packID,         // which curve among the ones processed in parallel (0..7)
-            out uint packThreadID,   // 0..packThreads-1
-            out bool valid)
+            out uint packThreadID    // 0..packThreads-1
+)
 {
     uint laneID = gl_SubgroupInvocationID;
-    uvec4 vote = subgroupBallot(wgroupID >= taskData.curves[laneID].wgroupID);
-    uint packStart = subgroupBallotFindMSB(vote);
-    packThreads = taskData.curves[packStart].subdiv;
-    uint wgroupStart = taskData.curves[packStart].wgroupID;
-    packThreadID = ((wgroupID - wgroupStart) * SUBGROUP_SIZE + laneID) % packThreads;
-    packID = laneID / packThreads;
-    curveID = taskData.baseCurveID + taskData.curves[packStart + packID].curveID;
-    valid = taskData.curves[packStart + packID].subdiv == packThreads;
-    uvec4 allValids = subgroupBallot((packThreadID == 0) && valid);
-    packSize = subgroupBallotBitCount(allValids);
+    uint wgroupMatch = taskData.curves[laneID].wgroupMatch;
+    uvec4 vote = subgroupBallot(wgroupID >= wgroupMatch);
+    if (vote == uvec4(0)) {
+        return false;
+    }
+    uint binStart = subgroupBallotFindMSB(vote);
+
+    // partID for curves that need two workgroups to process (e.g. 64 subdivisions)
+    // for subdiv < 64, partID is always 0
+    //uint partID = wgroupID - subgroupShuffle(wgroupForLane, inID);
+
+    // packed curve == a curve that is processed in parallel with other curves in the same workgroup
+
+    // 32 curves, subdiv 4, all in the same bin
+    // 4 threads per curve, 8 curves per workgroup, so 4 workgroups to spawn
+    //
+
+    packThreads = taskData.curves[binStart].subdiv;     // number of threads per packed curve
+    uint wgroupStart = taskData.curves[binStart].wgroupMatch;   // first workgroup of the bin
+    uint wgroupOffset = wgroupID - wgroupStart;   // offset of this workgroup in the bin
+    uint binThreadID = wgroupOffset * SUBGROUP_SIZE + laneID;
+    packThreadID = binThreadID % packThreads;
+    packID = binThreadID / packThreads;  // index of the packed curve in this mesh workgroup
+    if (binStart + packID >= SUBGROUP_SIZE) {
+        // overflow
+        return false;
+    }
+    if (taskData.curves[binStart + packID].subdiv != packThreads) {
+        // subdivision level mismatch: we're reading the next bin
+        return false;
+    }
+    uvec4 allValids = subgroupBallot(packThreadID == 0);
+    packSize = subgroupBallotBitCount(allValids);   // how many packed curves processed in this workgroup
+    curveID = taskData.baseCurveID + taskData.curves[binStart + packID].curveID;
+    return true;
 }
 
 
@@ -228,32 +284,44 @@ void main()
     uint packID;
     uint packThreads;
     uint packThreadID;
-    bool valid;
-    binUnpack(gl_WorkGroupID.x, curveID, packThreads, packSize, packID, packThreadID, valid);
+    bool valid = binUnpack(gl_WorkGroupID.x, curveID, packThreads, packSize, packID, packThreadID);
 
    //if (gl_WorkGroupID.x == 0) {
-   //    debugPrintfEXT("(wgroupID=%2d,laneID=%2d) curveID=%4d, packSize=%2d, packThreads=%2d, packThreadID=%2d, packID=%d, valid=%d\n",
-   //                gl_WorkGroupID.x, laneID,
-   //                curveID,
-   //                packSize,
-   //                packThreads,
-   //                packThreadID,
-   //                packID,
-   //                valid);
+   //
+   //    debugPrintfEXT("(wgroupID=%2d,laneID=%2d) curveID=%d, curves[laneID].wgroupID=%4d, packStart=%d, valid=%d\n",
+   //    gl_WorkGroupID.x,
+   //    laneID,
+   //    u.baseCurveIndex + uint(taskData.curves[laneID].curveID),
+   //    uint(taskData.curves[laneID].wgroupMatch),
+   //    packStart,
+   //    uint(valid)
+   //    );
    //}
 
     float t = float(packThreadID) / float(packThreads - 1);
-    CurveDesc curve = u.curves.d[curveID];
+    float tNext = float(packThreadID + 1) / float(packThreads - 1);
 
     // whether this invocation is the first sample of a curve segment
     bool isFirst = (packThreadID == 0) || (laneID == 0);
     // whether this invocation is the last sample of a curve segment
     bool isLast = (packThreadID == packThreads - 1) || (laneID == SUBGROUP_SIZE - 1);
 
+    // Emit geometry
+    uint vertexCount = 4 * packSize * packThreads;
+    uint primCount = 2 * (packSize * packThreads - 1);
+    SetMeshOutputsEXT(vertexCount, primCount);
+
+    gl_MeshVerticesEXT[4*laneID].gl_Position = vec4(0., 0., 0., 1.);
+    //gl_P
+
     // Evaluate the position on the curve at the current t parameters
     // and store them in shared memory.
-    vec3 color;
     if (valid) {
+
+        uint primOffset = 2 * ((packID * packThreads + packThreadID) % SUBGROUP_SIZE);
+        uint vertOffset = 2 * primOffset;
+
+        CurveDesc curve = u.curves.d[curveID];
         ControlPoint cp0 = u.controlPoints.d[curve.start];
         ControlPoint cp1 = u.controlPoints.d[curve.start + 1];
         ControlPoint cp2 = u.controlPoints.d[curve.start + 2];
@@ -266,96 +334,83 @@ void main()
         p1.y = -p1.y;
         p2.y = -p2.y;
         p3.y = -p3.y;
-        RCubicBezier3D curve = RCubicBezier3D(p0, p1, p2, p3);
-        s_curvePositions[laneID] = evalRCubicBezier3D(curve, t);
-        color = mix(cp0.color, cp3.color, t);
-    }
 
-    barrier();
-
-    if (valid) {
-        // Compute normal
-        vec4 pprev = s_curvePositions[isFirst ? laneID : laneID - 1];
-        vec4 p0    = s_curvePositions[laneID];
-        vec4 pnext = s_curvePositions[isLast ? laneID : laneID + 1];
-        vec2 vprev = normalize((p0.xy/p0.w - pprev.xy/pprev.w) * u.viewportSize);
-        vec2 vnext = normalize((pnext.xy/pnext.w - p0.xy/p0.w) * u.viewportSize);
-        vec2 v = 0.5 * (vprev + vnext);
-        vec2 n = vec2(-v.y, v.x) / u.viewportSize;
+        // Compute the point on the curve, along with tangent and normal.
+        // FIXME We compute the tangents/normals of the 2D Bézier curve that is made by projecting the control points of the 3D Bézier
+        // onto the screen. This is **not the same curve** as the projection of the 3D Bézier curve (which is a rational
+        // Bézier curve), but we use that because it's too complicated to compute the tangent/normal of the rational curve.
+        // I'm not sure how far this approximation is from the correct result.
+        vec4 pos = evalRCubicBezier3D(RCubicBezier3D(p0, p1, p2, p3), t);
+        vec4 posNext = evalRCubicBezier3D(RCubicBezier3D(p0, p1, p2, p3), tNext);
+        // screen-space line between this point and the next
+        vec2 viewportSize = u.viewportSize;
+        vec4 line = (vec4(pos.xy/pos.w, posNext.xy/posNext.w) + 1.) * 0.5 * viewportSize.xyxy;
+        vec2 tangent = evalCubicBezier2D_T(CubicBezier2D(p0.xy/p0.w, p1.xy/p1.w, p2.xy/p2.w, p3.xy/p3.w), t);
+        //if (length(tangent) < 1e-3) {
+        //    tangent = vec2(1., 0.);
+        //}
+        vec2 tangentN = normalize(viewportSize * tangent);
+        vec2 n = vec2(-tangentN.y, tangentN.x) / viewportSize;
+        tangentN /= viewportSize;
+        if (isnan(n.x) || isnan(n.y)) {
+            n = vec2(0., 0.);
+            tangentN = vec2(0., 0.);
+        }
+        // Color
+        vec3 color = mix(cp0.color, cp3.color, t);
 
         // Conservative rasterization factor
-        const float conservative = 8. * sqrt(2.);
+        const float conservative = 16. * sqrt(2.);
         float hw_aa = u.strokeWidth + conservative;
 
-        // Emit geometry
-        uint vertexCount = 2 * packSize * packThreads;
-        uint primCount = 2 * (packSize * packThreads - 1);
-        SetMeshOutputsEXT(vertexCount, primCount);
+        vec4 a = pos;
+        vec4 b = pos;
+        vec4 c = posNext;
+        vec4 d = posNext;
+        a.xy += n * hw_aa * a.w - tangentN * hw_aa * a.w;
+        b.xy -= n * hw_aa * b.w + tangentN * hw_aa * b.w;
+        c.xy += n * hw_aa * c.w + tangentN * hw_aa * c.w;
+        d.xy -= n * hw_aa * d.w - tangentN * hw_aa * d.w;
 
-        vec4 a = p0;
-        vec4 b = p0;
-        a.xy -= n * hw_aa * a.w;
-        b.xy += n * hw_aa * b.w;
+        if (isnan(a.x) || isnan(a.y) || isnan(b.x) || isnan(b.y) || isnan(c.x) || isnan(c.y) || isnan(d.x) || isnan(d.y)) {
+            a = vec4(0., 0., 0., 1.);
+            b = vec4(0., 0., 0., 1.);
+            c = vec4(0., 0., 0., 1.);
+            d = vec4(0., 0., 0., 1.);
+        }
 
-        // Modulo SUBGROUP_SIZE because we can have packThreadID=32..63 and SUBGROUP_SIZE=32
-        // for curves with 64 subdivisions split across two meshlets.
-        uint primIdx = (packID * packThreads + packThreadID) % SUBGROUP_SIZE;
-        uint vertIdx = primIdx * 2;
+        if (abs(a.w) > 10000 || abs(b.w) > 10000 || abs(c.w) > 10000 || abs(d.w) > 10000) {
+            debugPrintfEXT("a = %f %f %f %f\n", a.x, a.y, a.z, a.w);
+            debugPrintfEXT("b = %f %f %f %f\n", b.x, b.y, b.z, b.w);
+            debugPrintfEXT("c = %f %f %f %f\n", c.x, c.y, c.z, c.w);
+            debugPrintfEXT("d = %f %f %f %f\n", d.x, d.y, d.z, d.w);
+        }
 
-        /*if (gl_WorkGroupID.x == 0) {
-            debugPrintfEXT("(wgroupID=%2d,laneID=%2d) curveID=%4d, packSize=%2d, packThreads=%2d, packThreadID=%2d, packID=%d, valid=%d, primIdx=%2d, vertIdx=%2d\n",
-            gl_WorkGroupID.x, laneID,
-            curveID,
-            packSize,
-            packThreads,
-            packThreadID,
-            packID,
-            valid,primIdx,vertIdx);
-        }*/
+        gl_MeshVerticesEXT[vertOffset].gl_Position = a;
+        gl_MeshVerticesEXT[vertOffset + 1].gl_Position = b;
+        gl_MeshVerticesEXT[vertOffset + 2].gl_Position = c;
+        gl_MeshVerticesEXT[vertOffset + 3].gl_Position = d;
+        o_curveIndex[vertOffset] = int(curveID);
+        o_curveIndex[vertOffset + 1] = int(curveID);
+        o_curveIndex[vertOffset + 2] = int(curveID);
+        o_curveIndex[vertOffset + 3] = int(curveID);
+        o_uv[vertOffset] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
+        o_uv[vertOffset + 1] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
+        o_uv[vertOffset + 2] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
+        o_uv[vertOffset + 3] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
+        o_color[vertOffset] = color;
+        o_color[vertOffset + 1] = color;
+        o_color[vertOffset + 2] = color;
+        o_color[vertOffset + 3] = color;
 
-        gl_MeshVerticesEXT[vertIdx].gl_Position = a;
-        gl_MeshVerticesEXT[vertIdx + 1].gl_Position = b;
-        o_curveIndex[vertIdx] = int(curveID);
-        o_curveIndex[vertIdx + 1] = int(curveID);
-        o_uv[vertIdx] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), hw_aa);
-        o_uv[vertIdx + 1] = vec2(remap(t, 0., 1., curve.paramRange.x, curve.paramRange.y), -hw_aa);
-        o_color[vertIdx] = color;
-        o_color[vertIdx + 1] = color;
+        if (primOffset < primCount - 1) {
+            o_line[primOffset] = line;
+            o_line[primOffset+1] = line;
 
-        //(ndc * .5 + .5) * vec3(vec2(u.viewportSize), 1.);
-
-        vec4 line = (vec4(p0.xy/p0.w, pnext.xy/pnext.w) + 1.) * 0.5 * u.viewportSize.xyxy;
-        o_line[primIdx] = line;
-        o_line[primIdx+1] = line;
-
-        if (!isLast) {
-            gl_PrimitiveTriangleIndicesEXT[vertIdx] = uvec3(vertIdx, vertIdx+2, vertIdx+1);
-            gl_PrimitiveTriangleIndicesEXT[vertIdx+1] = uvec3(vertIdx+1, vertIdx+2, vertIdx+3);
-
-            /*vec4 a = s0.p.xy + s0.n * hw_aa - s0.t * conservative;
-            vec4 b = s0.p.xy - s0.n * hw_aa - s0.t * conservative;
-            vec2 c = s1.p.xy + s1.n * hw_aa + s1.t * conservative;
-            vec2 d = s1.p.xy - s1.n * hw_aa + s1.t * conservative;
-
-            gl_MeshVerticesEXT[localIndex*4 + 0].gl_Position = a;
-            gl_MeshVerticesEXT[localIndex*4 + 1].gl_Position = b;
-            gl_MeshVerticesEXT[localIndex*4 + 2].gl_Position = c;
-            gl_MeshVerticesEXT[localIndex*4 + 3].gl_Position = d;
-            o_curveIndex[localIndex*4 + 2] = int(curveIndex);
-            o_curveIndex[localIndex*4 + 3] = int(curveIndex);
-
-            vec2 pr = u.curves.d[u.baseCurveIndex + curveIndex].paramRange;
-            o_uv[localIndex*4 + 0] = vec2(remap(t, 0., 1., pr.x, pr.y), hw_aa);
-            o_uv[localIndex*4 + 1] = vec2(remap(t, 0., 1., pr.x, pr.y), -hw_aa);
-            o_uv[localIndex*4 + 2] = vec2(remap(t, 0., 1., pr.x, pr.y), hw_aa);
-            o_uv[localIndex*4 + 3] = vec2(remap(t, 0., 1., pr.x, pr.y), -hw_aa);
-
-            vec3 cd = u.controlPoints.d[u.curves.d[u.baseCurveIndex + curveIndex].start].color;
-            o_color[localIndex*4 + 2] = cd;
-            o_color[localIndex*4 + 3] = cd;*/
-        } else {
-            //gl_PrimitiveTriangleIndicesEXT[invocation*2] = uvec3(0, 0, 0);
-            //gl_PrimitiveTriangleIndicesEXT[invocation*2+1] = uvec3(0, 0, 0);
+            gl_PrimitiveTriangleIndicesEXT[primOffset] = uvec3(vertOffset, vertOffset+2, vertOffset+1);
+            gl_PrimitiveTriangleIndicesEXT[primOffset+1] = uvec3(vertOffset+1, vertOffset+2, vertOffset+3);
+            gl_MeshPrimitivesEXT[primOffset].gl_CullPrimitiveEXT = isLast;
+            gl_MeshPrimitivesEXT[primOffset+1].gl_CullPrimitiveEXT = isLast;
         }
     }
 }

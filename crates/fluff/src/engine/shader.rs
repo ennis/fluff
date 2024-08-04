@@ -7,6 +7,7 @@ use graal::{
 use spirv_reflect::types::ReflectTypeFlags;
 use std::{collections::BTreeMap, path::Path};
 use std::rc::Rc;
+use graal::shaderc::OptimizationLevel;
 use tracing::{error, warn};
 
 #[derive(Default)]
@@ -50,6 +51,7 @@ pub(super) fn compile_shader_stage(
     options.set_target_env(TargetEnv::Vulkan, EnvVersion::Vulkan1_3 as u32);
     options.set_target_spirv(SpirvVersion::V1_5);
     options.set_generate_debug_info();
+    options.set_optimization_level(OptimizationLevel::Zero);
     options.set_auto_bind_uniforms(true);
     for (key, value) in global_defines.iter() {
         options.add_macro_definition(key, Some(value));

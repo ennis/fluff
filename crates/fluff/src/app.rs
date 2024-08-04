@@ -821,7 +821,9 @@ impl App {
             "curve_binning",
             // TODO: in time, all of this will be moved to hot-reloadable config files
             MeshRenderPipelineDesc {
-                shader: PathBuf::from("crates/fluff/shaders/bin_curves.glsl"),
+                task_shader: PathBuf::from("crates/fluff/shaders/bin_curves.task"),
+                mesh_shader: PathBuf::from("crates/fluff/shaders/bin_curves.mesh"),
+                fragment_shader: PathBuf::from("crates/fluff/shaders/bin_curves.frag"),
                 defines: Default::default(),
                 color_targets: vec![ColorTargetState {
                     format: Format::R16G16B16A16_SFLOAT,
@@ -1693,6 +1695,12 @@ impl App {
                 ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
                 ui.label(format!("{:.2} ms/frame ({:.0} FPS)", dt * 1000., 1.0 / dt));
+                if let Some(anim) = &self.animation {
+                    let curve_count = anim.frames[self.bin_rast_current_frame].curve_range.count;
+                    let point_count = anim.position_buffer.len;
+                    //ui.label(format!("{} points", point_count));
+                    ui.label(format!("{} curves, {} points", curve_count, point_count));
+                }
             });
 
         egui::Window::new("Settings").show(ctx, |ui| {
