@@ -25,6 +25,7 @@ mod overlay;
 mod engine;
 mod util;
 mod shaders;
+mod point_painter;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

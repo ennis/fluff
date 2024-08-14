@@ -70,11 +70,11 @@ impl CubicBezierSegment {
         }
     }
 
-    fn flatten(&self, points: &mut Vec<Vec3>, tolerance: f32) -> Vec<Vec3> {
-        points.clear();
-        points.push(self.p0);
+    pub fn flatten(&self, points: &mut Vec<Vec3>, tolerance: f32) {
+        if points.is_empty() {
+            points.push(self.p0);
+        }
         self.flatten_inner(points, tolerance);
-        points.clone()
     }
 }
 

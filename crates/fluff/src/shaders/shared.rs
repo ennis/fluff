@@ -27,6 +27,7 @@ pub struct SceneParams {
     pub right: f32,
     pub top: f32,
     pub bottom: f32,
+    pub viewport_size: UVec2,
 }
 
 /// 3D bezier control point.
@@ -44,9 +45,9 @@ pub struct ControlPoint {
 #[repr(C)]
 pub struct CurveDesc {
     /// Width profile (polynomial coefficients).
-    pub width_profile: Vec4,
+    pub width_profile: [f32; 4],
     /// Opacity profile (polynomial coefficients).
-    pub opacity_profile: Vec4,
+    pub opacity_profile: [f32; 4],
     pub start: u32,
     /// Number of control points in the range.
     ///
@@ -54,7 +55,28 @@ pub struct CurveDesc {
     pub count: u32,
     /// parameter range
     pub param_range: Vec2,
+    pub brush_index: u32,
 }
+
+/// Stroke vertex.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct StrokeVertex {
+    pub pos: [f32; 3],
+    /// Arc length along the curve.
+    pub s: f32,
+    pub color: [u8; 4],
+    pub width: u8,  // unorm8
+}
+
+/// Stroke vertex.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Stroke {
+    pub base_vertex: u32,
+    pub vertex_count: u32,
+}
+
 
 /// Maximum number of line segments per tile.
 pub const MAX_LINES_PER_TILE: usize = 32;
@@ -127,7 +149,7 @@ pub struct DrawCurvesPushConstants {
     pub frame: u32,
     pub tile_data: DeviceAddress<[TileData]>,
     pub tile_line_count: DeviceAddress<[u32]>,
-    pub brush_textures: Texture2DHandleRange,
+    pub brush_textures: DeviceAddress<[ImageHandle]>,
     pub output_image: ImageHandle,
     pub debug_overflow: u32,
     pub stroke_bleed_exp: f32,
@@ -139,9 +161,9 @@ pub const DRAW_CURVES_WORKGROUP_SIZE_X: u32 = 16;
 pub const DRAW_CURVES_WORKGROUP_SIZE_Y: u32 = 2;
 
 pub const BINPACK_SUBGROUP_SIZE: u32 = 32;
+pub const SUBGROUP_SIZE: u32 = 32;
 pub const MAX_VERTICES_PER_CURVE: u32 = 64;
 
-pub const SAT_LOG2_SIZE: u32 = 7;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -150,3 +172,34 @@ pub struct SummedAreaTableParams {
     pub input_image: ImageHandle,
     pub output_image: ImageHandle,
 }
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Particle {
+    /// Position relative to cluster. 16-bit fixed point.
+    pub pos: [u16; 3],
+}
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct ParticleCluster {
+    pub pos: [f32; 3],
+    pub size: f32,
+    pub count: u32,
+}
+
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct DrawStrokesPushConstants {
+    pub vertices: DeviceAddress<[StrokeVertex]>,
+    pub strokes: DeviceAddress<[Stroke]>,
+    pub scene_params: DeviceAddress<SceneParams>,
+    pub brush_textures: DeviceAddress<[ImageHandle]>,
+    pub stroke_count: u32,
+    pub width: f32,
+    pub filter_width: f32,
+}
+
+
+

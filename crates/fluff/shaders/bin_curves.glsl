@@ -48,7 +48,7 @@ vec4 projectDir(vec3 dir)
 //const int SUBDIV_LEVEL_COUNT = 4; // 4,8,16,32
 //const int MAX_VERTICES_PER_CURVE = 64;
 
-const uint SUBGROUP_SIZE = BINPACK_SUBGROUP_SIZE;
+//const uint SUBGROUP_SIZE = BINPACK_SUBGROUP_SIZE;
 
 #ifndef DEGENERATE_CURVE_THRESHOLD
 const float DEGENERATE_CURVE_THRESHOLD = 0.01;
@@ -217,8 +217,8 @@ layout(local_size_x=SUBGROUP_SIZE) in;
 // 2 vertices per sample, 2 triangles subdivision
 layout(triangles, max_vertices=4*SUBGROUP_SIZE, max_primitives=4*(SUBGROUP_SIZE - 1)) out;
 layout(location=0) perprimitiveEXT flat out uint[] o_curveID;
-layout(location=1) perprimitiveEXT out vec4[] o_line;
-layout(location=2) perprimitiveEXT out vec2[] o_paramRange;
+layout(location=1) perprimitiveEXT flat out vec4[] o_line;
+layout(location=2) perprimitiveEXT flat out vec2[] o_paramRange;
 //layout(location=1) out vec2[] o_uv;
 //layout(location=2) out vec3[] o_color;
 
@@ -411,18 +411,50 @@ void main()
 
 #ifdef __FRAGMENT__
 
+#ifdef FILTER_DUPLICATE_LINES
+layout(pixel_interlock_ordered) in;
+#endif
+
 //layout(location=0) flat in int i_curveIndex;
 //layout(location=1) in vec2 i_uv;
 //layout(location=2) in vec3 i_color;
 layout(location=0) perprimitiveEXT flat in int i_curveID;
-layout(location=1) perprimitiveEXT in vec4 i_line;
-layout(location=2) perprimitiveEXT in vec2 i_paramRange;
+layout(location=1) perprimitiveEXT flat in vec4 i_line;
+layout(location=2) perprimitiveEXT flat in vec2 i_paramRange;
 layout(location=0) out vec4 o_color;
 
 void main() {
     uint tileIndex = uint(gl_FragCoord.x) + uint(gl_FragCoord.y) * u.tileCountX;
 
     // FIXME: this is often called twice for each line (but not always), one for each triangle of the quad; find a way to deduplicate
+
+    #ifdef FILTER_DUPLICATE_LINES
+    beginInvocationInterlockARB();
+
+    memoryBarrier();
+    uint count = u.tileLineCount.d[tileIndex];
+    bool duplicate = false;
+    for (uint i = 0; i < count; i++) {
+        TileLineData data = u.tileData.d[tileIndex].lines[i];
+        if (data.curveId == i_curveID && all(lessThan(abs(data.paramRange - i_paramRange), vec2(1e-6)))) {
+            //debugPrintfEXT("i_curveID=%6d i=%d paramRange=%f %f data.paramRange=%f %f\n", i_curveID, i, i_paramRange.x, i_paramRange.y, data.paramRange.x, data.paramRange.y);
+            duplicate = true;
+            //break;
+        }
+    }
+    if (!duplicate) {
+        //uint idx = atomicAdd(u.tileLineCount.d[tileIndex], 1);
+        uint idx = count;
+        if (idx < MAX_LINES_PER_TILE) {
+            u.tileLineCount.d[tileIndex] = count + 1;
+            u.tileData.d[tileIndex].lines[idx].lineCoords = i_line;
+            u.tileData.d[tileIndex].lines[idx].curveId = i_curveID;
+            u.tileData.d[tileIndex].lines[idx].paramRange = i_paramRange;
+            u.tileData.d[tileIndex].lines[idx].depth = gl_FragCoord.z;
+        }
+    }
+    endInvocationInterlockARB();
+    #else
     uint count = atomicAdd(u.tileLineCount.d[tileIndex], 1);
     if (count < MAX_LINES_PER_TILE) {
         u.tileData.d[tileIndex].lines[count].lineCoords = i_line;
@@ -430,7 +462,7 @@ void main() {
         u.tileData.d[tileIndex].lines[count].paramRange = i_paramRange;
         u.tileData.d[tileIndex].lines[count].depth = gl_FragCoord.z;
     }
-
+    #endif
     o_color = vec4(0., 1., 0., 0.2);
 }
 

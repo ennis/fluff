@@ -4,6 +4,7 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_debug_printf : enable
 
 #include "bindless.inc.glsl"
 #include "common.inc.glsl"
@@ -78,7 +79,7 @@ void main() {
 
         float a;
         float y = distSeg(vec2(coord)+vec2(0.5), data.lineCoords.xy, data.lineCoords.zw, a);
-        if (y < dist) {
+        if (abs(y) < abs(dist)) {
             dist = y;
             depth = data.depth;
             param = remap(a, 0., 1., data.paramRange.x, data.paramRange.y);
@@ -96,10 +97,31 @@ void main() {
             vec4 lineColor = vec4(u.controlPoints.d[c.start].color, 1.0);
             //float width = u.strokeWidth;
             float h = width * 0.5;
-            float y = dist;
+            float y = abs(dist);
             float filterWidth = 1.5;
             float halfFilterWidth = filterWidth * 0.5;
             float alpha = (clamp((y + h + halfFilterWidth), 0., width) - clamp((y + h - halfFilterWidth), 0., width)) / filterWidth;
+            alpha = param < 0.0 ? 0.0 : alpha;
+            alpha = param > 1.0 ? 0.0 : alpha;
+
+            #ifdef TEXTURED
+
+            //debugPrintfEXT("brushIndex: %d, tex: %xd\n", c.brushIndex, tex.idx);
+
+            image2DHandle tex = u.brushTextures.d[c.brushIndex];
+            const float texSize = 256;
+            float v = remap(dist, -0.5*width, 0.5*width, 0.0, texSize-1.);
+            const float stamp_scale = 0.5;
+            vec2 u_range = vec2(max(0, min(stamp_scale - 1.0 + param, stamp_scale)), min(param, stamp_scale)) / stamp_scale;
+            //vec2 u_range = vec2(0, 1);
+            ivec2 A = ivec2((texSize-1.) * u_range.x, v);
+            ivec2 B = ivec2((texSize-1.) * u_range.y, v);
+            float Ia = imageLoad(tex, A).r;
+            float Ib = imageLoad(tex, B).r;
+            float integral = 2.0 * (Ib - Ia) / texSize;
+            alpha *= integral;
+
+            #endif
 
             float wd = pow(1.0 / linearDepth(depth), u.strokeBleedExp);
             color += lineColor * alpha * opacity;

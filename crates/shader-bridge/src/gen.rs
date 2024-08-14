@@ -18,6 +18,10 @@ impl fmt::Display for DisplayTypeGLSL<'_> {
         match self.0 {
             Type::F32 => write!(f, "float"),
             Type::F64 => write!(f, "double"),
+            Type::I8 => write!(f, "int8_t"),
+            Type::U8 => write!(f, "uint8_t"),
+            Type::I16 => write!(f, "int16_t"),
+            Type::U16 => write!(f, "uint16_t"),
             Type::I32 => write!(f, "int"),
             Type::U32 => write!(f, "uint"),
             Type::Vec2 => write!(f, "vec2"),
@@ -29,6 +33,18 @@ impl fmt::Display for DisplayTypeGLSL<'_> {
             Type::UVec2 => write!(f, "uvec2"),
             Type::UVec3 => write!(f, "uvec3"),
             Type::UVec4 => write!(f, "uvec4"),
+            Type::I8Vec2 => write!(f, "i8vec2"),
+            Type::I8Vec3 => write!(f, "i8vec3"),
+            Type::I8Vec4 => write!(f, "i8vec4"),
+            Type::U8Vec2 => write!(f, "u8vec2"),
+            Type::U8Vec3 => write!(f, "u8vec3"),
+            Type::U8Vec4 => write!(f, "u8vec4"),
+            Type::I16Vec2 => write!(f, "i16vec2"),
+            Type::I16Vec3 => write!(f, "i16vec3"),
+            Type::I16Vec4 => write!(f, "i16vec4"),
+            Type::U16Vec2 => write!(f, "u16vec2"),
+            Type::U16Vec3 => write!(f, "u16vec3"),
+            Type::U16Vec4 => write!(f, "u16vec4"),
             Type::Mat2 => write!(f, "mat2"),
             Type::Mat3 => write!(f, "mat3"),
             Type::Mat4 => write!(f, "mat4"),
@@ -67,14 +83,14 @@ fn write_docs(attrs: &Attrs, out: &mut Output) {
 fn write_buffer_reference_forward_decl(s: &Struct, array: bool, out: &mut Output) {
     let name = &s.name;
     let suffix = if array { "Slice" } else { "Ptr" };
-    writeln!(out, "layout(buffer_reference, scalar, buffer_reference_align=8) buffer {name}{suffix};").unwrap();
+    writeln!(out, "layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer {name}{suffix};").unwrap();
 }
 
 fn write_buffer_reference(s: &Struct, array: bool, out: &mut Output) {
     let name = &s.name;
     let suffix = if array { "Slice" } else { "Ptr" };
     let array = if array { "[]" } else { "" };
-    write!(out, "layout(buffer_reference, scalar, buffer_reference_align=8) buffer {name}{suffix} {{").unwrap();
+    write!(out, "layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer {name}{suffix} {{").unwrap();
     write!(out, "{name}{array} d;").unwrap();
     writeln!(out, "}};").unwrap();
 }
@@ -121,36 +137,37 @@ fn write_item(item: &BridgeItem, out: &mut Output) {
 
 fn write_primitive_buffer_references(out: &mut Output) {
     let contents = r#"
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer intPtr { int d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uintPtr { uint d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer floatPtr { float d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec2Ptr { vec2 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec3Ptr { vec3 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec4Ptr { vec4 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec2Ptr { ivec2 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec3Ptr { ivec3 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec4Ptr { ivec4 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec2Ptr { uvec2 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec3Ptr { uvec3 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec4Ptr { uvec4 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat2Ptr { mat2 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat3Ptr { mat3 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat4Ptr { mat4 d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer intSlice { int[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uintSlice { uint[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer floatSlice { float[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec2Slice { vec2[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec3Slice { vec3[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer vec4Slice { vec4[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec2Slice { ivec2[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec3Slice { ivec3[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer ivec4Slice { ivec4[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec2Slice { uvec2[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec3Slice { uvec3[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer uvec4Slice { uvec4[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat2Slice { mat2[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat3Slice { mat3[] d; };
-layout(buffer_reference, scalar, buffer_reference_align=8) buffer mat4Slice { mat4[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer intPtr { int d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uintPtr { uint d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer floatPtr { float d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec2Ptr { vec2 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec3Ptr { vec3 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec4Ptr { vec4 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec2Ptr { ivec2 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec3Ptr { ivec3 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec4Ptr { ivec4 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec2Ptr { uvec2 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec3Ptr { uvec3 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec4Ptr { uvec4 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat2Ptr { mat2 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat3Ptr { mat3 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat4Ptr { mat4 d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer intSlice { int[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uintSlice { uint[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer floatSlice { float[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec2Slice { vec2[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec3Slice { vec3[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer vec4Slice { vec4[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec2Slice { ivec2[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec3Slice { ivec3[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer ivec4Slice { ivec4[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec2Slice { uvec2[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec3Slice { uvec3[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer uvec4Slice { uvec4[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat2Slice { mat2[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat3Slice { mat3[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer mat4Slice { mat4[] d; };
+layout(buffer_reference, scalar, buffer_reference_align=4) coherent buffer image2DHandleSlice { image2DHandle[] d; };
 
 
 "#;

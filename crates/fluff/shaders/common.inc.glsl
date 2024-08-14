@@ -16,7 +16,7 @@ float distSeg(vec2 p, vec2 a, vec2 b, out float alpha) {
     vec2 p0 = a + d * ab;
     alpha = d;
     //float taper = max(0.0, 80.0 - distance(p,b)) / 80.0;
-    return distance(p, p0);
+    return side * distance(p, p0);
 }
 
 // Noise stuff
@@ -67,6 +67,14 @@ float remap(float value, float min1, float max1, float min2, float max2) {
 float linearstep(float edge0, float edge1, float x)
 {
     return clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+}
+
+// Rounds the given value to the nearest larger power of two.
+// If n == 0, returns 0.
+uint roundUpPow2(uint n) {
+    // if n == 1, n-1 == 0, findMSB(0) == -1, 1 << 1 + -1 == 1 << 0 == 1
+    // n == 4, n-1 = 3, findMSB(3) == 1, 1 << 1 + 1 == 1 << 2 == 4
+    return n < 1 ? 0 : 1 << 1 + findMSB(n - 1);
 }
 
 // A range of control points in the controlPoints buffer that describes a single curve.

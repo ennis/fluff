@@ -1,5 +1,6 @@
 // Greyscale 2D summed-area table calculation for brush masks, for one dimension at a time. (It's a prefix sum.)
 #version 460 core
+#include "bindless.inc.glsl"
 #include "shared.inc.glsl"
 
 const uint SAT_SIZE = 1 << SAT_LOG2_SIZE;
@@ -7,7 +8,11 @@ const uint SAT_SIZE = 1 << SAT_LOG2_SIZE;
 layout (local_size_x = SAT_SIZE, local_size_y = 1) in;
 
 // One row or column of the SAT image.
-shared uint prefixSum[2 * SAT_SIZE];
+shared float prefixSum[2 * SAT_SIZE];
+
+layout(push_constant) uniform Constants {
+    SummedAreaTableParams u;
+};
 
 void main() {
 
@@ -20,8 +25,7 @@ void main() {
         coord = ivec2(gl_WorkGroupID.x, gl_LocalInvocationID.x);
     }
 
-    // Load the line into shared memory.
-    prefixSum[gl_LocalInvocationID.x] = imageLoad(u.inputImage, coord).r;
+    prefixSum[gl_LocalInvocationID.x] = 1.0 - imageLoad(u.inputImage, coord).r;
 
     barrier();
 
@@ -32,8 +36,8 @@ void main() {
     uint out_off = SAT_SIZE;
     uint j = gl_LocalInvocationID.x;
     for (uint offset = 1; offset < SAT_SIZE; offset *= 2) {
-        if (j >= step) {
-            prefixSum[out_off + j] = prefixSum[in_off + j] + prefixSum[in_off + j - step];
+        if (j >= offset) {
+            prefixSum[out_off + j] = prefixSum[in_off + j] + prefixSum[in_off + j - offset];
         } else {
             prefixSum[out_off + j] = prefixSum[in_off + j];
         }

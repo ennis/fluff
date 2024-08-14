@@ -3,10 +3,7 @@ use std::{
     fmt,
     fmt::{Display, Formatter},
 };
-use syn::{
-    parse::{Result},
-    Attribute, Error, Item, Meta,
-};
+use syn::{parse::{Result}, Attribute, Error, Item, Meta, parenthesized, LitInt};
 use syn::spanned::Spanned;
 
 /*
@@ -36,11 +33,27 @@ impl ConstIntVal {
 pub(crate) enum Type {
     F32,
     F64,
+    I8,
+    I16,
     I32,
+    U8,
+    U16,
     U32,
     Bool,
     I64,
     U64,
+    U8Vec2,
+    U8Vec3,
+    U8Vec4,
+    U16Vec2,
+    U16Vec3,
+    U16Vec4,
+    I8Vec2,
+    I8Vec3,
+    I8Vec4,
+    I16Vec2,
+    I16Vec3,
+    I16Vec4,
     Vec2,
     Vec3,
     Vec4,
@@ -67,7 +80,11 @@ impl fmt::Debug for Type {
         match self {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
+            Type::I8 => write!(f, "i8"),
+            Type::I16 => write!(f, "i16"),
             Type::I32 => write!(f, "i32"),
+            Type::U8 => write!(f, "u8"),
+            Type::U16 => write!(f, "u16"),
             Type::U32 => write!(f, "u32"),
             Type::Bool => write!(f, "bool"),
             Type::I64 => write!(f, "i64"),
@@ -81,6 +98,18 @@ impl fmt::Debug for Type {
             Type::UVec2 => write!(f, "UVec2"),
             Type::UVec3 => write!(f, "UVec3"),
             Type::UVec4 => write!(f, "UVec4"),
+            Type::U8Vec2 => write!(f, "U8Vec2"),
+            Type::U8Vec3 => write!(f, "U8Vec3"),
+            Type::U8Vec4 => write!(f, "U8Vec4"),
+            Type::U16Vec2 => write!(f, "U16Vec2"),
+            Type::U16Vec3 => write!(f, "U16Vec3"),
+            Type::U16Vec4 => write!(f, "U16Vec4"),
+            Type::I8Vec2 => write!(f, "I8Vec2"),
+            Type::I8Vec3 => write!(f, "I8Vec3"),
+            Type::I8Vec4 => write!(f, "I8Vec4"),
+            Type::I16Vec2 => write!(f, "I16Vec2"),
+            Type::I16Vec3 => write!(f, "I16Vec3"),
+            Type::I16Vec4 => write!(f, "I16Vec4"),
             Type::Mat2 => write!(f, "Mat2"),
             Type::Mat3 => write!(f, "Mat3"),
             Type::Mat4 => write!(f, "Mat4"),
@@ -126,8 +155,16 @@ impl Type {
                     Ok(Type::F32)
                 } else if p.is_ident("f64") {
                     Ok(Type::F64)
+                } else if p.is_ident("i8") {
+                    Ok(Type::I8)
+                } else if p.is_ident("i16") {
+                    Ok(Type::I16)
                 } else if p.is_ident("i32") {
                     Ok(Type::I32)
+                } else if p.is_ident("u8") {
+                    Ok(Type::U8)
+                } else if p.is_ident("u16") {
+                    Ok(Type::U16)
                 } else if p.is_ident("u32") {
                     Ok(Type::U32)
                 } else if p.is_ident("usize") {
@@ -142,6 +179,7 @@ impl Type {
                     //
                     // but then we'd need to handle `as` expressions when translating array types,
                     // which we'd like to avoid.
+                    // FIXME: obviously this breaks layouts when usize is used in a reflected struct => don't do that
                     Ok(Type::U32)
                 } else if p.is_ident("isize") {
                     // Same reasoning as usize
@@ -253,25 +291,28 @@ impl Type {
                     _ => return self,
                 };
 
-                match **inner_ty {
-                    Type::F32 => match size {
-                        2 => Type::Vec2,
-                        3 => Type::Vec3,
-                        4 => Type::Vec4,
-                        _ => self.clone(),
-                    },
-                    Type::I32 => match size {
-                        2 => Type::IVec2,
-                        3 => Type::IVec3,
-                        4 => Type::IVec4,
-                        _ => self.clone(),
-                    },
-                    Type::U32 => match size {
-                        2 => Type::UVec2,
-                        3 => Type::UVec3,
-                        4 => Type::UVec4,
-                        _ => self.clone(),
-                    },
+                match (&**inner_ty, size) {
+                    (&Type::F32, 2) => Type::Vec2,
+                    (&Type::F32, 3) => Type::Vec3,
+                    (&Type::F32, 4) => Type::Vec4,
+                    (&Type::I32, 2) => Type::IVec2,
+                    (&Type::I32, 3) => Type::IVec3,
+                    (&Type::I32, 4) => Type::IVec4,
+                    (&Type::U32, 2) => Type::UVec2,
+                    (&Type::U32, 3) => Type::UVec3,
+                    (&Type::U32, 4) => Type::UVec4,
+                    (&Type::U8, 2) => Type::U8Vec2,
+                    (&Type::U8, 3) => Type::U8Vec3,
+                    (&Type::U8, 4) => Type::U8Vec4,
+                    (&Type::U16, 2) => Type::U16Vec2,
+                    (&Type::U16, 3) => Type::U16Vec3,
+                    (&Type::U16, 4) => Type::U16Vec4,
+                    (&Type::I8, 2) => Type::I8Vec2,
+                    (&Type::I8, 3) => Type::I8Vec3,
+                    (&Type::I8, 4) => Type::I8Vec4,
+                    (&Type::I16, 2) => Type::I16Vec2,
+                    (&Type::I16, 3) => Type::I16Vec3,
+                    (&Type::I16, 4) => Type::I16Vec4,
                     _ => self.clone(),
                 }
             }
@@ -455,6 +496,14 @@ fn parse_attrs(attrs: &[Attribute]) -> Result<Attrs> {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("C") {
                     repr_c = true;
+                } else if meta.path.is_ident("align") {
+                    let content;
+                    parenthesized!(content in meta.input);
+                    // must parse otherwise parse_nested_meta will fail
+                    // see https://github.com/dtolnay/syn/issues/1426
+                    let lit: LitInt = content.parse()?;
+                    let n: usize = lit.base10_parse()?;
+                    let _repr_align = Some(n);
                 } else if meta.path.is_ident("transparent") {
                     repr_transparent = true;
                 }
