@@ -8,11 +8,15 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
+use std::time::Instant;
 use egui::ImageData::Color;
 use tracing::{error, info, trace, warn};
 
 use houdinio::Geo;
 use rand::{random, thread_rng, Rng};
+use uniform_cubic_splines::{spline, spline_inverse};
+use uniform_cubic_splines::basis::CatmullRom;
+//use splines::Spline;
 use winit::{
     event::{MouseButton, TouchPhase},
     keyboard::NamedKey,
@@ -29,192 +33,10 @@ use crate::{
     },
     util::resolve_file_sequence,
 };
+use crate::gpu_append_buffer::AppendBuffer;
 use crate::shaders::shared::{DrawStrokesPushConstants, Stroke, StrokeVertex, SUBGROUP_SIZE};
+use crate::ui::{curve_editor_button, icon_button};
 
-/// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
-///
-/// If the buffer is host-visible, elements can be added directly to the buffer.
-/// Otherwise, elements are first added to a staging area and must be copied to the buffer on
-/// the device timeline by calling [`AppendBuffer::commit`].
-pub struct AppendBuffer<T> {
-    buffer: Buffer<[T]>,
-    len: usize,
-    staging: Vec<T>,
-}
-
-impl<T: Copy> AppendBuffer<T> {
-    /// Creates an append buffer with the given usage flags and default capacity.
-    pub fn new(device: &Device, usage: BufferUsage, memory_location: MemoryLocation) -> AppendBuffer<T> {
-        Self::with_capacity(device, usage, memory_location, 16)
-    }
-
-    /// Creates an append buffer with the given usage flags and initial capacity.
-    pub fn with_capacity(device: &Device, mut usage: BufferUsage, memory_location: MemoryLocation, capacity: usize) -> Self {
-        // Add TRANSFER_DST capacity if the buffer is not host-visible
-        if memory_location != MemoryLocation::CpuToGpu {
-            usage |= BufferUsage::TRANSFER_DST;
-        }
-        let buffer = device.create_array_buffer(usage, memory_location, capacity);
-        Self {
-            buffer,
-            len: 0,
-            staging: vec![],
-        }
-    }
-
-    /// Returns the pointer to the buffer data in host memory.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the buffer is not host-visible.
-    pub fn as_mut_ptr(&self) -> *mut T {
-        self.buffer.as_mut_ptr()
-    }
-
-    pub unsafe fn set_len(&mut self, len: usize) {
-        assert!(self.host_visible());
-        assert!(len <= self.buffer.len());
-        self.len = len;
-    }
-
-    pub fn set_name(&self, name: &str) {
-        self.buffer.set_name(name);
-    }
-
-    pub fn device_address(&self) -> DeviceAddress<[T]> {
-        self.buffer.device_address()
-    }
-
-    /// Returns the capacity in elements of the buffer before it needs to be resized.
-    pub fn capacity(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// Returns the number of elements in the buffer (including elements in the staging area).
-    pub fn len(&self) -> usize {
-        // number of elements in the main buffer + pending elements
-        self.len + self.staging.len()
-    }
-
-    fn needs_to_grow(&self, additional: usize) -> bool {
-        self.len + additional > self.capacity()
-    }
-
-    /// Whether the buffer is host-visible (and mapped in memory).
-    fn host_visible(&self) -> bool {
-        self.buffer.memory_location() == MemoryLocation::CpuToGpu
-    }
-
-    fn reserve_gpu(&mut self, cmd: &mut CommandStream, additional: usize) {
-        if self.needs_to_grow(additional) {
-            let memory_location = self.buffer.memory_location();
-            let new_capacity = (self.len + additional).next_power_of_two(); // in num of elements
-            trace!(
-                "AppendBuffer: reallocating {} -> {} bytes",
-                self.capacity() * size_of::<T>(),
-                new_capacity * size_of::<T>()
-            );
-            let new_buffer = self
-                .buffer
-                .device()
-                .create_array_buffer(self.buffer.usage(), memory_location, new_capacity);
-            cmd.copy_buffer(&self.buffer.untyped, 0, &new_buffer.untyped, 0, (self.len * size_of::<T>()) as u64);
-            self.buffer = new_buffer;
-        }
-    }
-
-    /// Reserve space for `additional` elements in the buffer, if the buffer is host-visible.
-    fn reserve_cpu(&mut self, additional: usize) {
-        assert!(self.host_visible());
-        if self.needs_to_grow(additional) {
-            let new_capacity = (self.len + additional).next_power_of_two(); // in num of elements
-            trace!(
-                "AppendBuffer: reallocating {} -> {} bytes",
-                self.capacity() * size_of::<T>(),
-                new_capacity * size_of::<T>()
-            );
-            let new_buffer = self
-                .buffer
-                .device()
-                .create_array_buffer(self.buffer.usage(), self.buffer.memory_location(), new_capacity);
-            // Copy the old data to the new buffer
-            unsafe {
-                ptr::copy_nonoverlapping(self.buffer.as_mut_ptr(), new_buffer.as_mut_ptr(), self.len);
-            }
-            self.buffer = new_buffer;
-        }
-    }
-
-    /// Truncates the buffer to the given length.
-    ///
-    /// # Panics
-    ///
-    /// * Panics if `len` is greater than the current length of the buffer.
-    /// * Panics if there are pending elements in the staging area.
-    pub fn truncate(&mut self, len: usize) {
-        assert!(len <= self.len);
-        assert!(self.staging.is_empty());
-        self.len = len;
-    }
-
-    /// Adds an element to the buffer.
-    pub fn push(&mut self, elem: T) {
-        if self.buffer.memory_location() == MemoryLocation::CpuToGpu {
-            // the buffer is mapped in memory, we can copy the element right now
-            self.reserve_cpu(1);
-            unsafe {
-                ptr::write(self.buffer.as_mut_ptr().add(self.len), elem);
-            }
-        } else {
-            // add to pending list
-            self.staging.push(elem);
-        }
-        self.len += 1;
-    }
-
-    /// Returns whether there are pending elements to be copied to the main buffer.
-    pub fn has_pending(&self) -> bool {
-        !self.staging.is_empty()
-    }
-
-    /// Copies pending elements to the main buffer.
-    pub fn commit(&mut self, cmd: &mut CommandStream) {
-        let n = self.staging.len(); // number of elements to append
-        if n == 0 {
-            return;
-        }
-
-        if self.host_visible() {
-            // nothing to do, the elements have already been copied
-            return;
-        }
-
-        self.reserve_gpu(cmd, n);
-        // allocate staging buffer & copy pending elements
-        let staging_buf = self
-            .buffer
-            .device()
-            .create_array_buffer::<T>(BufferUsage::TRANSFER_SRC, MemoryLocation::CpuToGpu, n);
-        unsafe {
-            ptr::copy_nonoverlapping(self.staging.as_ptr(), staging_buf.as_mut_ptr(), n);
-        }
-        // copy from staging to main buffer
-        let elem_size = size_of::<T>() as u64;
-        cmd.copy_buffer(
-            &staging_buf.untyped,
-            0,
-            &self.buffer.untyped,
-            self.len as u64 * elem_size,
-            n as u64 * elem_size,
-        );
-        self.staging.clear();
-    }
-
-    /// Returns the underlying GPU buffer.
-    pub fn buffer(&self) -> Buffer<[T]> {
-        self.buffer.clone()
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -473,6 +295,8 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                                     pos: (*v).into(),
                                     s,
                                     color: [(color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8, 255],
+                                    width: 255,
+                                    opacity: 255,
                                 });
                                 if i != vertices.len() - 1 {
                                     s += v.distance(vertices[i + 1]);
@@ -482,6 +306,8 @@ fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> Animati
                             stroke_buffer.push(Stroke {
                                 base_vertex,
                                 vertex_count: vertices.len() as u32,
+                                brush: 0,
+                                arc_length: s,
                             });
                         }
                     }
@@ -610,17 +436,6 @@ fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
     image
 }
 
-fn icon_button(ui: &mut Ui, icon: &str, color: Color32) -> Response {
-    let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(20.0, 20.0), egui::Sense::click());
-    if response.hovered() {
-        let color = ui.style().visuals.selection.bg_fill;
-        ui.painter().rect_filled(rect, 0.0, color);
-    }
-    ui.painter()
-        .text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), color);
-    response
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Default)]
@@ -653,6 +468,7 @@ struct BrushTexture {
 struct PenSample {
     position: DVec2,
     pressure: f64,
+    arc_length: f64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -663,10 +479,45 @@ struct Tweak {
     autofocus: bool,
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CubicCurve {
+    knots: Vec<f64>,
+    values: Vec<f64>,
+}
+
+impl CubicCurve {
+    pub fn sample(&self, t: f64) -> f64 {
+        let t = spline_inverse::<CatmullRom, _>(t, &self.knots, None, None).unwrap_or_default();
+        spline::<CatmullRom, _, _>(t, &self.values)
+    }
+}
+
+impl Default for CubicCurve {
+    fn default() -> Self {
+        Self {
+            knots: vec![0.0, 0.0, 0.33, 0.66, 1.0, 1.0],
+            values: vec![0.0, 0.0, 0.33, 0.66, 1.0, 1.0],
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SavedSettings {
     tweaks: Vec<Tweak>,
     last_geom_file: Option<PathBuf>,
+    pressure_response_curve: CubicCurve,
+}
+
+impl Default for SavedSettings {
+    fn default() -> Self {
+        //use splines::Key;
+        //use splines::Interpolation::CatmullRom;
+        Self {
+            tweaks: vec![],
+            last_geom_file: None,
+            pressure_response_curve: Default::default(),
+        }
+    }
 }
 
 impl SavedSettings {
@@ -700,6 +551,8 @@ pub struct App {
     frame_image: Image,
     temporal_avg_image: Image,
     debug_tile_line_overflow: bool,
+    start_time: Instant,
+    frame_start_time: Instant,
 
     // Bin rasterization
     bin_rast_stroke_width: f32,
@@ -735,10 +588,13 @@ pub struct App {
     curve_embedding_factor: f64,
     stroke_bleed_exp: f32,
     stroke_color: Color32,
+    background_color: Color32,
     width_profile_pos: glam::Vec4,
     width_profile: glam::Vec4,
     opacity_profile_pos: glam::Vec4,
     opacity_profile: glam::Vec4,
+    opacity_response_curve: CubicCurve,
+
 }
 
 impl App {
@@ -838,6 +694,9 @@ impl App {
         let tile_count_x = width.div_ceil(BINNING_TILE_SIZE);
         let tile_count_y = height.div_ceil(BINNING_TILE_SIZE);
         //engine.define_global("TILE_SIZE", CURVE_BINNING_TILE_SIZE.to_string());
+
+        let time = (self.frame_start_time - self.start_time).as_secs_f32();
+
         let camera = self.camera_control.camera();
         let scene_params = shaders::shared::SceneParams {
             view: camera.view,
@@ -852,6 +711,8 @@ impl App {
             top: 0.0,
             bottom: 0.0,
             viewport_size: viewport_size.into(),
+            cursor_pos: Default::default(),
+            time,
         };
 
 
@@ -877,7 +738,7 @@ impl App {
         );
 
 
-        let brush_texture_handles: Vec<_> = self.brush_textures.iter().map(|b| b.sat_image_view.device_image_handle()).collect();
+        let brush_texture_handles: Vec<_> = self.brush_textures.iter().map(|b| b.image_view.device_image_handle()).collect();
         let brush_textures = self.device.upload_array_buffer(
             BufferUsage::STORAGE_BUFFER,
             &brush_texture_handles,
@@ -1022,10 +883,11 @@ impl App {
                 encoder.finish();
             }
             RenderMode::CurvesOIT => {
+                let clear_color = self.background_color.to_normalized_gamma_f32();
                 let mut encoder = cmd.begin_rendering(RenderPassInfo {
                     color_attachments: &[ColorAttachment {
                         image_view: &color_target_view,
-                        clear_value: Some([0.0, 0.0, 0.0, 1.0]),
+                        clear_value: Some([clear_color[0] as f64, clear_color[1] as f64, clear_color[2] as f64, clear_color[3] as f64]),
                     }],
                     depth_stencil_attachment: Some(DepthStencilAttachment {
                         image_view: &depth_target_view,
@@ -1042,6 +904,7 @@ impl App {
                     stroke_count: anim_frame.stroke_count,
                     width: stroke_width,
                     filter_width: self.overlay_filter_width,
+                    brush: self.selected_brush as u32,
                 });
                 encoder.draw_mesh_tasks(anim_frame.stroke_count.div_ceil(SUBGROUP_SIZE), 1, 1);
                 encoder.finish();
@@ -1051,6 +914,7 @@ impl App {
 
 
         if self.temporal_average {
+            cmd.reference_resource(&temporal_avg_view);
             cmd.barrier(
                 Barrier::new()
                     .shader_read_image(&color_target)
@@ -1490,16 +1354,20 @@ impl App {
             drawn_control_points,
             settings,
             debug_tile_line_overflow: false,
+            start_time: Instant::now(),
             tweaks_changed: false,
             draw_origin: Default::default(),
             fit_tolerance: 1.0,
             curve_embedding_factor: 1.0,
             stroke_bleed_exp: 1.0,
             stroke_color: Color32::from_rgb(129, 212, 250),
+            background_color: Default::default(),
             width_profile_pos: vec4(0.0, 0.333, 0.666, 1.0),
             width_profile: vec4(0.0, 0.8, 0.5, 0.3),
             opacity_profile_pos: vec4(0.0, 0.333, 0.666, 1.0),
             opacity_profile: vec4(1.0, 1.0, 0.7, 0.),
+            opacity_response_curve: Default::default(),
+            frame_start_time: Instant::now(),
         };
         app.reload_shaders();
         app
@@ -1554,91 +1422,71 @@ impl App {
     }
 
     pub fn touch_event(&mut self, touch_event: &winit::event::Touch) {
+        let (x, y): (f64, f64) = touch_event.location.into();
         if touch_event.phase == TouchPhase::Started {
             self.pen_points.clear();
             self.is_drawing = true;
+            self.last_pos = dvec2(x, y);
         }
 
         let camera = self.camera_control.camera();
         if self.is_drawing {
-            let (x, y): (f64, f64) = touch_event.location.into();
-            let pressure = if let Some(force) = touch_event.force {
+            let mut pressure = if let Some(force) = touch_event.force {
                 force.normalized()
             } else {
                 1.0
             };
 
-            const PEN_SPACING_THRESHOLD: f64 = 2.0;
 
-            let ray = camera.screen_to_view_dir(dvec2(x, y));
+            const PEN_SPACING_THRESHOLD: f64 = 40.0;
+
+            let pos = dvec2(x, y);
+            let ray = camera.screen_to_view_dir(pos);
+            let delta = self.last_pos.distance(pos);
             trace!(
-                "Touch event: {:?} at ({}, {}) with pressure {}; ray {}",
+                "Touch event: {:?} at ({}, {}) with pressure {}; ray {}; delta = {}",
                 touch_event.phase,
                 x,
                 y,
                 pressure,
-                ray
+                ray,
+                delta
             );
 
-            if self.last_pos.distance(dvec2(x, y)) >= PEN_SPACING_THRESHOLD {
-                self.pen_points.push(PenSample {
-                    position: dvec2(x, y),
-                    pressure,
-                });
-                self.last_pos = dvec2(x, y);
+            if delta >= PEN_SPACING_THRESHOLD + 1.0 {
+                // stabilization
+                let new_pos = dvec2(x, y).lerp(self.last_pos, PEN_SPACING_THRESHOLD / delta);
+                if touch_event.phase != TouchPhase::Ended {
+                    let prev_arc_length = self.pen_points.last().map(|p| p.arc_length).unwrap_or(0.0);
+                    self.pen_points.push(PenSample {
+                        position: new_pos,
+                        pressure,
+                        arc_length: prev_arc_length + new_pos.distance(self.last_pos),
+                    });
+                }
+                self.last_pos = new_pos;
             }
 
             if touch_event.phase == TouchPhase::Ended {
                 self.is_drawing = false;
 
-                // points bounding box
-                let min_pos = self
-                    .pen_points
-                    .iter()
-                    .map(|p| p.position)
-                    .fold(dvec2(f64::INFINITY, f64::INFINITY), |a, b| a.min(b));
-                let max_pos = self
-                    .pen_points
-                    .iter()
-                    .map(|p| p.position)
-                    .fold(dvec2(f64::NEG_INFINITY, f64::NEG_INFINITY), |a, b| a.max(b));
-                let width = max_pos.x - min_pos.x;
-                let height = max_pos.y - min_pos.y;
-
-                // project points on random plane
-                let (eye, dir) = camera.screen_to_world_ray(self.pen_points.first().unwrap().position);
+                // project points on screen-aligned plane
+                let Some(first_point) = self.pen_points.first().cloned() else { return };
+                let (eye, dir) = camera.screen_to_world_ray(first_point.position);
                 let ground_plane = Plane::new(dvec3(0.0, 1.0, 0.0), dvec3(0.0, 0.0, 0.0));
 
                 if let Some(ground_pos) = ground_plane.intersect(eye, dir) {
-                    let mut apparent_distances = vec![];
-                    for a in 0..10 {
-                        let alpha = (a as f64 / 10.0) * std::f64::consts::PI;
-                        let v = dvec3(alpha.sin(), 0.0, alpha.cos());
-                        let (a, b) = camera.world_to_screen_line(ground_pos, v);
-                        let d = a.xy().distance(b.xy());
-                        apparent_distances.push((alpha, d));
-                    }
-                    let (minalpha, closest_dist) =
-                        apparent_distances
-                            .iter()
-                            .fold((0.0, f64::INFINITY), |(minalpha, mindist), &(alpha, dist)| {
-                                if (dist - width).abs() < mindist {
-                                    (alpha, (dist - width).abs())
-                                } else {
-                                    (minalpha, mindist)
-                                }
-                            });
-
-                    //let angle = thread_rng().gen_range(0.0..std::f64::consts::PI);
-                    let angle = minalpha;
-                    let plane = Plane::new(dvec3(angle.sin(), 0.0, angle.cos()), ground_pos);
-
+                    let plane = Plane::new(-dir, ground_pos);
                     let proj_points = self
                         .pen_points
                         .iter()
                         .filter_map(|p| {
-                            let (eye, p) = camera.screen_to_world_ray(p.position);
-                            plane.intersect(eye, p)
+                            let (eye, pos) = camera.screen_to_world_ray(p.position);
+                            if let Some(pos) = plane.intersect(eye, pos) {
+                                Some((pos, p.pressure, p.arc_length))
+                            } else {
+                                None
+                            }
                         })
                         .collect::<Vec<_>>();
 
@@ -1654,11 +1502,37 @@ impl App {
                         vec2(self.opacity_profile_pos.z, self.opacity_profile.z),
                         vec2(self.opacity_profile_pos.w, self.opacity_profile.w),
                     );
-                    let color = *egui::Rgba::from(self.stroke_color).to_array().first_chunk::<3>().unwrap();
+                    let color = *egui::Rgba::from(self.stroke_color).to_array().first_chunk::<4>().unwrap();
 
-                    // fit a curve to the pen points
-                    trace!("projected points: {:#?}", proj_points);
-                    let points_f64 = proj_points.iter().map(|p| p.to_array()).flatten().collect::<Vec<f64>>();
+                    //trace!("projected points: {:#?}", proj_points);
+
+                    if let Some(ref mut anim) = self.animation.as_mut() {
+                        let base_vertex = anim.stroke_vertex_buffer.len() as u32;
+                        let mut arc_length = 0.0;
+                        let mut prev_pt = proj_points.first().unwrap().0;
+                        for (point, pressure, screen_space_arc_length) in proj_points.iter() {
+                            arc_length += prev_pt.distance(*point) as f32;
+                            let mapped_pressure = self.settings.pressure_response_curve.sample(*pressure);
+                            let mapped_opacity = self.opacity_response_curve.sample(*pressure);
+                            anim.stroke_vertex_buffer.push(StrokeVertex {
+                                pos: point.as_vec3().to_array(),
+                                s: *screen_space_arc_length as f32,
+                                color: [(color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8, (color[3] * 255.) as u8],
+                                width: (mapped_pressure * 255.) as u8,
+                                opacity: (mapped_opacity * 255.) as u8,
+                            });
+                            prev_pt = *point;
+                        }
+                        anim.stroke_buffer.push(Stroke {
+                            base_vertex,
+                            vertex_count: proj_points.len() as u32,
+                            brush: self.selected_brush as u8,
+                            arc_length,
+                        });
+                        anim.frames[0].stroke_count += 1;
+                    }
+
+                    /*let points_f64 = proj_points.iter().map(|p| p.to_array()).flatten().collect::<Vec<f64>>();
                     match curve_fit_nd::curve_fit_cubic_to_points_f64(&points_f64, 3, self.fit_tolerance, Default::default(), None) {
                         Ok(curve) => {
                             let mut control_points = curve
@@ -1722,7 +1596,7 @@ impl App {
                         Err(e) => {
                             error!("failed to fit curve: {}", e);
                         }
-                    }
+                    }*/
                 }
             }
         }
@@ -1760,6 +1634,11 @@ impl App {
     }
 
     pub fn render(&mut self, cmd: &mut CommandStream, image: &Image) {
+        if self.frame == 0 {
+            self.start_time = Instant::now();
+        }
+        self.frame_start_time = Instant::now();
+
         if self.reload_brush_textures {
             self.reload_textures(cmd);
             self.reload_brush_textures = false;
@@ -1908,7 +1787,7 @@ impl App {
                 ui.label(format!("{:.2} ms/frame ({:.0} FPS)", dt * 1000., 1.0 / dt));
                 if let Some(anim) = &self.animation {
                     let curve_count = anim.frames[self.current_frame].curve_range.count;
-                    let point_count = anim.position_buffer.len;
+                    let point_count = anim.position_buffer.len();
                     let stroke_count = anim.frames[self.current_frame].stroke_count;
                     let stroke_vertex_count = anim.stroke_vertex_buffer.len();
                     //ui.label(format!("{} points", point_count));
@@ -2058,6 +1937,10 @@ impl App {
                 ui.label("Stroke color");
                 color_edit_button_srgba(ui, &mut self.stroke_color, Alpha::BlendOrAdditive);
             });
+            ui.horizontal(|ui| {
+                ui.label("Background color");
+                color_edit_button_srgba(ui, &mut self.background_color, Alpha::BlendOrAdditive);
+            });
             ui.label("Stroke width profile");
             ui.horizontal(|ui| {
                 ui.add(DragValue::new(&mut self.width_profile_pos.x).speed(0.01).clamp_range(0.0..=1.0));
@@ -2083,6 +1966,22 @@ impl App {
                 ui.add(DragValue::new(&mut self.opacity_profile.y).speed(0.1).clamp_range(0.0..=1.0));
                 ui.add(DragValue::new(&mut self.opacity_profile.z).speed(0.1).clamp_range(0.0..=1.0));
                 ui.add(DragValue::new(&mut self.opacity_profile.w).speed(0.1).clamp_range(0.0..=1.0));
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Width response");
+                curve_editor_button(ui, &mut self.settings.pressure_response_curve.knots, &mut self.settings.pressure_response_curve.values);
+                if ui.button("Load default").clicked() {
+                    self.settings.pressure_response_curve = Default::default();
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Opacity response");
+                curve_editor_button(ui, &mut self.opacity_response_curve.knots, &mut self.opacity_response_curve.values);
+                if ui.button("Load default").clicked() {
+                    self.opacity_response_curve = Default::default();
+                }
             });
 
             //ui.add(Slider::new(&mut self.oit_stroke_width, 0.1..=40.0).text("OIT Stroke Width"));

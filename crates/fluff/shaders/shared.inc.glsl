@@ -48,6 +48,8 @@ struct SceneParams {
     float top;
     float bottom;
     uvec2 viewportSize;
+    vec2 cursorPos;
+    float time;
 };
 
 layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer SceneParamsPtr {SceneParams d;};
@@ -92,6 +94,8 @@ struct StrokeVertex {
     vec3 pos;
     float s;
     u8vec4 color;
+    uint8_t width;
+    uint8_t opacity;
 };
 
 layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer StrokeVertexPtr {StrokeVertex d;};
@@ -105,6 +109,8 @@ layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer Strok
 struct Stroke {
     uint baseVertex;
     uint vertexCount;
+    uint8_t brush;
+    float arcLength;
 };
 
 layout(buffer_reference, scalar, buffer_reference_align=8) coherent buffer StrokePtr {Stroke d;};
@@ -238,6 +244,7 @@ struct DrawStrokesPushConstants {
     uint strokeCount;
     float width;
     float filterWidth;
+    uint brush;
 };
 
 

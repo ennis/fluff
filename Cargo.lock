@@ -941,7 +941,6 @@ dependencies = [
  "graal",
  "houdinio",
  "image",
- "imgui",
  "imgui-winit-support",
  "lyon",
  "obj",
@@ -958,6 +957,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+ "uniform-cubic-splines",
  "winit",
 ]
 
@@ -1367,6 +1367,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "is_sorted"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357376465c37db3372ef6a00585d336ed3d0f11d4345eef77ebcb05865392b21"
+
+[[package]]
 name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1447,6 +1453,15 @@ name = "lebe"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
+
+[[package]]
+name = "lerp"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc56a024593ecbcacb6bb4f8f4ace719eb08ae9b701535640ef3efb0e706260"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "libc"
@@ -2956,6 +2971,17 @@ name = "unicode-segmentation"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4c87d22b6e3f4a18d4d40ef354e97c90fcb14dd91d7dc0aa9d8a1172ebf7202"
+
+[[package]]
+name = "uniform-cubic-splines"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5d59ca7a800721a395aae517d02f2b8edfe21b22af73671cf755fbfeb969af0"
+dependencies = [
+ "is_sorted",
+ "lerp",
+ "num-traits",
+]
 
 [[package]]
 name = "url"

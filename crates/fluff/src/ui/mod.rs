@@ -1,13 +1,13 @@
 mod highlight;
+mod curve;
+mod popup_button;
+mod icon_button;
 
-use egui::{
-    Align, Align2, Area, Color32, Direction, FontId, Frame, InnerResponse, Key, Layout, Order, Response, RichText, TextEdit, TextFormat,
-    TextStyle, Ui,
-};
-use egui_dnd::dnd;
-use egui_extras::Column;
-use graal::{vk, Format};
-use highlight::highlight;
+pub use curve::*;
+pub use popup_button::*;
+pub use icon_button::*;
+
+use egui::{Align, Align2, Area, Color32, Direction, FontId, Frame, InnerResponse, Key, Layout, Order, Pos2, Rect, Response, RichText, Sense, Stroke, TextEdit, TextFormat, TextStyle, Ui, Vec2, WidgetText};
 use std::{fmt::Debug, hash::Hash};
 
 /*
@@ -30,44 +30,7 @@ fn enum_combo<T: Debug + PartialEq + Copy>(ui: &Ui, label: &str, options: &[T], 
     *current = options[selected];
 }*/
 
-fn describe_blend_factor(f: BlendFactor) -> &'static str {
-    match f {
-        BlendFactor::Zero => "0",
-        BlendFactor::One => "1",
-        BlendFactor::SrcColor => "C_src",
-        BlendFactor::OneMinusSrcColor => "1 - C_src",
-        BlendFactor::DstColor => "C_dst",
-        BlendFactor::OneMinusDstColor => "1 - C_dst",
-        BlendFactor::SrcAlpha => "α_src",
-        BlendFactor::OneMinusSrcAlpha => "1 - α_src",
-        BlendFactor::DstAlpha => "α_dst",
-        BlendFactor::OneMinusDstAlpha => "1 - α_dst",
-        BlendFactor::ConstantColor => "C_const",
-        BlendFactor::OneMinusConstantColor => "1 - C_const",
-        BlendFactor::ConstantAlpha => "α_const",
-        BlendFactor::OneMinusConstantAlpha => "1 - α_const",
-        BlendFactor::SrcAlphaSaturate => "min(α_src, 1 - α_dst)",
-    }
-}
-
-fn describe_format(format: Format) -> (&'static str, Color32) {
-    let color_formats_color = Color32::from_rgb(0x00, 0x00, 0xFF);
-    let depth_formats_color = Color32::from_rgb(0xFF, 0x00, 0x00);
-
-    match format {
-        Format::UNDEFINED => ("UNDEFINED", Color32::WHITE),
-        Format::R8G8B8A8_UNORM => ("R8G8B8A8_UNORM", color_formats_color),
-        Format::B8G8R8A8_UNORM => ("B8G8R8A8_UNORM", color_formats_color),
-        Format::R8G8B8A8_SRGB => ("R8G8B8A8_SRGB", color_formats_color),
-        Format::B8G8R8A8_SRGB => ("B8G8R8A8_SRGB", color_formats_color),
-        Format::R16G16B16A16_SFLOAT => ("R16G16B16A16_SFLOAT", color_formats_color),
-        Format::R32G32B32A32_SFLOAT => ("R32G32B32A32_SFLOAT", color_formats_color),
-        Format::D32_SFLOAT => ("D32_SFLOAT", depth_formats_color),
-        Format::D24_UNORM_S8_UINT => ("D24_UNORM_S8_UINT", depth_formats_color),
-        _ => ("Unknown", Color32::RED),
-    }
-}
-
+/*
 fn vk_format_combo(ui: &mut Ui, id: impl Hash, selected: &mut Format) {
     let (preview, _color) = describe_format(*selected);
     egui::ComboBox::from_id_source(id)
@@ -131,7 +94,7 @@ fn blend_factor_combo(ui: &mut Ui, id: &str, f: &mut BlendFactor) {
                 ui.selectable_value(f, factor, describe_blend_factor(factor));
             }
         });
-}
+}*/
 
 // see https://github.com/rerun-io/rerun/blob/main/crates/re_ui/src/lib.rs#L599
 fn generic_list_header<R>(ui: &mut egui::Ui, label: &str, right_buttons: impl Fn(&mut egui::Ui) -> R) {
@@ -200,6 +163,7 @@ macro_rules! rich_text {
     };
 }
 
+/*
 use crate::ui::highlight::CodeTheme;
 pub(crate) use rich_text;
 
@@ -244,12 +208,13 @@ fn output_buffer_properties(id: impl Hash, ui: &mut Ui) {
             ui.data_mut(|data| data.insert_temp(id, state));
         }
     }
-}
+}*/
 
 fn color_icon(icon: &str, color: Color32) -> RichText {
     RichText::new(icon).size(20.0).color(color)
 }
 
+/*
 fn icon_button(ui: &mut Ui, icon: &str, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(20.0, 20.0), egui::Sense::click());
     if response.hovered() {
@@ -259,31 +224,8 @@ fn icon_button(ui: &mut Ui, icon: &str, color: Color32) -> Response {
     ui.painter()
         .text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), color);
     response
-}
+}*/
 
-fn list_row(ui: &mut Ui, label: &str, value: &str) {}
-
-struct BufferResource {
-    name: String,
-    usage: vk::BufferUsageFlags,
-    scale_w: Option<f32>,
-    scale_h: Option<f32>,
-    size: Option<usize>,
-}
-
-struct ImageResource {
-    name: String,
-    format: vk::Format,
-    usage: vk::ImageUsageFlags,
-    scale_w: Option<f32>,
-    scale_h: Option<f32>,
-    size: Option<(u32, u32)>,
-}
-
-enum Resource {
-    Buffer(BufferResource),
-    Image(ImageResource),
-}
 
 /*
 fn resource_badge(ui: &mut Ui, r: &Resource) {
@@ -302,6 +244,7 @@ fn resource_badge(ui: &mut Ui, r: &Resource) {
     }
 }*/
 
+/*
 pub fn resources_window(ctx: &egui::Context) {
     let example_resources = vec![
         Resource::Buffer(BufferResource {
@@ -554,3 +497,4 @@ uniform PushConstants {
         });
     });
 }
+*/

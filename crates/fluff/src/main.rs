@@ -13,19 +13,20 @@ use winit::{
     raw_window_handle::HasRawWindowHandle,
 };
 
+use crate::gpu_append_buffer::AppendBuffer;
 use crate::app::App;
 
 mod aabb;
 mod app;
 mod camera_control;
 mod egui_backend;
-//mod imgui_backend;
 mod overlay;
-//mod ui;
 mod engine;
 mod util;
 mod shaders;
 mod point_painter;
+mod ui;
+mod gpu_append_buffer;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

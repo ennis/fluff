@@ -28,6 +28,8 @@ pub struct SceneParams {
     pub top: f32,
     pub bottom: f32,
     pub viewport_size: UVec2,
+    pub cursor_pos: Vec2,
+    pub time: f32,
 }
 
 /// 3D bezier control point.
@@ -67,6 +69,7 @@ pub struct StrokeVertex {
     pub s: f32,
     pub color: [u8; 4],
     pub width: u8,  // unorm8
+    pub opacity: u8,  // unorm8
 }
 
 /// Stroke vertex.
@@ -75,6 +78,8 @@ pub struct StrokeVertex {
 pub struct Stroke {
     pub base_vertex: u32,
     pub vertex_count: u32,
+    pub brush: u8,
+    pub arc_length: f32,
 }
 
 
@@ -199,6 +204,7 @@ pub struct DrawStrokesPushConstants {
     pub stroke_count: u32,
     pub width: f32,
     pub filter_width: f32,
+    pub brush: u32,
 }
 
 

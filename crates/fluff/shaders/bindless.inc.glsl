@@ -47,6 +47,7 @@ void imageStore(image2DHandle image, ivec2 P, vec4 data) { imageStore(bindless_i
 ivec4 imageLoad(iimage2DHandle image, ivec2 P) { return imageLoad(bindless_iimage2D[image.idx], P); }
 void imageStore(iimage2DHandle image, ivec2 P, ivec4 data) { imageStore(bindless_iimage2D[image.idx], P, data); }
 
+vec4 texelFetch(texture2DHandle tex, ivec2 P, int lod) { return texelFetch(bindless_texture2D[tex.idx], P, lod); }
 
 #undef C_SAMPLER2D
 

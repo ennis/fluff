@@ -363,3 +363,47 @@ Honestly, exclusive `&mut` refs are nice in principle, but in practice most of t
 it should be OK (at least in single-threaded mode) to have multiple "mutable" (note: not **exclusive**) refs to the
 same object. I feel that the only benefit of exclusive refs is to avoid iterator invalidation.
 
+# The way forward: textured strokes
+
+I think it's a mistake to try to port raster tool in 3D (we would need volumetrics).
+Instead, embrace strokes (polylines) as primitives and provide tools to work with them efficiently.
+Provide a rich model for stroke appearance:
+
+Stroke point attributes:
+
+- point (quantized)
+- color
+- width
+- blur
+- arclength
+
+Stroke attributes:
+
+_- brush index
+
+- base color_
+
+# TODO
+
+- pressure response curve editor (GUI/load/save)
+- show stroke paths / points
+- visualize attributes on stroke points
+- brush image thumbnail
+
+# The main issue: dynamic stamping
+
+https://github.com/ShenCiao/Ciallo: sample stamps in fragment shader, up to a maximum number; no preintegration, but
+closed form available for "vanilla" and "airbrush"; for custom brush, resorts to sampling.
+
+How to accelerate? Retain the same appearance as stamping, but with less texture samples, or even only one.
+Complications: dynamic variations in stamp size, rotation, opacity... **most likely impossible to preintegrate**
+
+Don't try to simulate everything with stamping. Instead provide specialized models with adjustable parameters:
+
+- airbrush
+    - noise
+
+If not enough, do stamping. Also a lot of stamps can be split into multiple airbrush-like stamps.
+
+That said, it would be nice if we were able to preintegrate some anisotropic shapes.
+Short-term goal: derive an anisotropic version of the "airbrush" representation in Ciallo.
