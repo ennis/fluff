@@ -33,13 +33,16 @@ use crate::{
     },
     util::resolve_file_sequence,
 };
-use crate::gpu_append_buffer::AppendBuffer;
+use crate::util::AppendBuffer;
 use crate::shaders::shared::{DrawStrokesPushConstants, Stroke, StrokeVertex, SUBGROUP_SIZE};
+use crate::scene::{Scene, load_stroke_animation_data};
 use crate::ui::{curve_editor_button, icon_button};
+use crate::util::lagrange_interpolate_4;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Loads a grayscale image into a R8_SRGB buffer.
 fn load_brush_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: ImageUsage, mipmaps: bool) -> Image {
     let path = path.as_ref();
     let device = cmd.device().clone();
@@ -103,320 +106,6 @@ struct GeoFileData {
     geometry: Geo,
 }
 
-fn lagrange_interpolation(p1: glam::Vec2, p2: glam::Vec2, p3: glam::Vec2, p4: glam::Vec2) -> glam::Vec4 {
-    let ys = vec4(p1.y, p2.y, p3.y, p4.y);
-    let xs = vec4(p1.x, p2.x, p3.x, p4.x);
-    let v = mat4(vec4(1.0, 1.0, 1.0, 1.0), xs, xs * xs, xs * xs * xs);
-    let v_inv = v.inverse();
-    let coeffs = v_inv * ys;
-    coeffs
-}
-
-/*
-/// Represents a range of control points in the position buffer.
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct CurveDesc {
-    /// width profile polynomial coefficients
-    width_profile: glam::Vec4,
-    /// opacity profile polynomial coefficients
-    opacity_profile: glam::Vec4,
-    start: u32,
-    /// Number of control points in the range.
-    ///
-    /// Should be 3N+1 for cubic Bézier curves.
-    count: u32,
-    /// parameter range
-    param_range: glam::Vec2,
-}*/
-
-/// Represents a range of curves in the curve buffer.
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-struct CurveRange {
-    start: u32,
-    count: u32,
-}
-
-/// Information about a single animation frame.
-#[derive(Debug)]
-struct AnimationFrame {
-    /// Time of the frame in seconds.
-    time: f32,
-    /// Range of curves in the curve buffer.
-    curve_range: CurveRange,
-    /// Curve segments
-    curve_segments: Vec<CubicBezierSegment>,
-    stroke_offset: u32,
-    stroke_count: u32,
-}
-
-struct AnimationData {
-    //point_count: usize,
-    //curve_count: usize,
-    frames: Vec<AnimationFrame>,
-    position_buffer: AppendBuffer<ControlPoint>,
-    curve_buffer: AppendBuffer<CurveDesc>,
-    stroke_vertex_buffer: AppendBuffer<StrokeVertex>,
-    stroke_buffer: AppendBuffer<Stroke>,
-}
-
-//const _: () = assert!(mem::size_of::<CurveDesc>() % 8 == 0);
-
-/// Converts Bézier curve data from `.geo` files to a format that can be uploaded to the GPU.
-///
-/// Curves are represented as follows:
-/// * position buffer: contains the control points of curves, all flattened into a single linear buffer.
-/// * curve buffer: consists of (start, size) pairs, defining the start and number of CPs of each curve in the position buffer.
-/// * animation buffer: consists of (start, size) defining the start and number of curves in the curve buffer for each animation frame.
-fn convert_animation_data(device: &Device, geo_files: &[GeoFileData]) -> AnimationData {
-    let mut point_count = 0;
-    let mut curve_count = 0;
-
-    // Count the number of curves and control points
-    for f in geo_files.iter() {
-        for prim in f.geometry.primitives.iter() {
-            match prim {
-                houdinio::Primitive::BezierRun(run) => match run.vertices {
-                    houdinio::PrimVar::Uniform(ref u) => {
-                        point_count += u.len() * run.count;
-                        curve_count += (u.len() / 3) * run.count;
-                    }
-                    houdinio::PrimVar::Varying(ref v) => {
-                        point_count += v.iter().map(|v| v.len()).sum::<usize>();
-                        curve_count += v.iter().map(|v| v.len() / 3).sum::<usize>();
-                    }
-                },
-            }
-        }
-    }
-
-    // Curve buffer: contains (start, end) pairs of curves in the point buffer
-
-    let mut position_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, point_count);
-    position_buffer.set_name("control point buffer");
-    let mut curve_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
-    curve_buffer.set_name("curve buffer");
-
-    let mut stroke_vertex_buffer = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
-    stroke_vertex_buffer.set_name("stroke vertex buffer");
-    let mut stroke_buffer = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
-    stroke_buffer.set_name("stroke buffer");
-
-    let mut frames = vec![];
-
-    // dummy width and opacity profiles
-    let width_profile = lagrange_interpolation(vec2(0.0, 0.0), vec2(0.2, 0.8), vec2(0.5, 0.8), vec2(1.0, 0.0));
-    let opacity_profile = lagrange_interpolation(vec2(0.0, 0.7), vec2(0.3, 1.0), vec2(0.6, 1.0), vec2(1.0, 0.0));
-
-    // write curves
-    unsafe {
-        let point_data: *mut ControlPoint = position_buffer.as_mut_ptr();
-        let mut point_ptr = 0;
-        let curve_data: *mut CurveDesc = curve_buffer.as_mut_ptr();
-        let mut curve_ptr = 0;
-
-        for f in geo_files.iter() {
-            let offset = curve_ptr;
-
-            let mut curve_segments = vec![];
-            for prim in f.geometry.primitives.iter() {
-                match prim {
-                    houdinio::Primitive::BezierRun(run) => {
-                        for curve in run.iter() {
-                            let start = point_ptr;
-                            for &vertex_index in curve.vertices.iter() {
-                                let pos = f.geometry.vertex_position(vertex_index);
-                                let color = f.geometry.vertex_color(vertex_index).unwrap_or([0.1, 0.8, 0.1]);
-                                *point_data.offset(point_ptr) = ControlPoint { pos, color };
-                                point_ptr += 1;
-                            }
-                            // FIXME: this is wrong
-                            for segment in curve.vertices.windows(4) {
-                                curve_segments.push(CubicBezierSegment {
-                                    p0: f.geometry.vertex_position(segment[0]).into(),
-                                    p1: f.geometry.vertex_position(segment[1]).into(),
-                                    p2: f.geometry.vertex_position(segment[2]).into(),
-                                    p3: f.geometry.vertex_position(segment[3]).into(),
-                                });
-                            }
-
-                            let num_segments = curve.vertices.len() as u32 / 3;
-                            let num_segments_f = num_segments as f32;
-                            for i in 0..num_segments {
-                                *curve_data.offset(curve_ptr) = CurveDesc {
-                                    start: start as u32 + 3 * i,
-                                    count: 4,
-                                    /*curve.vertices.len() as u32*/
-                                    width_profile: width_profile.to_array(),
-                                    opacity_profile: opacity_profile.to_array(),
-                                    param_range: vec2(i as f32 / num_segments_f, (i + 1) as f32 / num_segments_f),
-                                    brush_index: 0,
-                                    //_dummy: [0; 3],
-                                };
-                                curve_ptr += 1;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // flatten curves to polylines
-            let stroke_offset = stroke_buffer.len() as u32;
-            for prim in f.geometry.primitives.iter() {
-                match prim {
-                    houdinio::Primitive::BezierRun(run) => {
-                        for curve in run.iter() {
-                            let mut vertices = vec![];
-                            let mut color = [1.0, 1.0, 1.0];
-                            let base_vertex = stroke_vertex_buffer.len() as u32;
-                            let mut control_points = vec![];
-                            for &vertex_index in curve.vertices.iter() {
-                                let pos = f.geometry.vertex_position(vertex_index);
-                                color = f.geometry.vertex_color(vertex_index).unwrap_or([0.1, 0.8, 0.1]);
-                                control_points.push(Vec3::from(pos));
-                            }
-
-                            let mut i = 0;
-                            while i + 3 < control_points.len() {
-                                let segment = CubicBezierSegment {
-                                    p0: control_points[i],
-                                    p1: control_points[i + 1],
-                                    p2: control_points[i + 2],
-                                    p3: control_points[i + 3],
-                                };
-                                segment.flatten(&mut vertices, 0.0001);
-                                i += 3;
-                            }
-
-                            let mut s = 0.0;
-                            for (i, v) in vertices.iter().enumerate() {
-                                stroke_vertex_buffer.push(StrokeVertex {
-                                    pos: (*v).into(),
-                                    s,
-                                    color: [(color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8, 255],
-                                    width: 255,
-                                    opacity: 255,
-                                });
-                                if i != vertices.len() - 1 {
-                                    s += v.distance(vertices[i + 1]);
-                                }
-                            }
-
-                            stroke_buffer.push(Stroke {
-                                base_vertex,
-                                vertex_count: vertices.len() as u32,
-                                brush: 0,
-                                arc_length: s,
-                            });
-                        }
-                    }
-                }
-            }
-
-            frames.push(AnimationFrame {
-                time: 0.0, // TODO
-                curve_range: CurveRange {
-                    start: offset as u32,
-                    count: curve_ptr as u32 - offset as u32,
-                },
-                curve_segments,
-                stroke_offset,
-                stroke_count: stroke_buffer.len() as u32 - stroke_offset,
-            });
-        }
-        position_buffer.set_len(point_count);
-        curve_buffer.set_len(curve_count);
-    }
-
-
-    AnimationData {
-        //point_count,
-        //curve_count,
-        frames,
-        position_buffer,
-        curve_buffer,
-        stroke_vertex_buffer,
-        stroke_buffer,
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const CURVES_OIT_MAX_FRAGMENTS_PER_PIXEL: usize = 8;
-
-/*#[derive(Attachments)]
-struct RenderAttachments<'a> {
-    #[attachment(color, format = R16G16B16A16_SFLOAT)]
-    color: &'a ImageView,
-    #[attachment(depth, format = D32_SFLOAT)]
-    depth: &'a ImageView,
-}
-
-#[derive(Attachments)]
-struct BinRastAttachments<'a> {
-    #[attachment(depth, format = D32_SFLOAT)]
-    depth: &'a ImageView,
-}
-
-#[derive(Attachments)]
-struct CurvesOITAttachments<'a> {
-    #[attachment(color, format = R16G16B16A16_SFLOAT)]
-    color: &'a ImageView,
-    #[attachment(depth, format = D32_SFLOAT)]
-    depth: &'a ImageView,
-}*/
-
-//#[derive(Arguments)]
-struct CurvesOITArguments<'a> {
-    //#[argument(binding = 0, storage)]
-    position_buffer: BufferRange<[ControlPoint]>,
-    //#[argument(binding = 1, storage)]
-    curve_buffer: BufferRange<[CurveDesc]>,
-    //#[argument(binding = 2, storage)]
-    fragment_buffer: BufferRange<[CurvesOITFragmentData]>,
-    //#[argument(binding = 3, storage)]
-    fragment_count_buffer: BufferRange<[u32]>,
-    //#[argument(binding = 4, sampled_image)]
-    brush_texture: &'a ImageView,
-    //#[argument(binding = 5, sampler)]
-    brush_sampler: &'a Sampler,
-}
-
-//#[derive(Arguments)]
-struct CurvesOITResolveArguments {
-    //#[argument(binding = 0, storage)]
-    fragment_buffer: BufferRange<[CurvesOITFragmentData]>,
-    //#[argument(binding = 1, storage)]
-    fragment_count_buffer: BufferRange<[u32]>,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct CurvesOITFragmentData {
-    color: glam::Vec4,
-    depth: f32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct CurvesOITPushConstants {
-    view_proj: glam::Mat4,
-    viewport_size: glam::UVec2,
-    stroke_width: f32,
-    base_curve_index: u32,
-    curve_count: u32,
-    frame: i32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct CurvesOITResolvePushConstants {
-    //view_proj: glam::Mat4,
-    viewport_size: glam::UVec2,
-    //stroke_width: f32,
-    //base_curve_index: u32,
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
@@ -542,7 +231,7 @@ pub struct App {
     overlay: OverlayRenderer,
     pipelines: Pipelines,
 
-    animation: Option<AnimationData>,
+    animation: Option<Scene>,
 
     frame: i32,
     mode: RenderMode,
@@ -561,8 +250,6 @@ pub struct App {
     // Curves OIT
     oit_stroke_width: f32,
     oit_max_fragments_per_pixel: u32,
-    oit_fragment_buffer: Buffer<[CurvesOITFragmentData]>,
-    oit_fragment_count_buffer: Buffer<[u32]>,
 
     // Brushes
     reload_brush_textures: bool,
@@ -684,7 +371,6 @@ impl App {
         let anim_frame = &animation.frames[self.current_frame];
         let curve_count = anim_frame.curve_range.count;
         let base_curve_index = anim_frame.curve_range.start;
-        let view_proj = self.camera_control.camera().view_projection();
         let frame = self.current_frame as u32;
         let stroke_width = self.bin_rast_stroke_width;
         let viewport_size = [width, height];
@@ -933,70 +619,6 @@ impl App {
             encoder.finish();
             cmd.blit_full_image_top_mip_level(&self.temporal_avg_image, &color_target);
         }
-        /*{
-            // clear buffers
-            //rg.record_fill_buffer(tile_line_count_buffer, 0);
-            //rg.record_fill_buffer(tile_buffer, 0);
-
-
-            let mut pass = rg.record_mesh_render_pass(&curve_binning_pipeline);
-
-            pass.set_color_attachments([ColorAttachmentDesc {
-                image: color_target,
-                clear_value: Some([0.0, 0.0, 0.0, 1.0]),
-            }]);
-            pass.set_depth_stencil_attachment(DepthStencilAttachmentDesc {
-                image: depth_target,
-                depth_clear_value: Some(1.0),
-                stencil_clear_value: None,
-            });
-            pass.read_buffer(control_point_buffer);
-            pass.read_buffer(curve_buffer);
-            pass.write_buffer(tile_line_count_buffer);
-            pass.write_buffer(tile_buffer);
-
-            pass.set_render_func(move |encoder| {
-                let vp_width = width as f32 / BINNING_TILE_SIZE as f32;
-                let vp_height = height as f32 / BINNING_TILE_SIZE as f32;
-                encoder.set_viewport(0.0, 0.0, vp_width, vp_height, 0.0, 1.0);
-
-                //eprintln!("control_point_buffer device address = 0x{:016x}", control_point_buffer.device_address());
-                //eprintln!("curve_buffer device address = 0x{:016x}", curve_buffer.device_address());
-                //eprintln!("base_curve_index = {}", base_curve_index);
-                //eprintln!("curve_count = {}", curve_count);
-
-                encoder.set_scissor(0, 0, tile_count_x, tile_count_y);
-                encoder.push_constants(&shaders::shared::BinCurvesParams {
-                    scene_params: scene_params_buf.device_address(),
-                    viewport_size: uvec2(width, height),
-                    stroke_width,
-                    base_curve_index,
-                    curve_count,
-                    tile_count_x,
-                    tile_count_y,
-                    frame,
-                    control_points: control_point_buffer.device_address(),
-                    curves: curve_buffer.device_address(),
-                    tile_line_count: tile_line_count_buffer.device_address(),
-                    tile_data: tile_buffer.device_address(),
-                });
-                encoder.draw_mesh_tasks(curve_count.div_ceil(64), 1, 1);
-            });
-
-            pass.finish();
-        }*/
-
-        /*////////////////////////////////////////////////////////////
-        // Temporal accumulation
-        if self.temporal_average {
-            let mut pass = rg.record_compute_pass(&temporal_average_pipeline);
-            pass.read_image(color_target);
-            pass.read_image(temporal_average);
-            pass.write_image(temporal_average);
-            pass.set_render_func(move |encoder| {});
-            pass.finish();
-            rg.record_blit(temporal_average, color_target);
-        }*/
 
         Ok(())
     }
@@ -1076,164 +698,10 @@ impl App {
         }
         self.settings.last_geom_file = Some(path.to_path_buf());
         self.settings.save();
-        self.animation = Some(convert_animation_data(&self.device, &geo_files));
+        let geoms: Vec<_> = geo_files.into_iter().map(|g| g.geometry).collect();
+        self.animation = Some(load_stroke_animation_data(&self.device, &geoms));
         self.current_frame = 0;
     }
-
-    fn load_last_geo_file(&mut self) {}
-
-    /*fn render_curves_oit(&mut self, cmd: &mut CommandStream) {
-        let color_target = &self.frame_image;
-        let color_target_view = &self.frame_image.create_top_level_view();
-
-        let Some(animation) = self.animation.as_ref() else {
-            return;
-        };
-        let Some(pipeline) = self.pipelines.draw_curves_oit_pipeline.as_ref() else {
-            return;
-        };
-        let Some(pipeline_v2) = self.pipelines.draw_curves_oit_v2_pipeline.as_ref() else {
-            return;
-        };
-        let Some(resolve_pipeline) = self.pipelines.draw_curves_oit_resolve_pipeline.as_ref() else {
-            return;
-        };
-
-        /*
-            let fragment_buffer = encoder.create_buffer(...);
-            let fragment_count_buffer = encoder.create_buffer(...);
-
-            encoder.fill_buffer(fragment_buffer.slice(..), 0);
-            encoder.fill_buffer(fragment_count_buffer.slice(..), 0);
-
-            let render_pass = encoder.create_rendering(&CurvesOITAttachments {
-                color: &color_target_view,
-                depth: &self.depth_buffer_view,
-            });
-        */
-
-        self.bin_rast_current_frame = self.bin_rast_current_frame.min(animation.frames.len() - 1);
-
-        let current_frame = &animation.frames[self.bin_rast_current_frame];
-
-        // Allocate a big enough fragment data buffer
-        let width = color_target_view.width();
-        let height = color_target_view.height();
-
-        let fragment_buffer_size = width as usize * height as usize * CURVES_OIT_MAX_FRAGMENTS_PER_PIXEL;
-        if self.oit_fragment_buffer.len() < fragment_buffer_size {
-            self.oit_fragment_buffer = self.device.create_array_buffer(
-                BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                fragment_buffer_size,
-            );
-            self.oit_fragment_count_buffer = self.device.create_array_buffer(
-                BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                width as usize * height as usize,
-            );
-        }
-
-        unsafe {
-            cmd.debug_group("clear OIT fragment buffer", |cmd| {
-                let mut encoder = cmd.begin_blit();
-                //encoder.fill_buffer(&self.oit_fragment_buffer.slice(..).untyped, 0);
-                encoder.fill_buffer(&self.oit_fragment_count_buffer.slice(..).untyped, 0);
-            });
-
-            // Render the curves
-            cmd.debug_group("OIT curves", |cmd| {
-                let mut encoder = cmd.begin_rendering(RenderPassDescriptor {
-                    color_attachments: &[ColorAttachment {
-                        image_view: color_target_view.clone(),
-                        load_op: AttachmentLoadOp::LOAD,
-                        store_op: AttachmentStoreOp::STORE,
-                        clear_value: [0.0, 0.0, 0.0, 0.0],
-                    }],
-                    depth_stencil_attachment: Some(DepthStencilAttachment {
-                        image_view: self.depth_buffer_view.clone(),
-                        depth_load_op: AttachmentLoadOp::LOAD,
-                        depth_store_op: AttachmentLoadOp::STORE,
-                        stencil_load_op: Default::default(),
-                        stencil_store_op: Default::default(),
-                        depth_clear_value: 0.0,
-                        stencil_clear_value: 0,
-                    }),
-                });
-
-                let brush_texture = &self.brush_textures[self.selected_brush].image.create_top_level_view();
-
-                if self.mode == RenderMode::CurvesOITv2 {
-                    encoder.bind_graphics_pipeline(pipeline_v2);
-                } else {
-                    encoder.bind_graphics_pipeline(pipeline);
-                }
-                encoder.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-                encoder.set_scissor(0, 0, width, height);
-                encoder.push_descriptors(
-                    0,
-                    &[
-                        (0, animation.position_buffer.slice(..).storage_descriptor()),
-                        (1, animation.curve_buffer.slice(..).storage_descriptor()),
-                        (2, self.oit_fragment_buffer.slice(..).storage_descriptor()),
-                        (3, self.oit_fragment_count_buffer.slice(..).storage_descriptor()),
-                        (4, brush_texture.texture_descriptor(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)),
-                        (
-                            5,
-                            self.device
-                                .create_sampler(&SamplerCreateInfo {
-                                    address_mode_u: vk::SamplerAddressMode::REPEAT,
-                                    address_mode_v: vk::SamplerAddressMode::REPEAT,
-                                    address_mode_w: vk::SamplerAddressMode::REPEAT,
-                                    ..Default::default()
-                                })
-                                .descriptor(),
-                        ),
-                    ],
-                );
-
-                encoder.push_constants(&CurvesOITPushConstants {
-                    view_proj: self.camera_control.camera().view_projection(),
-                    viewport_size: uvec2(width, height),
-                    stroke_width: self.oit_stroke_width,
-                    base_curve_index: current_frame.curve_range.start,
-                    curve_count: current_frame.curve_range.count,
-                    frame: self.frame,
-                });
-                if self.mode == RenderMode::CurvesOITv2 {
-                    encoder.draw_mesh_tasks(current_frame.curve_range.count.div_ceil(64), 1, 1);
-                } else {
-                    encoder.draw_mesh_tasks(current_frame.curve_range.count, 1, 1);
-                }
-                encoder.finish();
-            });
-
-            // Resolve pass
-            cmd.debug_group("OIT resolve", |cmd| {
-                let mut encoder = cmd.begin_rendering(&CurvesOITAttachments {
-                    color: &color_target_view,
-                    depth: &self.depth_buffer_view,
-                });
-
-                encoder.bind_graphics_pipeline(resolve_pipeline);
-                encoder.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-                encoder.set_scissor(0, 0, width, height);
-                encoder.push_descriptors(
-                    0,
-                    &CurvesOITResolveArguments {
-                        fragment_buffer: self.oit_fragment_buffer.slice(..),
-                        fragment_count_buffer: self.oit_fragment_count_buffer.slice(..),
-                    },
-                );
-                encoder.push_constants(&CurvesOITResolvePushConstants {
-                    viewport_size: uvec2(width, height),
-                });
-                // Draw full-screen quad
-                encoder.set_primitive_topology(PrimitiveTopology::TriangleList);
-                encoder.draw(0..3, 0..1);
-            });
-        }
-    }*/
 }
 
 pub struct Plane {
@@ -1294,18 +762,6 @@ impl App {
             samples: 1,
         });
 
-        // DUMMY
-        let oit_fragment_buffer = device.create_array_buffer::<CurvesOITFragmentData>(
-            BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-            MemoryLocation::GpuOnly,
-            1,
-        );
-        oit_fragment_buffer.untyped.set_name("oit_fragment_buffer");
-        // DUMMY
-        let oit_fragment_count_buffer =
-            device.create_array_buffer::<u32>(BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST, MemoryLocation::GpuOnly, 1);
-        oit_fragment_count_buffer.untyped.set_name("oit_fragment_count_buffer");
-
         let drawn_curves = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
         let drawn_control_points = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
 
@@ -1333,8 +789,6 @@ impl App {
             current_frame: 0,
             oit_stroke_width: 0.0,
             oit_max_fragments_per_pixel: 0,
-            oit_fragment_buffer,
-            oit_fragment_count_buffer,
             reload_brush_textures: true,
             brush_textures: vec![],
             selected_brush: 0,
@@ -1421,6 +875,73 @@ impl App {
         }
     }
 
+    pub fn add_stroke(&mut self) {
+        let camera = self.camera_control.camera();
+
+        // project points on screen-aligned plane
+        let Some(first_point) = self.pen_points.first().cloned() else { return };
+        let (eye, dir) = camera.screen_to_world_ray(first_point.position);
+        let ground_plane = Plane::new(dvec3(0.0, 1.0, 0.0), dvec3(0.0, 0.0, 0.0));
+
+        if let Some(ground_pos) = ground_plane.intersect(eye, dir) {
+            let plane = Plane::new(-dir, ground_pos);
+            let proj_points = self
+                .pen_points
+                .iter()
+                .filter_map(|p| {
+                    let (eye, pos) = camera.screen_to_world_ray(p.position);
+                    if let Some(pos) = plane.intersect(eye, pos) {
+                        Some((pos, p.pressure, p.arc_length))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            /*let width_profile = DVec4::from(lagrange_interpolate_4(
+                [self.width_profile_pos.x as f64, self.width_profile.x as f64],
+                [self.width_profile_pos.y as f64, self.width_profile.y as f64],
+                [self.width_profile_pos.z as f64, self.width_profile.z as f64],
+                [self.width_profile_pos.w as f64, self.width_profile.w as f64],
+            )).as_vec4();
+            let opacity_profile = DVec4::from(lagrange_interpolate_4(
+                [self.opacity_profile_pos.x as f64, self.opacity_profile.x as f64],
+                [self.opacity_profile_pos.y as f64, self.opacity_profile.y as f64],
+                [self.opacity_profile_pos.z as f64, self.opacity_profile.z as f64],
+                [self.opacity_profile_pos.w as f64, self.opacity_profile.w as f64],
+            )).as_vec4();*/
+            let color = *egui::Rgba::from(self.stroke_color).to_array().first_chunk::<4>().unwrap();
+
+            //trace!("projected points: {:#?}", proj_points);
+
+            if let Some(ref mut anim) = self.animation.as_mut() {
+                let base_vertex = anim.stroke_vertex_buffer.len() as u32;
+                let mut arc_length = 0.0;
+                let mut prev_pt = proj_points.first().unwrap().0;
+                for (point, pressure, screen_space_arc_length) in proj_points.iter() {
+                    arc_length += prev_pt.distance(*point) as f32;
+                    let mapped_pressure = self.settings.pressure_response_curve.sample(*pressure);
+                    let mapped_opacity = self.opacity_response_curve.sample(*pressure);
+                    anim.stroke_vertex_buffer.push(StrokeVertex {
+                        pos: point.as_vec3().to_array(),
+                        s: *screen_space_arc_length as f32,
+                        color: [(color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8, (color[3] * 255.) as u8],
+                        width: (mapped_pressure * 255.) as u8,
+                        opacity: (mapped_opacity * 255.) as u8,
+                    });
+                    prev_pt = *point;
+                }
+                anim.stroke_buffer.push(Stroke {
+                    base_vertex,
+                    vertex_count: proj_points.len() as u32,
+                    brush: self.selected_brush as u8,
+                    arc_length,
+                });
+                anim.frames[0].stroke_count += 1;
+            }
+        }
+    }
+
     pub fn touch_event(&mut self, touch_event: &winit::event::Touch) {
         let (x, y): (f64, f64) = touch_event.location.into();
         if touch_event.phase == TouchPhase::Started {
@@ -1429,7 +950,6 @@ impl App {
             self.last_pos = dvec2(x, y);
         }
 
-        let camera = self.camera_control.camera();
         if self.is_drawing {
             let mut pressure = if let Some(force) = touch_event.force {
                 force.normalized()
@@ -1441,15 +961,13 @@ impl App {
             const PEN_SPACING_THRESHOLD: f64 = 40.0;
 
             let pos = dvec2(x, y);
-            let ray = camera.screen_to_view_dir(pos);
             let delta = self.last_pos.distance(pos);
             trace!(
-                "Touch event: {:?} at ({}, {}) with pressure {}; ray {}; delta = {}",
+                "Touch event: {:?} at ({}, {}) with pressure {}; delta = {}",
                 touch_event.phase,
                 x,
                 y,
                 pressure,
-                ray,
                 delta
             );
 
@@ -1469,150 +987,13 @@ impl App {
 
             if touch_event.phase == TouchPhase::Ended {
                 self.is_drawing = false;
-
-                // project points on screen-aligned plane
-                let Some(first_point) = self.pen_points.first().cloned() else { return };
-                let (eye, dir) = camera.screen_to_world_ray(first_point.position);
-                let ground_plane = Plane::new(dvec3(0.0, 1.0, 0.0), dvec3(0.0, 0.0, 0.0));
-
-                if let Some(ground_pos) = ground_plane.intersect(eye, dir) {
-                    let plane = Plane::new(-dir, ground_pos);
-                    let proj_points = self
-                        .pen_points
-                        .iter()
-                        .filter_map(|p| {
-                            let (eye, pos) = camera.screen_to_world_ray(p.position);
-                            if let Some(pos) = plane.intersect(eye, pos) {
-                                Some((pos, p.pressure, p.arc_length))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-
-                    let width_profile = lagrange_interpolation(
-                        vec2(self.width_profile_pos.x, self.width_profile.x),
-                        vec2(self.width_profile_pos.y, self.width_profile.y),
-                        vec2(self.width_profile_pos.z, self.width_profile.z),
-                        vec2(self.width_profile_pos.w, self.width_profile.w),
-                    );
-                    let opacity_profile = lagrange_interpolation(
-                        vec2(self.opacity_profile_pos.x, self.opacity_profile.x),
-                        vec2(self.opacity_profile_pos.y, self.opacity_profile.y),
-                        vec2(self.opacity_profile_pos.z, self.opacity_profile.z),
-                        vec2(self.opacity_profile_pos.w, self.opacity_profile.w),
-                    );
-                    let color = *egui::Rgba::from(self.stroke_color).to_array().first_chunk::<4>().unwrap();
-
-                    //trace!("projected points: {:#?}", proj_points);
-
-                    if let Some(ref mut anim) = self.animation.as_mut() {
-                        let base_vertex = anim.stroke_vertex_buffer.len() as u32;
-                        let mut arc_length = 0.0;
-                        let mut prev_pt = proj_points.first().unwrap().0;
-                        for (point, pressure, screen_space_arc_length) in proj_points.iter() {
-                            arc_length += prev_pt.distance(*point) as f32;
-                            let mapped_pressure = self.settings.pressure_response_curve.sample(*pressure);
-                            let mapped_opacity = self.opacity_response_curve.sample(*pressure);
-                            anim.stroke_vertex_buffer.push(StrokeVertex {
-                                pos: point.as_vec3().to_array(),
-                                s: *screen_space_arc_length as f32,
-                                color: [(color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8, (color[3] * 255.) as u8],
-                                width: (mapped_pressure * 255.) as u8,
-                                opacity: (mapped_opacity * 255.) as u8,
-                            });
-                            prev_pt = *point;
-                        }
-                        anim.stroke_buffer.push(Stroke {
-                            base_vertex,
-                            vertex_count: proj_points.len() as u32,
-                            brush: self.selected_brush as u8,
-                            arc_length,
-                        });
-                        anim.frames[0].stroke_count += 1;
-                    }
-
-                    /*let points_f64 = proj_points.iter().map(|p| p.to_array()).flatten().collect::<Vec<f64>>();
-                    match curve_fit_nd::curve_fit_cubic_to_points_f64(&points_f64, 3, self.fit_tolerance, Default::default(), None) {
-                        Ok(curve) => {
-                            let mut control_points = curve
-                                .cubic_array
-                                .chunks_exact(3)
-                                .map(|chunk| dvec3(chunk[0], chunk[1], chunk[2]))
-                                .collect::<Vec<_>>();
-
-                            for cp in control_points.chunks_exact(3) {
-                                self.overlay.line(cp[1], cp[0], [255, 0, 0, 255], [255, 0, 0, 255]);
-                                self.overlay.line(cp[1], cp[2], [0, 255, 0, 255], [0, 255, 0, 255]);
-                            }
-
-                            control_points.remove(0);
-                            control_points.remove(control_points.len() - 1);
-
-                            trace!("Fitted curve: {:#?}", control_points);
-
-                            if let Some(ref mut anim) = self.animation.as_mut() {
-                                //let base = anim.frames[self.bin_rast_current_frame].curve_range.start;
-                                let frame = &mut anim.frames[0];
-                                let mut base = anim.position_buffer.len() as u32;
-                                for point in control_points.chunks_exact(4) {
-                                    let p0 = point[0];
-                                    let p1 = point[1];
-                                    let p2 = point[2];
-                                    let p3 = point[3];
-                                    anim.position_buffer.push(ControlPoint {
-                                        pos: p0.as_vec3().to_array(),
-                                        color,
-                                    });
-                                    anim.position_buffer.push(ControlPoint {
-                                        pos: p1.as_vec3().to_array(),
-                                        color,
-                                    });
-                                    anim.position_buffer.push(ControlPoint {
-                                        pos: p2.as_vec3().to_array(),
-                                        color,
-                                    });
-                                    anim.position_buffer.push(ControlPoint {
-                                        pos: p3.as_vec3().to_array(),
-                                        color,
-                                    });
-                                    anim.curve_buffer.push(CurveDesc {
-                                        width_profile: width_profile.to_array(),
-                                        opacity_profile: self.opacity_profile.to_array(),
-                                        count: 4,
-                                        start: base,
-                                        param_range: vec2(0.0, 1.0),
-                                        brush_index: self.selected_brush as u32,
-                                        //_dummy: [0; 3],
-                                    });
-                                    frame.curve_range.count += 1;
-                                    //anim.curve_count += 1;
-                                    //anim.point_count += 4;
-                                    error!("append curve @ {base}");
-                                    base += 4;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("failed to fit curve: {}", e);
-                        }
-                    }*/
-                }
+                self.add_stroke();
             }
         }
     }
 
     pub fn mouse_wheel(&mut self, delta: f64) {
         self.camera_control.mouse_wheel(delta);
-    }
-
-    pub fn draw_curves(&mut self) {
-        /*if let Some(anim_data) = self.animation.as_ref() {
-            let frame = &anim_data.frames[self.bin_rast_current_frame];
-            for segment in frame.curve_segments.iter() {
-                self.overlay.cubic_bezier(segment, [0, 0, 0, 255]);
-            }
-        }*/
     }
 
     pub fn draw_axes(&mut self) {
@@ -1644,7 +1025,6 @@ impl App {
             self.reload_brush_textures = false;
         }
 
-
         // commit dynamic curves
         self.drawn_curves.commit(cmd);
         self.drawn_control_points.commit(cmd);
@@ -1656,7 +1036,6 @@ impl App {
 
         let color_target_view = self.frame_image.create_top_level_view();
         self.draw_axes();
-        self.draw_curves();
 
         let camera = self.camera_control.camera();
         if self.is_drawing {
@@ -1994,104 +1373,3 @@ impl App {
         self.settings.save();
     }
 }
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
-fn create_curves_oit_pipeline(
-    device: &Device,
-    target_color_format: Format,
-    target_depth_format: Format,
-) -> Result<GraphicsPipeline, graal::Error> {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[CurvesOITArguments::LAYOUT],
-            push_constants_size: mem::size_of::<CurvesOITPushConstants>(),
-        },
-        vertex_input: Default::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::MeshShading {
-            task: None,
-            mesh: ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_oit.glsl"))),
-                entry_point: "main",
-            },
-        },
-        rasterization: RasterizationState {
-            polygon_mode: PolygonMode::Fill,
-            cull_mode: Default::default(),
-            front_face: FrontFace::CounterClockwise,
-            conservative_rasterization_mode: ConservativeRasterizationMode::Disabled,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/curve_oit.glsl")),
-        depth_stencil: DepthStencilState {
-            depth_write_enable: false,
-            depth_compare_op: CompareOp::Always,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info)
-}
-
-fn create_curves_oit_v2_pipeline(
-    device: &Device,
-    target_color_format: Format,
-    target_depth_format: Format,
-) -> Result<GraphicsPipeline, graal::Error> {
-    let create_info = GraphicsPipelineCreateInfo {
-        layout: PipelineLayoutDescriptor {
-            arguments: &[CurvesOITArguments::LAYOUT],
-            push_constants_size: mem::size_of::<CurvesOITPushConstants>(),
-        },
-        vertex_input: Default::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::MeshShading {
-            task: Some(ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_oit_v2.glsl"))),
-                entry_point: "main",
-            }),
-            mesh: ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/curve_oit_v2.glsl"))),
-                entry_point: "main",
-            },
-        },
-        rasterization: RasterizationState {
-            polygon_mode: PolygonMode::Fill,
-            cull_mode: Default::default(),
-            front_face: FrontFace::CounterClockwise,
-            conservative_rasterization_mode: ConservativeRasterizationMode::Disabled,
-            ..Default::default()
-        },
-        fragment_shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/curve_oit_v2.glsl")),
-        depth_stencil: DepthStencilState {
-            depth_write_enable: true,
-            depth_compare_op: CompareOp::Less,
-            stencil_state: StencilState::default(),
-        },
-        fragment_output: FragmentOutputInterfaceDescriptor {
-            color_attachment_formats: &[target_color_format],
-            depth_attachment_format: Some(target_depth_format),
-            stencil_attachment_format: None,
-            multisample: Default::default(),
-            color_targets: &[ColorTargetState {
-                blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                color_write_mask: Default::default(),
-            }],
-            blend_constants: [0.0; 4],
-        },
-    };
-
-    device.create_graphics_pipeline(create_info)
-}
-*/

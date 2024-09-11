@@ -40,6 +40,7 @@ anyhow = "1.0.86"
 rand = "0.9.0-alpha.1"
 #splines = { version = "4.3.1", features = ["serde", "glam"] }
 uniform-cubic-splines = { version = "0.1.8", default-features = false, features = ["std"] }
+num-traits = "0.2.19"
 
 [build-dependencies]
 shader-bridge = { workspace = true }

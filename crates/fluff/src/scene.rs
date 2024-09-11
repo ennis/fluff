@@ -30,7 +30,7 @@ pub struct AnimationFrame {
 /// Scene data.
 ///
 /// Holds the animation frames, and the buffers for strokes & curves for the entire animation.
-pub struct AnimationData {
+pub struct Scene {
     //point_count: usize,
     //curve_count: usize,
     pub frames: Vec<AnimationFrame>,
@@ -47,7 +47,7 @@ pub struct AnimationData {
 /// * position buffer: contains the control points of curves, all flattened into a single linear buffer.
 /// * curve buffer: consists of (start, size) pairs, defining the start and number of CPs of each curve in the position buffer.
 /// * animation buffer: consists of (start, size) defining the start and number of curves in the curve buffer for each animation frame.
-pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> AnimationData {
+pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
     let mut point_count = 0;
     let mut curve_count = 0;
 
@@ -208,7 +208,7 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Animati
     }
 
 
-    AnimationData {
+    Scene {
         //point_count,
         //curve_count,
         frames,

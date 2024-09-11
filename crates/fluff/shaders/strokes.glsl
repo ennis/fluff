@@ -305,7 +305,7 @@ void main()
 
 
         #ifdef WAVY_STROKES
-        float wave = 0.002 * sin(2000.0 * u.sceneParams.d.time + cfg.strokeID * 1000.0);
+        float wave = 0.00002 * v.s * sin(5.0 * u.sceneParams.d.time + cfg.strokeID * 100.0);
         v.pos.x += wave;
         v0.pos.x += wave;
         v1.pos.x += wave;
@@ -520,16 +520,16 @@ void main() {
     float r0 = h;//.5 * u.width * i_radii.y; //.5 * u.width;
     float D = (r1 - r0) / i_segmentLength;
     //float y = i_pixelPosition.y;
-    float xp = (i_pixelPosition.x - i_startArcLength);
+    float xp = i_pixelPosition.x;
     float a = D*D - 1.;
-    float b = 2*(r0*D-xp);
+    float b = 2*(r0*D+xp);
     float c = r0*r0 - xp*xp - y*y;
     float disc = b*b - 4.0*a*c;
     if(disc <= 0.0) discard;
     float t0 = (-b - sqrt(disc)) / (2.*a);
     float t1 = (-b + sqrt(disc)) / (2.*a);
     float lr = abs(t1 - t0);
-    const float alpha_density = 0.005;
+    const float alpha_density = 0.01;
     alpha = 1. - exp(-alpha_density * lr);
 
     #ifdef STAMPED
@@ -541,13 +541,13 @@ void main() {
     alpha = 0.;
     const float texSize = 256;
     const float stampSpacing = 1.0;
-    int t0r = int(ceil((i_startArcLength + t0) / stampSpacing));
-    int t1r = int(floor((i_startArcLength + t1) / stampSpacing));
-    for (int i = t0r; i < t1r; ++i) {
-        float t = i * stampSpacing - i_startArcLength;
-        vec2 uv = vec2(remap(xp - t, 0.0, r0, 0., texSize), remap(y, -h, h, 0., texSize));
-        float I = imageLoad(tex, ivec2(uv)).r;
-        alpha += I;
+    int t0r = int(floor(min(t0, t1) / stampSpacing));
+    int t1r = int(ceil(max(t0, t1) / stampSpacing));
+    for (int i = t0r; i <= t1r; ++i) {
+        float t = i * stampSpacing;
+        vec2 uv = vec2(remap(clamp(xp - t, -h, h), -h, h, 0., texSize-1.), remap(clamp(y, -h, h), -h, h, 0., texSize-1.));
+        float I = 1.0-imageLoad(tex, clamp(ivec2(uv), ivec2(0), ivec2(texSize-1))).r;
+        alpha += 0.5*I;
     }
     #endif  // STAMPED
 
@@ -586,7 +586,7 @@ void main() {
 
     #ifdef SHOW_ARCLENGTH
     o_color = vec4(palette(
-        i_pixelPosition.x / 100.,
+        i_arcLength / 100.0,
         vec3(0.5, 0.5, 0.5),
         vec3(0.5, 0.5, 0.5),
         vec3(1.0, 1.0, 1.0),
@@ -603,7 +603,7 @@ void main() {
     #endif
 
     #ifdef DITHER
-    o_color.rgb += vec3(0.01 * noise(i_pixelPosition + 10000.0 * u.sceneParams.d.time));
+    o_color.rgb += vec3(0.03 * noise(gl_FragCoord.xy + 10000.0 * u.sceneParams.d.time));
     #endif
 
     #ifdef SHOW_STROKE_SKELETON
@@ -616,7 +616,7 @@ void main() {
     //vec2 dir = * vec2(i_normal.y, -i_normal.x);
     //float dist = distSeg(i_position.y * i_normal -30*dir, i_position.y * i_normal + 30 * vec2(i_normal.y, -i_normal.x)
 
-    //o_color = vec4(i_normal, 0.0, 1.0);
+    //o_color = vec4(t1/100., 0.0,  0.0, 1.0);
 }
 
 #endif

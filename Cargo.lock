@@ -943,6 +943,7 @@ dependencies = [
  "image",
  "imgui-winit-support",
  "lyon",
+ "num-traits",
  "obj",
  "rand",
  "regex",

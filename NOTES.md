@@ -407,3 +407,29 @@ If not enough, do stamping. Also a lot of stamps can be split into multiple airb
 
 That said, it would be nice if we were able to preintegrate some anisotropic shapes.
 Short-term goal: derive an anisotropic version of the "airbrush" representation in Ciallo.
+
+# Extensibility
+
+`Tool` interface: has access to the scene + current camera, receives gestures, 2D or 3D.
+
+- mouse cursor image
+- event handling
+- gesture_begin (pos)
+- gesture_update (pos)
+- gesture_finish
+- gesture_cancel
+- Processing gestures: call the tool repeatedly
+
+Undo/redo: command-based
+
+## Plugin system?
+
+E.g. custom tools
+
+1. provide a python API (meh, don't like python)
+2. rust plugins compiled to WASM
+3. rust plugins via C FFI
+4. write the app in C#, write plugins in C#
+
+Options (2) or (3) seem the most appropriate, but for (3) run in a separate process.
+Go with (2)

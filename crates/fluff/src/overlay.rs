@@ -133,18 +133,9 @@ enum DrawKind {
     },
 }
 
-/*
-#[derive(Attachments)]
-struct OverlayAttachments<'a> {
-    #[attachment(color, format=R8G8B8A8_UNORM)]
-    color: &'a ImageView,
-    #[attachment(depth, format=D32_SFLOAT)]
-    depth: &'a ImageView,
-}*/
 
 const LINE_VERTEX_FLAG_FIRST: u32 = 1;
 const LINE_VERTEX_FLAG_LAST: u32 = 2;
-//const LINE_VERTEX_FLAG_SCREEN_SPACE: u32 = 4;
 
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
