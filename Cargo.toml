@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge"]
+members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge", "crates/kyute"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -8,6 +8,7 @@ houdinio = { path = "crates/houdinio" }
 shader-bridge = { path = "crates/shader-bridge" }
 curve-fit-nd-sys = { path = "crates/curve-fit-nd-sys" }
 curve-fit-nd = { path = "crates/curve-fit-nd" }
+kyute = { path = "crates/kyute" }
 
 [profile.release]
 debug = true

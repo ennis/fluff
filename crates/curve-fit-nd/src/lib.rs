@@ -81,7 +81,7 @@ pub fn curve_fit_cubic_to_points_f64(
     assert!(points.len() % dims == 0);
 
     unsafe {
-        let r = curve_fit_nd_sys::curve_fit_cubic_to_points_db(
+        let _r = curve_fit_nd_sys::curve_fit_cubic_to_points_db(
             points.as_ptr(),
             (points.len() / dims) as u32,
             dims as u32,

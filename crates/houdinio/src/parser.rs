@@ -6,6 +6,7 @@ use json::ParserImpl;
 use smol_str::SmolStr;
 
 #[derive(PartialEq, Debug)]
+#[allow(dead_code)]
 enum Event {
     Integer(i64),
     Float(f64),
@@ -105,7 +106,7 @@ macro_rules! read_map {
     ($p:ident, $($key:pat => $b:block)*) => {
         $p.read_map(|$p, key| {
             match key {
-                $($key => $b,)*
+                $($key => $b)*
                 _ => {$p.skip();}
             }
             Ok(())

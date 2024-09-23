@@ -540,7 +540,7 @@ void main() {
     image2DHandle tex = u.brushTextures.d[brushIndex];
     alpha = 0.;
     const float texSize = 256;
-    const float stampSpacing = 1.0;
+    const float stampSpacing = 30.0;
     int t0r = int(floor(min(t0, t1) / stampSpacing));
     int t1r = int(ceil(max(t0, t1) / stampSpacing));
     for (int i = t0r; i <= t1r; ++i) {
