@@ -17,7 +17,7 @@ use kurbo::{Affine, Point, Vec2};
 use crate::event::Event;
 use crate::layout::{BoxConstraints, Geometry, IntrinsicSizes};
 use crate::window::WeakWindow;
-use crate::PaintCtx;
+use crate::{PaintCtx, Style};
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -245,6 +245,10 @@ pub struct Element {
     name: RefCell<String>,
     /// Whether the element is focusable via tab-navigation.
     focusable: Cell<bool>,
+    /// Style properties of this element. Inherits the style of its parent.
+    // Note: this means that to resolve a style property you need to traverse the parent chain.
+    //
+    style: Style,
     attached_properties: RefCell<BTreeMap<TypeId, Box<dyn Any>>>,
 }
 
@@ -264,6 +268,7 @@ impl Element {
             change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
             name: RefCell::new(format!("{:p}", weak_this.as_ptr())),
             focusable: Cell::new(false),
+            style: Default::default(),
             attached_properties: Default::default(),
         }
     }

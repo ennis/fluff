@@ -10,7 +10,7 @@ use kyute::text::TextStyle;
 use kyute::widgets::text::Text;
 use kyute::widgets::button::button;
 use kyute::widgets::frame::Frame;
-use kyute::widgets::text_edit::TextEdit;
+use kyute::widgets::text_edit::{TextEdit, TextOverflow, WrapMode};
 use kyute::Color;
 use kyute::WindowOptions;
 use kyute::Window;
@@ -18,7 +18,7 @@ use kyute::Window;
 
 fn main() {
     application::run(async {
-        let main_button = button("Click me!"); // &str
+        let main_button = button("Test"); // &str
 
         // want to turn it into a sequence of AttributedRange
 
@@ -29,7 +29,7 @@ fn main() {
                 .border_radius(8.0)
                 .min_width(200.0.into())
                 .min_height(50.0.into())
-                .max_width(200.0.into())
+                .max_width(400.0.into())
                 .padding_left(20.0.into())
                 .padding_right(20.0.into())
                 .padding_top(20.0.into())
@@ -42,24 +42,31 @@ fn main() {
         );
 
         let text_edit = TextEdit::new();
-        text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(50.0));
+        text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));
         text_edit.set_text("Hello, world!\nMultiline".to_string());
 
         let text_edit2 = TextEdit::new();
-        text_edit2.set_text_style(TextStyle::default().font_family("Garamond").font_size(50.0));
-        text_edit2.set_text("Hello, world! Single line with ellipsis".to_string());
-        text_edit2.set_single_line();
-        text_edit2.set_ellipsis(true);
+        text_edit2.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));
+        text_edit2.set_text("Hello, world df sdfds fds fsdef sd fs! \n Multi line with ellipsis".to_string());
+        text_edit2.set_wrap_mode(WrapMode::NoWrap);
+        //text_edit2.set_single_line();
+        //text_edit2.set_max_lines(2);
+        //text_edit2.set_overflow(TextOverflow::Ellipsis);
 
-        let value = 450;
 
         // FIXME: this doesn't work because the macro, like format_args, borrows temporaries
         //let attributed_text = text!( { "Hello," i "world!\n" b "This is bold" } "This is a " { rgb(255,0,0) "red" } " word\n" "Value=" i "{value}" );
         // We could directly return `FormattedText`.
 
-        frame.add_child(&Text::new(&text!( size(12.0) family("Inter") #EEE { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" )));
         frame.add_child(&text_edit);
         frame.add_child(&text_edit2);
+
+        let value = 450;
+        frame.add_child(&Text::new(text!( size(12.0) family("Inter") #EEE { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" )));
+
+        //frame.add_child(&Text::new(text![ size(40.0) family("Inter") { "طوال اليوم." } i {"الفبای فارسی"}  ]));
+        //frame.add_child(&Text::new(text![ size(40.0) family("Inter")  "Sample\nSample\nSample\nSample\nSample\nSample\nSample"  ]));
+
         frame.add_child(&main_button);
 
         let window_options = WindowOptions {

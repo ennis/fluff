@@ -1,7 +1,6 @@
 mod app_globals;
 pub mod application;
 mod backend;
-pub mod color;
 pub mod compositor;
 pub mod drawing;
 pub mod element;
@@ -19,7 +18,7 @@ pub mod window;
 
 // reexports
 pub use app_globals::AppGlobals;
-pub use color::Color;
+pub use kyute_common::Color;
 pub use element::{Element, ElementMethods};
 pub use event::Event;
 pub use kurbo::{self, Point, Rect, Size};

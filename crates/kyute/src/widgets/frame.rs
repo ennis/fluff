@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use kurbo::{Insets, RoundedRect, Size};
+use taffy::{Cache, Layout, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, TraversePartialTree};
 
 use crate::{Color, drawing, PaintCtx, style};
 use crate::drawing::{BoxShadow, Paint, ToSkia};
@@ -17,6 +18,44 @@ use crate::style::{
     BoxShadows, Direction, Focus, Height, HorizontalAlign, Hover, MaxHeight, MaxWidth, MinHeight, MinWidth,
     PaddingBottom, PaddingLeft, PaddingRight, PaddingTop, Style, VerticalAlign, Width,
 };
+
+
+impl TraversePartialTree for Frame {
+    type ChildIter<'a>
+    where
+        Self: 'a,
+    = ();
+
+    fn child_ids(&self, parent_node_id: NodeId) -> Self::ChildIter<'_> {
+        todo!()
+    }
+
+    fn child_count(&self, parent_node_id: NodeId) -> usize {
+        todo!()
+    }
+
+    fn get_child_id(&self, parent_node_id: NodeId, child_index: usize) -> NodeId {
+        todo!()
+    }
+}
+
+impl LayoutPartialTree for Frame {
+    fn get_style(&self, node_id: NodeId) -> &taffy::Style {
+        todo!()
+    }
+
+    fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+        todo!()
+    }
+
+    fn get_cache_mut(&mut self, node_id: NodeId) -> &mut Cache {
+        todo!()
+    }
+
+    fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        todo!()
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct ResolvedFrameStyle {
@@ -62,7 +101,7 @@ pub struct Frame {
     pub focused: Handler<bool>,
     pub state_changed: Handler<InteractState>,
     state: Cell<InteractState>,
-    style: Style,
+    style: taffy::Style,
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
     resolved_style: RefCell<ResolvedFrameStyle>,

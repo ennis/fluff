@@ -48,7 +48,6 @@ impl_style_values!(
     Style, Style;
     Sizing, Sizing;
     Vec<BoxShadow>, BoxShadows;
-    CustomFontAxisValue, CustomFontAxisValue;
 );
 
 pub trait StyleProperty: 'static {
@@ -120,7 +119,6 @@ style_properties! {
 }
 
 pub(crate) use style_properties;
-use crate::text::CustomFontAxisValue;
 
 #[derive(Clone, Default)]
 pub struct Style {

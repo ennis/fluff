@@ -11,9 +11,6 @@ pub struct TextRun<'a> {
     pub style: &'a TextStyle<'a>,
 }
 
-// An array of attribute
-//pub type AttributedText<'a> = [TextRun<'a>];
-
 #[doc(hidden)]
 pub fn cow_format_args(args: fmt::Arguments) -> Cow<str> {
     match args.as_str() {

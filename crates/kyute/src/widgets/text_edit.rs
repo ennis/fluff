@@ -1,19 +1,19 @@
 use crate::application::{spawn, wait_for};
-use crate::drawing::{Paint, ToSkia};
+use crate::drawing::{FromSkia, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{BoxConstraints, Geometry};
-use crate::text::{FormattedText, get_font_collection, Selection, TextAlign, TextStyle};
+use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
 use crate::{Color, PaintCtx};
 use keyboard_types::Key;
-use kurbo::{Point, Rect, Size};
+use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
 use std::cell::{Cell, RefCell};
-use std::ops::{Deref};
+use std::ops::Deref;
 use std::rc::Rc;
-use std::time::{Duration};
-use unicode_segmentation::{GraphemeCursor};
+use std::time::Duration;
+use unicode_segmentation::GraphemeCursor;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -44,6 +44,18 @@ fn add_selections(this: Selection, other: Selection) -> Selection {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum WrapMode {
+    Wrap,
+    NoWrap,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TextOverflow {
+    Ellipsis,
+    Clip,
+}
+
 struct TextEditState {
     text: String,
     selection: Selection,
@@ -53,11 +65,12 @@ struct TextEditState {
     selection_color: Color,
     caret_color: Color,
     relayout: bool,
-    horizontal_scroll_offset: f64,
-    single_line: bool,
-    word_wrap: bool,
+    scroll_offset: Vec2,
+    wrap_mode: WrapMode,
+    text_overflow: TextOverflow,
     align: TextAlign,
-    ellipsis: bool,
+    line_clamp: Option<usize>,
+    size: Size,
 }
 
 impl TextEditState {
@@ -67,13 +80,19 @@ impl TextEditState {
         text_style.set_font_size(16.0); // TODO default font size
         let mut paragraph_style = skia_safe::textlayout::ParagraphStyle::new();
         paragraph_style.set_text_style(&text_style);
-        if self.single_line {
-            paragraph_style.set_max_lines(1);
+
+        if let Some(line_clamp) = self.line_clamp {
+            paragraph_style.set_max_lines(line_clamp);
         }
+
+        match self.text_overflow {
+            TextOverflow::Ellipsis => {
+                paragraph_style.set_ellipsis("…");
+            }
+            TextOverflow::Clip => {}
+        }
+
         paragraph_style.set_text_align(self.align.to_skia());
-        if self.ellipsis {
-            paragraph_style.set_ellipsis("…");
-        }
 
         let mut builder = skia_safe::textlayout::ParagraphBuilder::new(&paragraph_style, font_collection);
         let style = self.text_style.to_skia();
@@ -82,6 +101,129 @@ impl TextEditState {
         builder.pop();
 
         self.paragraph = builder.build();
+    }
+
+    fn set_selection(&mut self, selection: Selection) -> bool {
+        if selection != self.selection {
+            self.selection = selection;
+            self.scroll_in_view(self.selection.end);
+
+            // debug the current cursor position by printing the string with <HERE> at the cursor position
+            let mut text = self.text.clone();
+            text.insert_str(self.selection.end, "<HERE>");
+            eprintln!("cursor changed position: {text}");
+
+            true
+        } else {
+            false
+        }
+    }
+
+    fn set_cursor_at_text_position(&mut self, pos: usize, keep_anchor: bool) -> bool {
+        self.set_selection(if keep_anchor {
+            Selection {
+                start: self.selection.start,
+                end: pos,
+            }
+        } else {
+            Selection::empty(pos)
+        })
+    }
+
+    fn move_cursor_to_next_word(&mut self, keep_anchor: bool) -> bool {
+        let end = next_word_boundary(&self.text, self.selection.end);
+        self.set_cursor_at_text_position(end, keep_anchor)
+    }
+
+    fn move_cursor_to_prev_word(&mut self, keep_anchor: bool) -> bool {
+        let end = prev_word_boundary(&self.text, self.selection.end);
+        self.set_cursor_at_text_position(end, keep_anchor)
+    }
+
+    fn move_cursor_to_next_grapheme(&mut self, keep_anchor: bool) -> bool {
+        let end = next_grapheme_cluster(&self.text, self.selection.end).unwrap_or(self.selection.end);
+        self.set_cursor_at_text_position(end, keep_anchor)
+    }
+
+    fn move_cursor_to_prev_grapheme(&mut self, keep_anchor: bool) -> bool {
+        let end = prev_grapheme_cluster(&self.text, self.selection.end).unwrap_or(self.selection.end);
+        self.set_cursor_at_text_position(end, keep_anchor)
+    }
+
+    /// Scrolls the text to make the given text position visible.
+    fn scroll_in_view(&mut self, text_offset: usize) -> bool {
+        let rects = self.paragraph.get_rects_for_range(
+            text_offset..text_offset + 1,
+            RectHeightStyle::Tight,
+            RectWidthStyle::Tight,
+        );
+        if rects.is_empty() {
+            return false;
+        }
+        let rect = Rect::from_skia(rects[0].rect);
+        let scroll_offset = self.scroll_offset.x;
+
+        let scroll_offset = if rect.x1 > self.size.width + scroll_offset {
+            rect.x1 - self.size.width
+        } else if rect.x0 < scroll_offset {
+            rect.x0
+        } else {
+            scroll_offset
+        };
+        if scroll_offset != self.scroll_offset.x {
+            self.scroll_offset.x = scroll_offset;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn text_position_for_point(&self, point: Point) -> usize {
+        let point = point + self.scroll_offset;
+        // NOTE: get_glyph_position_at_coordinate returns a text position in bytes, not a glyph
+        // position, as the name suggests.
+        self.paragraph
+            .get_glyph_position_at_coordinate(point.to_skia())
+            .position as usize
+    }
+
+    /// NOTE: valid only after first layout.
+    fn set_cursor_at_point(&mut self, point: Point, keep_anchor: bool) -> bool {
+        let point = point + self.scroll_offset;
+        let pos = self.paragraph.get_glyph_position_at_coordinate(point.to_skia());
+        self.set_cursor_at_text_position(pos.position as usize, keep_anchor)
+    }
+
+    fn select_word_under_cursor(&mut self) -> bool {
+        let selection = self.selection;
+        let range = self.paragraph.get_word_boundary(selection.end as u32);
+        self.set_selection(Selection {
+            start: range.start,
+            end: range.end,
+        })
+    }
+
+    fn word_selection_at_text_position(&self, pos: usize) -> Selection {
+        let range = self.paragraph.get_word_boundary(pos as u32);
+        let word = Selection {
+            start: range.start,
+            end: range.end,
+        };
+        // skia reports a word boundary for newlines, ignore it
+        if self.text[range.clone()].starts_with('\n') {
+            return Selection::empty(pos);
+        }
+        word
+    }
+
+    fn select_line_under_cursor(&mut self) -> bool {
+        let text = &self.text;
+        let selection = self.selection;
+        let start = text[..selection.end].rfind('\n').map_or(0, |i| i + 1);
+        let end = text[selection.end..]
+            .find('\n')
+            .map_or(text.len(), |i| selection.end + i);
+        self.set_selection(Selection { start, end })
     }
 }
 
@@ -154,17 +296,10 @@ fn prev_word_boundary(text: &str, offset: usize) -> usize {
     pos
 }
 
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Gesture {
     CharacterSelection,
     WordSelection { anchor: Selection },
-}
-
-enum Alignment {
-    Start,
-    Center,
-    End,
 }
 
 /// Single- or multiline text editor.
@@ -187,15 +322,16 @@ impl TextEdit {
                 selection: Selection::empty(0),
                 text_style: TextStyle::default(),
                 last_available_width: 0.0,
-                paragraph: FormattedText::default().inner,
+                paragraph: TextLayout::default().inner,
                 selection_color: Color::from_rgba_u8(0, 0, 255, 80),
                 caret_color: Color::from_rgba_u8(255, 255, 0, 255),
                 relayout: true,
-                horizontal_scroll_offset: 0.0,
-                single_line: false,
-                word_wrap: false,
-                align: TextAlign::Left,
-                ellipsis: false,
+                scroll_offset: Vec2::new(0.0, 0.0),
+                wrap_mode: WrapMode::Wrap,
+                align: TextAlign::Start,
+                size: Default::default(),
+                text_overflow: TextOverflow::Clip,
+                line_clamp: None,
             }),
             blink_phase: Cell::new(true),
             blink_reset: Cell::new(false),
@@ -208,7 +344,6 @@ impl TextEdit {
         let this_weak = Rc::downgrade(&text_edit);
         spawn(async move {
             'task: loop {
-                eprintln!("caret blinker task");
                 // Initial delay before blinking
                 wait_for(CARET_BLINK_INITIAL_DELAY).await;
                 // blinking
@@ -234,30 +369,38 @@ impl TextEdit {
         text_edit
     }
 
-    pub fn set_word_wrap(&self, word_wrap: bool) {
+    pub fn set_wrap_mode(&self, wrap_mode: WrapMode) {
         let this = &mut *self.state.borrow_mut();
-        if this.word_wrap != word_wrap {
-            this.word_wrap = word_wrap;
+        if this.wrap_mode != wrap_mode {
+            this.wrap_mode = wrap_mode;
             this.rebuild_paragraph();
             this.relayout = true;
             self.mark_needs_relayout();
         }
     }
 
-    pub fn set_single_line(&self) {
+    pub fn set_max_lines(&self, max_lines: usize) {
         let this = &mut *self.state.borrow_mut();
-        if !this.single_line {
-            this.single_line = true;
+        this.line_clamp = Some(max_lines);
+        this.rebuild_paragraph();
+        this.relayout = true;
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_text_align(&self, align: TextAlign) {
+        let this = &mut *self.state.borrow_mut();
+        if this.align != align {
+            this.align = align;
             this.rebuild_paragraph();
             this.relayout = true;
             self.mark_needs_relayout();
         }
     }
 
-    pub fn set_ellipsis(&self, ellipsis: bool) {
+    pub fn set_overflow(&self, overflow: TextOverflow) {
         let this = &mut *self.state.borrow_mut();
-        if this.ellipsis != ellipsis {
-            this.ellipsis = ellipsis;
+        if this.text_overflow != overflow {
+            this.text_overflow = overflow;
             this.rebuild_paragraph();
             this.relayout = true;
             self.mark_needs_relayout();
@@ -304,8 +447,7 @@ impl TextEdit {
     pub fn set_selection(&self, selection: Selection) -> bool {
         // TODO clamp selection to text length
         let this = &mut *self.state.borrow_mut();
-        if this.selection != selection {
-            this.selection = selection;
+        if this.set_selection(selection) {
             self.mark_needs_repaint();
             true
         } else {
@@ -329,103 +471,85 @@ impl TextEdit {
         self.mark_needs_relayout();
     }
 
-    pub fn get_text_offset_at_point(&self, point: Point) -> usize {
-        let this = &mut *self.state.borrow_mut();
-        this.paragraph
-            .get_glyph_position_at_coordinate(point.to_skia())
-            .position as usize
+    pub fn text_position_for_point(&self, point: Point) -> usize {
+        self.state.borrow().text_position_for_point(point)
     }
 
     /// NOTE: valid only after first layout.
-    pub fn set_cursor_at_point(&self, point: Point, keep_anchor: bool) -> bool {
-        // TODO set cursor position based on point
-        let this = &mut *self.state.borrow_mut();
-        let prev_selection = this.selection;
-        let pos = this.paragraph.get_glyph_position_at_coordinate(point.to_skia());
-        if keep_anchor {
-            this.selection.end = pos.position as usize;
-        } else {
-            this.selection = Selection::empty(pos.position as usize);
-        }
-        let selection_changed = this.selection != prev_selection;
-        if selection_changed {
+    pub fn set_cursor_at_point(&self, point: Point, keep_anchor: bool) {
+        if self.state.borrow_mut().set_cursor_at_point(point, keep_anchor) {
             self.mark_needs_repaint();
         }
-        selection_changed
     }
 
     pub fn select_word_under_cursor(&self) {
-        let this = &mut *self.state.borrow_mut();
-        let selection = this.selection;
-        let range = this.paragraph.get_word_boundary(selection.end as u32);
-        this.selection = Selection {
-            start: range.start,
-            end: range.end,
-        };
-        self.mark_needs_repaint();
+        if self.state.borrow_mut().select_word_under_cursor() {
+            self.mark_needs_repaint();
+        }
     }
 
-    pub fn select_word_at_offset_with_anchor(&self, offset: usize, anchor_selection: Selection) -> bool {
+    pub fn word_selection_at_text_position(&self, pos: usize) -> Selection {
+        self.state.borrow().word_selection_at_text_position(pos)
+    }
+
+    /*pub fn select_word_at_offset_with_anchor(&self, offset: usize, anchor_selection: Selection) -> bool {
         let this = &mut *self.state.borrow_mut();
         let range = this.paragraph.get_word_boundary(offset as u32);
         let word = Selection {
             start: range.start,
             end: range.end,
         };
+
+        // skia reports a word boundary for newlines, ignore it
+        if this.text[range.clone()].starts_with('\n') {
+            return false;
+        }
+
         let new_selection = add_selections(anchor_selection, word);
+
+
         if new_selection != this.selection {
             this.selection = new_selection;
+            this.scroll_in_view(this.selection.end);
+
+
             self.mark_needs_repaint();
             true
         } else {
             false
         }
-    }
+    }*/
 
     /// Moves the cursor to the next or previous word boundary.
     pub fn move_cursor_to_next_word(&self, keep_anchor: bool) {
-        let this = &mut *self.state.borrow_mut();
-        this.selection.end = next_word_boundary(&this.text, this.selection.end);
-        if !keep_anchor {
-            this.selection.start = this.selection.end;
+        if self.state.borrow_mut().move_cursor_to_next_word(keep_anchor) {
+            self.mark_needs_repaint();
         }
     }
 
     pub fn move_cursor_to_prev_word(&self, keep_anchor: bool) {
-        let this = &mut *self.state.borrow_mut();
-        this.selection.end = prev_word_boundary(&this.text, this.selection.end);
-        if !keep_anchor {
-            this.selection.start = this.selection.end;
+        if self.state.borrow_mut().move_cursor_to_prev_word(keep_anchor) {
+            self.mark_needs_repaint();
         }
     }
 
     pub fn move_cursor_to_next_grapheme(&self, keep_anchor: bool) {
-        let this = &mut *self.state.borrow_mut();
-        this.selection.end = next_grapheme_cluster(&this.text, this.selection.end).unwrap_or(this.selection.end);
-        if !keep_anchor {
-            this.selection.start = this.selection.end;
+        if self.state.borrow_mut().move_cursor_to_next_grapheme(keep_anchor) {
+            self.mark_needs_repaint();
         }
     }
 
     pub fn move_cursor_to_prev_grapheme(&self, keep_anchor: bool) {
-        let this = &mut *self.state.borrow_mut();
-        this.selection.end = prev_grapheme_cluster(&this.text, this.selection.end).unwrap_or(this.selection.end);
-        if !keep_anchor {
-            this.selection.start = this.selection.end;
+        if self.state.borrow_mut().move_cursor_to_prev_grapheme(keep_anchor) {
+            self.mark_needs_repaint();
         }
     }
 
     /// Selects the line under the cursor.
     pub fn select_line_under_cursor(&self) {
-        let this = &mut *self.state.borrow_mut();
-        let text = &this.text;
-        let selection = this.selection;
-        let start = text[..selection.end].rfind('\n').map_or(0, |i| i + 1);
-        let end = text[selection.end..]
-            .find('\n')
-            .map_or(text.len(), |i| selection.end + i);
-        this.selection = Selection { start, end };
-        self.mark_needs_repaint();
+        if self.state.borrow_mut().select_line_under_cursor() {
+            self.mark_needs_repaint();
+        }
     }
 
     /// Emitted when the selection changes as a result of user interaction.
@@ -442,41 +566,15 @@ impl Deref for TextEdit {
     }
 }
 
-impl TextEdit {
-    /*/// Moves the cursor forward or backward. Returns the new selection.
-    fn move_cursor(&self, movement: Movement, modify_selection: bool) -> Selection {
-        let text = &*self.text.borrow();
-        let selection = self.selection.get();
-        let offset = match movement {
-            Movement::Left => prev_grapheme_cluster(text, selection.end).unwrap_or(selection.end),
-            Movement::Right => next_grapheme_cluster(text, selection.end).unwrap_or(selection.end),
-            Movement::LeftWord | Movement::RightWord => {
-                // TODO word navigation (unicode word segmentation)
-                warn!("word navigation is unimplemented");
-                selection.end
-            }
-        };
+// Text view layout options:
+// - alignment
+// - wrapping
+// - ellipsis (truncation mode)
 
-        if modify_selection {
-            Selection {
-                start: selection.start,
-                end: offset,
-            }
-        } else {
-            Selection::empty(offset)
-        }
-
-    }*/
-
-    /*
-        Text representation independent of the editor structure (paragraph).
-        Input to text formatter: a list of text runs.
-        Formatter: extract formatted lines from the text runs, and provide a mapping from
-        visual position to text run index + offset.
-        => basically, formatters are **line breakers**
-        The editor can then choose to relayout only affected lines.
-    */
-}
+// Given input constraints, and text that overflows:
+// - wrap text
+// - truncate text (with ellipsis)
+// - become scrollable
 
 impl ElementMethods for TextEdit {
     fn element(&self) -> &Element {
@@ -486,8 +584,19 @@ impl ElementMethods for TextEdit {
     fn layout(&self, _children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
         let this = &mut *self.state.borrow_mut();
 
-        // determine the available space for layout
-        let available_width = constraints.max.width;
+        let available_width = if this.wrap_mode == WrapMode::Wrap || this.text_overflow == TextOverflow::Ellipsis {
+            // Force max width constraints when ellipsis mode is requested, because
+            // otherwise skia won't know where to clip.
+            //
+            // The behavior seems to be like so:
+            // - the text is **always** laid out with wrapping
+            // - the text is laid out with wrapping until the max number of lines is reached
+            // - then, if ellipsis is set, the ellipsis is put there
+            // - setEllipsis seems to set the max number of lines to 1
+            constraints.max.width
+        } else {
+            f64::INFINITY
+        };
 
         let invalidate_layout = this.relayout || this.last_available_width != available_width;
         if invalidate_layout {
@@ -500,13 +609,18 @@ impl ElementMethods for TextEdit {
         let h = this.paragraph.height() as f64;
         let alphabetic_baseline = this.paragraph.alphabetic_baseline();
         let unconstrained_size = Size::new(w, h);
-        let size = constraints.constrain(unconstrained_size);
+        this.size = constraints.constrain(unconstrained_size);
+
+        /*eprintln!("[text_edit] - constraints: {:?}\n -> longest_line: {}\n -> height: {}\n -> constrained_size: {}\n -> did_exceed_max_lines: {}",
+                  constraints, this.paragraph.longest_line(), this.paragraph.height(),
+                  this.size, this.paragraph.did_exceed_max_lines()
+        );*/
 
         Geometry {
-            size,
+            size: this.size,
             baseline: Some(alphabetic_baseline as f64),
-            bounding_rect: size.to_rect(),
-            paint_bounding_rect: size.to_rect(),
+            bounding_rect: this.size.to_rect(),
+            paint_bounding_rect: this.size.to_rect(),
         }
     }
 
@@ -516,11 +630,15 @@ impl ElementMethods for TextEdit {
 
         ctx.with_canvas(|canvas| {
             // draw rect around bounds
-            let paint = Paint::from(Color::from_rgba_u8(255, 0, 0, 80)).to_sk_paint(bounds.to_rect());
-            canvas.draw_rect(bounds.to_rect().to_skia(), &paint);
+            //let paint = Paint::from(Color::from_rgba_u8(255, 0, 0, 80)).to_sk_paint(bounds.to_rect());
+            //canvas.draw_rect(bounds.to_rect().to_skia(), &paint);
+
+            canvas.save();
+            canvas.translate(-this.scroll_offset.to_skia());
 
             // paint the paragraph
             this.paragraph.paint(canvas, Point::ZERO.to_skia());
+
             // paint the selection rectangles
             let selection_rects = this.paragraph.get_rects_for_range(
                 this.selection.min()..this.selection.max(),
@@ -543,6 +661,8 @@ impl ElementMethods for TextEdit {
                     canvas.draw_rect(caret_rect.to_skia(), &caret_paint);
                 }
             }
+
+            canvas.restore();
         });
     }
 
@@ -551,25 +671,30 @@ impl ElementMethods for TextEdit {
         Self: Sized,
     {
         let mut selection_changed = false;
+        let mut this = self.state.borrow_mut();
+        let mut set_focus = false;
+
         match event {
             Event::PointerDown(event) => {
                 let pos = event.local_position();
                 eprintln!("[text_edit] pointer down: {:?}", pos);
                 if event.repeat_count == 2 {
                     // select word under cursor
-                    self.select_word_under_cursor();
+                    this.select_word_under_cursor();
                     selection_changed = true;
                     self.gesture.set(Some(Gesture::WordSelection {
-                        anchor: self.selection(),
+                        anchor: this.selection,
                     }));
                 } else if event.repeat_count == 3 {
                     // TODO select line under cursor
                 } else {
-                    selection_changed |= self.set_cursor_at_point(pos, false);
+                    selection_changed |= this.set_cursor_at_point(pos, false);
                     self.gesture.set(Some(Gesture::CharacterSelection));
                 }
                 self.reset_blink();
-                self.set_focus().await;
+                // Don't immediately call `set_focus` because we'll recurse into this event handler
+                // with `self.state` already borrowed mutably.
+                set_focus = true;
                 self.set_pointer_capture();
             }
             Event::PointerMove(event) => {
@@ -578,11 +703,12 @@ impl ElementMethods for TextEdit {
 
                 match self.gesture.get() {
                     Some(Gesture::CharacterSelection) => {
-                        selection_changed |= self.set_cursor_at_point(pos, true);
+                        selection_changed |= this.set_cursor_at_point(pos, true);
                     }
                     Some(Gesture::WordSelection { anchor }) => {
-                        let text_offset = self.get_text_offset_at_point(pos);
-                        selection_changed |= self.select_word_at_offset_with_anchor(text_offset, anchor);
+                        let text_offset = this.text_position_for_point(pos);
+                        let word_selection = this.word_selection_at_text_position(text_offset);
+                        selection_changed |= this.set_selection(add_selections(anchor, word_selection));
                     }
                     _ => {}
                 }
@@ -598,7 +724,7 @@ impl ElementMethods for TextEdit {
             }
             Event::FocusLost => {
                 eprintln!("focus lost");
-                selection_changed |= self.set_selection(Selection::empty(0));
+                selection_changed |= this.set_selection(Selection::empty(0));
             }
             Event::KeyDown(event) => {
                 let keep_anchor = event.modifiers.shift();
@@ -607,25 +733,24 @@ impl ElementMethods for TextEdit {
                     Key::ArrowLeft => {
                         // TODO bidi?
                         if word_nav {
-                            self.move_cursor_to_prev_word(keep_anchor);
+                            this.move_cursor_to_prev_word(keep_anchor);
                         } else {
-                            self.move_cursor_to_prev_grapheme(keep_anchor);
+                            this.move_cursor_to_prev_grapheme(keep_anchor);
                         }
                         selection_changed = true;
                         self.reset_blink();
                     }
                     Key::ArrowRight => {
                         if word_nav {
-                            self.move_cursor_to_next_word(keep_anchor);
+                            this.move_cursor_to_next_word(keep_anchor);
                         } else {
-                            self.move_cursor_to_next_grapheme(keep_anchor);
+                            this.move_cursor_to_next_grapheme(keep_anchor);
                         }
                         selection_changed = true;
                         self.reset_blink();
                     }
                     Key::Character(ref s) => {
                         // TODO don't do this, emit the changed text instead
-                        let this = &mut *self.state.borrow_mut();
                         let mut text = this.text.clone();
                         let selection = this.selection;
                         text.replace_range(selection.byte_range(), &s);
@@ -641,6 +766,12 @@ impl ElementMethods for TextEdit {
                 }
             }
             _ => {}
+        }
+
+        drop(this);
+
+        if set_focus {
+            self.set_focus().await;
         }
 
         if selection_changed {

@@ -7,6 +7,7 @@ use std::{
 };
 
 pub mod flex;
+pub mod grid;
 
 #[derive(Copy, Clone, PartialEq)]
 //#[cfg_attr(feature = "serializing", derive(serde::Deserialize))]

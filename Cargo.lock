@@ -1385,6 +1385,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "grid"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be136d9dacc2a13cc70bb6c8f902b414fb2641f8db1314637c6b7933411a8f82"
+
+[[package]]
 name = "gtk-sys"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1697,6 +1703,7 @@ dependencies = [
  "imbl",
  "keyboard-types",
  "kurbo",
+ "kyute-common",
  "once_cell",
  "palette",
  "paste",
@@ -1710,6 +1717,7 @@ dependencies = [
  "slotmap",
  "smallvec 2.0.0-alpha.7",
  "spin_sleep",
+ "taffy",
  "thiserror",
  "threadbound",
  "tokio",
@@ -1721,6 +1729,22 @@ dependencies = [
  "weak-table",
  "windows 0.58.0",
  "winit 0.29.2",
+]
+
+[[package]]
+name = "kyute-common"
+version = "0.1.0"
+dependencies = [
+ "kurbo",
+ "palette",
+]
+
+[[package]]
+name = "kyute-text"
+version = "0.1.0"
+dependencies = [
+ "kyute-common",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -3294,6 +3318,19 @@ dependencies = [
  "pkg-config",
  "toml",
  "version-compare",
+]
+
+[[package]]
+name = "taffy"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cb893bff0f80ae17d3a57e030622a967b8dbc90e38284d9b4b1442e23873c94"
+dependencies = [
+ "arrayvec",
+ "grid",
+ "num-traits",
+ "serde",
+ "slotmap",
 ]
 
 [[package]]
