@@ -13,6 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::time::Duration;
+use taffy::{AvailableSpace, LayoutInput, LayoutOutput};
 use unicode_segmentation::GraphemeCursor;
 
 #[derive(Debug, Copy, Clone)]
@@ -60,7 +61,7 @@ struct TextEditState {
     text: String,
     selection: Selection,
     text_style: TextStyle<'static>,
-    last_available_width: f64,
+    last_width_constraint: f32,
     paragraph: skia_safe::textlayout::Paragraph,
     selection_color: Color,
     caret_color: Color,
@@ -80,6 +81,7 @@ impl TextEditState {
         text_style.set_font_size(16.0); // TODO default font size
         let mut paragraph_style = skia_safe::textlayout::ParagraphStyle::new();
         paragraph_style.set_text_style(&text_style);
+        paragraph_style.set_apply_rounding_hack(false);
 
         if let Some(line_clamp) = self.line_clamp {
             paragraph_style.set_max_lines(line_clamp);
@@ -321,7 +323,7 @@ impl TextEdit {
                 text: String::new(),
                 selection: Selection::empty(0),
                 text_style: TextStyle::default(),
-                last_available_width: 0.0,
+                last_width_constraint: 0.0,
                 paragraph: TextLayout::default().inner,
                 selection_color: Color::from_rgba_u8(0, 0, 255, 80),
                 caret_color: Color::from_rgba_u8(255, 255, 0, 255),
@@ -581,52 +583,50 @@ impl ElementMethods for TextEdit {
         &self.element
     }
 
-    fn layout(&self, _children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
+    fn layout(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
         let this = &mut *self.state.borrow_mut();
 
-        let available_width = if this.wrap_mode == WrapMode::Wrap || this.text_overflow == TextOverflow::Ellipsis {
-            // Force max width constraints when ellipsis mode is requested, because
-            // otherwise skia won't know where to clip.
-            //
-            // The behavior seems to be like so:
-            // - the text is **always** laid out with wrapping
-            // - the text is laid out with wrapping until the max number of lines is reached
-            // - then, if ellipsis is set, the ellipsis is put there
-            // - setEllipsis seems to set the max number of lines to 1
-            constraints.max.width
-        } else {
-            f64::INFINITY
-        };
+        // layout first under infinite constraints to get the min/max intrinsic width
+        this.paragraph.layout(f32::INFINITY);
+        let min_line_width = this.paragraph.min_intrinsic_width();
+        let max_line_width = this.paragraph.max_intrinsic_width();
 
-        let invalidate_layout = this.relayout || this.last_available_width != available_width;
-        if invalidate_layout {
-            this.paragraph.layout(available_width as f32);
-        }
+        // TODO: support overflow clipping
+        let width_constraint = layout_input.known_dimensions.width.unwrap_or_else(|| {
+            match layout_input.available_space.width {
+                AvailableSpace::Definite(width) => {
+                    width.clamp(min_line_width, max_line_width)
+                }
+                AvailableSpace::MinContent => {
+                    0.0
+                }
+                AvailableSpace::MaxContent => {
+                    f32::INFINITY
+                }
+            }
+        });
+
+        //if this.relayout || this.last_width_constraint != width_constraint {
+        this.paragraph.layout(width_constraint);
+        //}
         this.relayout = false;
-        this.last_available_width = available_width;
+        this.last_width_constraint = width_constraint;
 
-        let w = this.paragraph.longest_line() as f64;
-        let h = this.paragraph.height() as f64;
-        let alphabetic_baseline = this.paragraph.alphabetic_baseline();
-        let unconstrained_size = Size::new(w, h);
-        this.size = constraints.constrain(unconstrained_size);
+        // ceil to avoid clipping when relayouting the text
+        let width = layout_input.known_dimensions.width.unwrap_or_else(|| this.paragraph.longest_line().ceil());
+        let height = layout_input.known_dimensions.height.unwrap_or_else(|| this.paragraph.height());
+        let baseline = this.paragraph.alphabetic_baseline();
+        this.size = Size::new(width as f64, height as f64);
 
-        /*eprintln!("[text_edit] - constraints: {:?}\n -> longest_line: {}\n -> height: {}\n -> constrained_size: {}\n -> did_exceed_max_lines: {}",
-                  constraints, this.paragraph.longest_line(), this.paragraph.height(),
-                  this.size, this.paragraph.did_exceed_max_lines()
-        );*/
-
-        Geometry {
-            size: this.size,
-            baseline: Some(alphabetic_baseline as f64),
-            bounding_rect: this.size.to_rect(),
-            paint_bounding_rect: this.size.to_rect(),
-        }
+        LayoutOutput::from_sizes_and_baselines(taffy::Size { width, height }, taffy::Size::ZERO, taffy::Point {
+            x: None,
+            y: Some(baseline),
+        })
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let this = &mut *self.state.borrow_mut();
-        let bounds = self.geometry().size;
+        let bounds = self.size().to_rect();
 
         ctx.with_canvas(|canvas| {
             // draw rect around bounds
@@ -645,7 +645,7 @@ impl ElementMethods for TextEdit {
                 RectHeightStyle::Tight,
                 RectWidthStyle::Tight,
             );
-            let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds.to_rect());
+            let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds);
             for text_box in selection_rects {
                 canvas.draw_rect(text_box.rect, &selection_paint);
             }
@@ -657,7 +657,7 @@ impl ElementMethods for TextEdit {
                         Size::new(1.0, info.bounds.height() as f64),
                     );
                     //eprintln!("caret_rect: {:?}", caret_rect);
-                    let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds.to_rect());
+                    let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds);
                     canvas.draw_rect(caret_rect.to_skia(), &caret_paint);
                 }
             }

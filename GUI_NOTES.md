@@ -94,3 +94,9 @@ Possible grid layout simplifications:
 -> use taffy; it won't be tied to the Element tree anyway. If somehow at some point we want to make a UI (for a game?)
 that doesn't need taffy or that needs a simpler layout/styling model for performance, we don't have to pay for it
 (just don't use frames).
+
+Alternative: use taffy for everything
+-> integrate into Element
+-> provides flexbox + grid layouts;
+
+Conclusion: it's better to integrate taffy directly in elements. This way we can mostly forget about layout for a while.

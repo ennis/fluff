@@ -14,6 +14,7 @@ use kurbo::{Affine, Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
 use skia_safe::font::Edging;
+use taffy::{LayoutInput, Line, RequestedAxis, RunMode, SizingMode};
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::keyboard::KeyLocation;
@@ -574,7 +575,22 @@ impl WindowInner {
         }
 
         if self.root.needs_relayout() {
-            let _geom = self.root.do_layout(&BoxConstraints::loose(size));
+            let input = LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                known_dimensions: taffy::Size {
+                    width: Some(size.width as f32),
+                    height: Some(size.height as f32),
+                },
+                axis: RequestedAxis::Both,
+                parent_size: Default::default(),
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::Definite(size.width as f32),
+                    height: taffy::AvailableSpace::Definite(size.height as f32),
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
+            };
+            let _output = self.root.do_layout(&input);
         }
 
         let surface = self.layer.acquire_drawing_surface();

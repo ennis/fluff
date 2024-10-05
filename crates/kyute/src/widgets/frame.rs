@@ -1,96 +1,216 @@
 //! Frame containers
 use std::cell::{Cell, RefCell};
+use std::iter::Map;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::slice;
+use bitflags::{bitflags, Flags};
 
-use kurbo::{Insets, RoundedRect, Size};
-use taffy::{Cache, Layout, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, TraversePartialTree};
+use kurbo::{Insets, RoundedRect, Size, Vec2};
+use smallvec::{SmallVec, smallvec};
+use taffy::{AvailableSpace, Cache, compute_block_layout, compute_flexbox_layout, compute_grid_layout, compute_root_layout, Display, Layout, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, TraversePartialTree};
 
-use crate::{Color, drawing, PaintCtx, style};
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementMethods};
+use crate::element::{AttachedProperty, Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
-use crate::layout::{Alignment, BoxConstraints, Geometry, IntrinsicSizes, LengthOrPercentage, place_child_box, Sizing};
-use crate::layout::flex::{Axis, CrossAxisAlignment, do_flex_layout, FlexLayoutParams, MainAxisAlignment};
+use crate::layout::flex::{Axis, CrossAxisAlignment, MainAxisAlignment};
+use crate::layout::{place_child_box, Alignment, BoxConstraints, Geometry, IntrinsicSizes, LengthOrPercentage, Sizing};
 use crate::style::{
     Active, BackgroundColor, Baseline, BorderBottom, BorderColor, BorderLeft, BorderRadius, BorderRight, BorderTop,
     BoxShadows, Direction, Focus, Height, HorizontalAlign, Hover, MaxHeight, MaxWidth, MinHeight, MinWidth,
     PaddingBottom, PaddingLeft, PaddingRight, PaddingTop, Style, VerticalAlign, Width,
 };
+use crate::{drawing, style, Color, PaintCtx};
 
+const PARENT_NODE_ID: NodeId = NodeId::new(!0);
 
-impl TraversePartialTree for Frame {
-    type ChildIter<'a>
-    where
-        Self: 'a,
-    = ();
+#[derive(Copy, Clone, Default)]
+pub struct TaffyStyle;
+
+impl AttachedProperty for TaffyStyle {
+    type Value = taffy::Style;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Taffy Integration
+
+struct LayoutTree;
+
+unsafe fn element_from_id<'a>(node_id: NodeId) -> &'a Element {
+    &*(usize::from(node_id) as *const Element)
+}
+
+fn element_to_id(element: &Element) -> NodeId {
+    NodeId::from(element as *const _ as usize)
+}
+
+impl TraversePartialTree for LayoutTree {
+    type ChildIter<'a> = Map<slice::Iter<'a, Rc<dyn ElementMethods>>, fn(&Rc<dyn ElementMethods>) -> NodeId>;
 
     fn child_ids(&self, parent_node_id: NodeId) -> Self::ChildIter<'_> {
-        todo!()
+        let node = unsafe { element_from_id(parent_node_id) };
+        unsafe {
+            // SAFETY:
+            node.children_ref().iter().map(|c| element_to_id(c))
+        }
     }
 
     fn child_count(&self, parent_node_id: NodeId) -> usize {
-        todo!()
+        let node = unsafe { element_from_id(parent_node_id) };
+        node.child_count()
     }
 
     fn get_child_id(&self, parent_node_id: NodeId, child_index: usize) -> NodeId {
-        todo!()
+        unsafe {
+            element_from_id(parent_node_id).children_ref().get(child_index).map(|c| element_to_id(c)).unwrap()
+        }
     }
 }
 
-impl LayoutPartialTree for Frame {
+static DEFAULT_STYLE: taffy::Style = taffy::Style::DEFAULT;
+
+impl LayoutPartialTree for LayoutTree {
     fn get_style(&self, node_id: NodeId) -> &taffy::Style {
-        todo!()
+        // SAFETY: during layout the style information isn't accessed.
+        // Unfortunately this contract isn't verifiable within the bounds of this function.
+        // See `Frame::layout` for more information.
+        unsafe {
+            element_from_id(node_id).try_get_ref::<TaffyStyle>().unwrap_or(&DEFAULT_STYLE)
+        }
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        todo!()
+        unsafe {
+            let element = element_from_id(node_id);
+            // eprintln!("set_unrounded_layout: node_id = {:?}, layout = {:?}", node_id, layout);
+            element.set_offset(Vec2::new(layout.location.x as f64, layout.location.y as f64));
+        }
     }
 
-    fn get_cache_mut(&mut self, node_id: NodeId) -> &mut Cache {
-        todo!()
+    fn get_cache_mut(&mut self, _node_id: NodeId) -> &mut Cache {
+        unimplemented!()
     }
 
-    fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
-        todo!()
+    fn compute_child_layout(&mut self, node_id: NodeId, input: LayoutInput) -> LayoutOutput {
+        let child = unsafe { element_from_id(node_id) };
+        child.rc().do_layout(&input)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+/// Convert`taffy::LayoutInput` to `xilem::BoxConstraints`
+/// Borrowed from https://github.com/linebender/xilem/blob/c4398858661bd75c15d5efc3c4e67f8ec9319250/src/widget/taffy_layout.rs#L98
+pub(super) fn to_box_constraints(input: &taffy::LayoutInput) -> BoxConstraints {
+    /// Converts Taffy's known_dimension and available space into a min box constraint
+    fn to_min_constraint(known_dimension: Option<f32>, available_space: taffy::AvailableSpace) -> f64 {
+        known_dimension.unwrap_or(match available_space {
+            taffy::AvailableSpace::Definite(_) => 0.0,
+            taffy::AvailableSpace::MaxContent => 0.0,
+            taffy::AvailableSpace::MinContent => -0.0,
+        }) as f64
+    }
+
+    /// Converts Taffy's known_dimension and available_spaceinto a min box constraint
+    fn to_max_constraint(known_dimension: Option<f32>, available_space: taffy::AvailableSpace) -> f64 {
+        known_dimension.unwrap_or(match available_space {
+            taffy::AvailableSpace::Definite(val) => val,
+            taffy::AvailableSpace::MaxContent => f32::INFINITY,
+            taffy::AvailableSpace::MinContent => f32::INFINITY,
+        }) as f64
+    }
+
+    BoxConstraints::new(
+        Size {
+            width: to_min_constraint(input.known_dimensions.width, input.available_space.width),
+            height: to_min_constraint(input.known_dimensions.height, input.available_space.height),
+        },
+        Size {
+            width: to_max_constraint(input.known_dimensions.width, input.available_space.width),
+            height: to_max_constraint(input.known_dimensions.height, input.available_space.height),
+        },
+    )
+}*/
+
+bitflags! {
+    #[derive(Copy, Clone, Debug, Default)]
+    pub struct InteractState: u8 {
+        const ACTIVE = 0b0001;
+        const HOVERED = 0b0010;
+        const FOCUSED = 0b0100;
+    }
+}
+
+impl InteractState {
+    pub fn set_active(&mut self, active: bool) {
+        self.set(InteractState::ACTIVE, active);
+    }
+
+    pub fn set_hovered(&mut self, hovered: bool) {
+        self.set(InteractState::HOVERED, hovered);
+    }
+
+    pub fn set_focused(&mut self, focused: bool) {
+        self.set(InteractState::FOCUSED, focused);
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.contains(InteractState::ACTIVE)
+    }
+
+    pub fn is_hovered(&self) -> bool {
+        self.contains(InteractState::HOVERED)
+    }
+    pub fn is_focused(&self) -> bool {
+        self.contains(InteractState::FOCUSED)
     }
 }
 
 #[derive(Clone, Default)]
-pub struct ResolvedFrameStyle {
-    padding_left: LengthOrPercentage,
-    padding_right: LengthOrPercentage,
-    padding_top: LengthOrPercentage,
-    padding_bottom: LengthOrPercentage,
-    horizontal_align: Alignment,
-    vertical_align: Alignment,
-    baseline: Option<LengthOrPercentage>,
-    width: Option<Sizing>,
-    height: Option<Sizing>,
-    border_left: LengthOrPercentage,
-    border_right: LengthOrPercentage,
-    border_top: LengthOrPercentage,
-    border_bottom: LengthOrPercentage,
-    border_color: Color,
-    border_radius: f64,
-    background_color: Color,
-    shadows: Vec<BoxShadow>,
-    direction: Axis,
-    main_axis_alignment: MainAxisAlignment,
-    cross_axis_alignment: CrossAxisAlignment,
-    min_width: Option<LengthOrPercentage>,
-    max_width: Option<LengthOrPercentage>,
-    min_height: Option<LengthOrPercentage>,
-    max_height: Option<LengthOrPercentage>,
+pub struct FrameStyleOverride {
+    pub state: InteractState,
+    pub border_color: Option<Color>,
+    pub border_radius: Option<LengthOrPercentage>,
+    pub background_color: Option<Color>,
+    pub shadows: Option<SmallVec<BoxShadow, 2>>,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-pub struct InteractState {
-    pub active: bool,
-    pub hovered: bool,
-    pub focused: bool,
+#[derive(Clone, Default)]
+pub struct FrameStyle {
+    pub border_color: Color,
+    pub border_radius: LengthOrPercentage,
+    pub background_color: Color,
+    pub shadows: SmallVec<BoxShadow, 2>,
+    pub overrides: SmallVec<FrameStyleOverride, 2>,
 }
+
+
+impl FrameStyle
+{
+    fn apply(&mut self, over: FrameStyleOverride) {
+        self.border_color = over.border_color.unwrap_or(self.border_color);
+        self.border_radius = over.border_radius.unwrap_or(self.border_radius);
+        self.background_color = over.background_color.unwrap_or(self.background_color);
+        self.shadows = over.shadows.unwrap_or(self.shadows.clone());
+    }
+
+    fn apply_overrides(&self, state: InteractState) -> FrameStyle {
+        let mut result = self.clone();
+        for over in &self.overrides {
+            if state.contains(over.state) {
+                result.apply(over.clone());
+            }
+        }
+        result
+    }
+
+    fn affected_by_state(&self) -> bool {
+        self.overrides.iter().any(|o| !o.state.is_empty())
+    }
+}
+
 
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
@@ -101,10 +221,10 @@ pub struct Frame {
     pub focused: Handler<bool>,
     pub state_changed: Handler<InteractState>,
     state: Cell<InteractState>,
-    style: taffy::Style,
+    style: FrameStyle,
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
-    resolved_style: RefCell<ResolvedFrameStyle>,
+    resolved_style: RefCell<FrameStyle>,
 }
 
 impl Deref for Frame {
@@ -117,7 +237,7 @@ impl Deref for Frame {
 
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
-    pub fn new(style: Style) -> Rc<Frame> {
+    pub fn new(style: FrameStyle) -> Rc<Frame> {
         Element::new_derived(|element| Frame {
             element,
             clicked: Default::default(),
@@ -126,10 +246,10 @@ impl Frame {
             focused: Default::default(),
             state_changed: Default::default(),
             state: Cell::new(Default::default()),
-            style,
+            style: style.clone(),
             style_changed: Cell::new(true),
             state_affects_style: Cell::new(false),
-            resolved_style: Default::default(),
+            resolved_style: RefCell::new(style.clone()),
         })
     }
 
@@ -143,62 +263,13 @@ impl Frame {
 
     fn calculate_style(&self) {
         if self.style_changed.get() {
-            let state = self.state.get();
-            let mut s = self.style.clone();
-            let mut state_affects_style = false;
-
-            if let Some(focused) = self.style.get(Focus) {
-                if state.focused {
-                    s = focused.over(s);
-                }
-                state_affects_style = true;
-            }
-            if let Some(hovered) = self.style.get(Hover) {
-                if state.hovered {
-                    s = hovered.over(s);
-                }
-                state_affects_style = true;
-            }
-            if let Some(active) = self.style.get(Active) {
-                if state.active {
-                    s = active.over(s);
-                }
-                state_affects_style = true;
-            }
-
-            let mut r = self.resolved_style.borrow_mut();
-            *r = ResolvedFrameStyle {
-                padding_left: s.get_or_default(PaddingLeft),
-                padding_right: s.get_or_default(PaddingRight),
-                padding_top: s.get_or_default(PaddingTop),
-                padding_bottom: s.get_or_default(PaddingBottom),
-                horizontal_align: s.get_or_default(HorizontalAlign),
-                vertical_align: s.get_or_default(VerticalAlign),
-                baseline: s.get(Baseline),
-                width: s.get(Width),
-                height: s.get(Height),
-                border_left: s.get_or_default(BorderLeft),
-                border_right: s.get_or_default(BorderRight),
-                border_top: s.get_or_default(BorderTop),
-                border_bottom: s.get_or_default(BorderBottom),
-                border_color: s.get_or_default(BorderColor),
-                border_radius: s.get_or_default(BorderRadius),
-                background_color: s.get_or_default(BackgroundColor),
-                shadows: s.get_or_default(BoxShadows),
-                direction: s.get_or_default(Direction),
-                main_axis_alignment: s.get_or_default(style::MainAxisAlignment),
-                cross_axis_alignment: s.get_or_default(style::CrossAxisAlignment),
-                min_width: s.get(MinWidth),
-                max_width: s.get(MaxWidth),
-                min_height: s.get(MinHeight),
-                max_height: s.get(MaxHeight),
-            };
-
-            self.state_affects_style.set(state_affects_style);
+            self.resolved_style.replace(self.style.apply_overrides(self.state.get()));
             self.style_changed.set(false);
         }
     }
 }
+
+/*
 
 #[derive(Debug)]
 struct FrameSizes {
@@ -227,7 +298,10 @@ impl FrameSizes {
 
         let padding = self.padding_before + self.padding_after;
         let mut min = self.self_min.unwrap_or(0.0).clamp(self.parent_min, self.parent_max);
-        let mut max = self.self_max.unwrap_or(f64::INFINITY).clamp(self.parent_min, self.parent_max);
+        let mut max = self
+            .self_max
+            .unwrap_or(f64::INFINITY)
+            .clamp(self.parent_min, self.parent_max);
 
         // apply fixed width
         if let Some(fixed) = self.fixed {
@@ -263,12 +337,17 @@ impl FrameSizes {
         }
         // apply min and max width
         let min = self.self_min.unwrap_or(0.0).clamp(self.parent_min, self.parent_max);
-        let max = self.self_max.unwrap_or(f64::INFINITY).clamp(self.parent_min, self.parent_max);
+        let max = self
+            .self_max
+            .unwrap_or(f64::INFINITY)
+            .clamp(self.parent_min, self.parent_max);
         size = size.clamp(min, max);
         size
     }
-}
+}*/
 
+
+/*
 fn compute_intrinsic_sizes(direction: Axis, children: &[Rc<dyn ElementMethods>]) -> IntrinsicSizes {
     let mut isizes = IntrinsicSizes::default();
     for c in children.iter() {
@@ -296,124 +375,77 @@ fn compute_intrinsic_sizes(direction: Axis, children: &[Rc<dyn ElementMethods>])
     }
     isizes
 }
+*/
 
 impl ElementMethods for Frame {
     fn element(&self) -> &Element {
         &self.element
     }
 
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
-        self.calculate_style();
-        let s = self.resolved_style.borrow();
+    fn layout(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
 
-        let max_width = constraints.max.width;
-        let max_height = constraints.max.height;
+        // why do we need to fetch the display kind here? can't this be done by taffy with
+        // a `compute_layout` function that would dispatch to the appropriate layout function?
+        // taffy will need to access the style anyway, and all algorithm take the same input
+        let style = unsafe { self.get_ref::<TaffyStyle>() };
 
-        let mut intrinsic_sizes = IntrinsicSizes::default();
-        if matches!(s.width, Some(Sizing::MaxContent | Sizing::MinContent)) ||
-            matches!(s.height, Some(Sizing::MaxContent | Sizing::MinContent)) {
-            // we need to compute the intrinsic size of the content
-            intrinsic_sizes = compute_intrinsic_sizes(s.direction, children);
-        }
+        /*// size to content
+        let layout_input = LayoutInput {
+            available_space: taffy::Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            ..*layout_input
+        };*/
 
-        let horizontal = FrameSizes {
-            parent_min: constraints.min.width,
-            parent_max: constraints.max.width,
-            content_min: intrinsic_sizes.min.width,
-            content_max: intrinsic_sizes.max.width,
-            self_min: s.min_width.map(|w| w.resolve(max_width)),
-            self_max: s.max_width.map(|w| w.resolve(max_width)),
-            fixed: s.width,
-            padding_before: s.padding_left.resolve(max_width),
-            padding_after: s.padding_right.resolve(max_width),
-        };
-        //dbg!(&horizontal);
 
-        let vertical = FrameSizes {
-            parent_min: constraints.min.height,
-            parent_max: constraints.max.height,
-            content_min: intrinsic_sizes.min.height,
-            content_max: intrinsic_sizes.max.height,
-            self_min: s.min_height.map(|h| h.resolve(max_height)),
-            self_max: s.max_height.map(|h| h.resolve(max_height)),
-            fixed: s.height,
-            padding_before: s.padding_top.resolve(max_height),
-            padding_after: s.padding_bottom.resolve(max_height),
+        let output = match style.display {
+            taffy::Display::Flex => {
+                compute_flexbox_layout(&mut LayoutTree, element_to_id(self), *layout_input)
+            }
+            taffy::Display::Block => {
+                compute_block_layout(&mut LayoutTree, element_to_id(self), *layout_input)
+            }
+            taffy::Display::Grid => {
+                compute_grid_layout(&mut LayoutTree, element_to_id(self), *layout_input)
+            }
+            _ => {
+                unimplemented!()
+            }
         };
 
-        let (child_min_width, child_max_width) = horizontal.compute_child_constraint();
-        let (child_min_height, child_max_height) = vertical.compute_child_constraint();
-
-        //dbg!((child_min_width, child_max_width));
-
-        let child_constraints = BoxConstraints {
-            min: Size::new(child_min_width, child_min_height),
-            max: Size::new(child_max_width, child_max_height),
-        };
-
-        // layout children
-        // TODO other layouts
-        let flex_params = FlexLayoutParams {
-            axis: s.direction,
-            constraints: child_constraints,
-            cross_axis_alignment: s.cross_axis_alignment,
-            main_axis_alignment: s.main_axis_alignment,
-        };
-        let child_geom = do_flex_layout(&flex_params, children);
-
-        // child geometry is determined, now determine our size
-        let self_width = horizontal.compute_self_size(child_geom.size.width);
-        let self_height = vertical.compute_self_size(child_geom.size.height);
-
-        // position the content within the frame
-        let baseline = s.baseline.map(|b| b.resolve(self_height));
-        let offset = place_child_box(
-            child_geom.size,
-            child_geom.baseline,
-            Size::new(self_width, self_height),
-            baseline,
-            s.horizontal_align,
-            s.vertical_align,
-            &Insets::new(
-                horizontal.padding_before,
-                vertical.padding_before,
-                horizontal.padding_after,
-                vertical.padding_after,
-            ),
-        );
-        for child in children.iter() {
-            let mut t = child.transform();
-            // TODO not sure about the order here
-            t = t.then_translate(offset);
-            child.set_transform(t);
-        }
-
-        // our baseline
-        let baseline = baseline
-            .or(child_geom.baseline.map(|b| b + offset.y))
-            .unwrap_or(self_height);
-        let size = Size::new(self_width, self_height);
-        Geometry {
-            size,
-            baseline: Some(baseline),
-            bounding_rect: size.to_rect(),       // TODO
-            paint_bounding_rect: size.to_rect(), // TODO
-        }
+        eprintln!("layout frame with axis={:?}, known_dimensions={:?}, available_space={:?} -> {:?}", layout_input.axis, layout_input.known_dimensions, layout_input.available_space, output.size);
+        output
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let size = self.element.geometry().size;
-        let rect = size.to_rect();
+        let rect = self.element.size().to_rect();
+
+        // SAFETY: we don't modify the attached properties during painting
+        let layout_style = unsafe {
+            TaffyStyle.get_ref(self)
+        };
+
         let s = self.resolved_style.borrow();
+
+        fn resolve_length_or_percentage(len: taffy::LengthPercentage, parent: f32) -> f64 {
+            match len {
+                taffy::LengthPercentage::Length(len) => len as f64,
+                taffy::LengthPercentage::Percent(pct) => (pct * parent) as f64,
+            }
+        }
+
         let insets = Insets::new(
-            s.border_left.resolve(size.width),
-            s.border_top.resolve(size.height),
-            s.border_right.resolve(size.width),
-            s.border_bottom.resolve(size.height),
+            resolve_length_or_percentage(layout_style.border.left, rect.width() as f32),
+            resolve_length_or_percentage(layout_style.border.top, rect.height() as f32),
+            resolve_length_or_percentage(layout_style.border.right, rect.width() as f32),
+            resolve_length_or_percentage(layout_style.border.bottom, rect.height() as f32),
         );
+
         // border shape
-        let inner_shape = RoundedRect::from_rect(rect - insets, s.border_radius - 0.5 * insets.x_value());
-        let outer_shape = RoundedRect::from_rect(rect, s.border_radius);
+        let border_radius = s.border_radius.resolve(rect.width());
+        let inner_shape = RoundedRect::from_rect(rect - insets, border_radius - 0.5 * insets.x_value());
+        let outer_shape = RoundedRect::from_rect(rect, border_radius);
 
         ctx.with_canvas(|canvas| {
             // draw drop shadows
@@ -460,24 +492,24 @@ impl ElementMethods for Frame {
         let mut state = self.state.get();
         match event {
             Event::PointerDown(_) => {
-                state.active = true;
+                state.set_active(true);
                 update_state(self, state).await;
                 self.active.emit(true).await;
             }
             Event::PointerUp(_) => {
-                if state.active {
-                    state.active = false;
+                if state.is_active() {
+                    state.set_active(false);
                     update_state(self, state).await;
                     self.clicked.emit(()).await;
                 }
             }
             Event::PointerEnter(_) => {
-                state.hovered = true;
+                state.set_hovered(true);
                 update_state(self, state).await;
                 self.hovered.emit(true).await;
             }
             Event::PointerLeave(_) => {
-                state.hovered = false;
+                state.set_hovered(false);
                 update_state(self, state).await;
                 self.hovered.emit(false).await;
             }

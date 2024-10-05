@@ -67,6 +67,7 @@ impl TextLayout {
         text_style.set_font_size(16.0 as f32); // TODO default font size
         let mut paragraph_style = skia_safe::textlayout::ParagraphStyle::new();
         paragraph_style.set_text_style(&text_style);
+        paragraph_style.set_apply_rounding_hack(false);
         let mut builder = skia_safe::textlayout::ParagraphBuilder::new(&paragraph_style, font_collection);
 
         for run in text.into_iter() {
