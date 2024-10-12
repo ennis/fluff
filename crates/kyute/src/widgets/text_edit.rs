@@ -1,19 +1,22 @@
+use std::cell::{Cell, RefCell};
+use std::ops::Deref;
+use std::rc::Rc;
+use std::time::Duration;
+
+use keyboard_types::Key;
+use kurbo::{Point, Rect, Size, Vec2};
+use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
+use tracing::trace_span;
+use unicode_segmentation::GraphemeCursor;
+
+use crate::{Color, PaintCtx};
 use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
-use crate::layout::{BoxConstraints, Geometry};
+use crate::layout::{LayoutInput, LayoutOutput, SizingConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{Color, PaintCtx};
-use keyboard_types::Key;
-use kurbo::{Point, Rect, Size, Vec2};
-use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
-use std::rc::Rc;
-use std::time::Duration;
-use unicode_segmentation::GraphemeCursor;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -80,6 +83,7 @@ impl TextEditState {
         text_style.set_font_size(16.0); // TODO default font size
         let mut paragraph_style = skia_safe::textlayout::ParagraphStyle::new();
         paragraph_style.set_text_style(&text_style);
+        paragraph_style.set_apply_rounding_hack(false);
 
         if let Some(line_clamp) = self.line_clamp {
             paragraph_style.set_max_lines(line_clamp);
@@ -581,8 +585,46 @@ impl ElementMethods for TextEdit {
         &self.element
     }
 
-    fn layout(&self, _children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
+    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        let _span = trace_span!(
+            "TextEdit::measure",
+        ).entered();
+
         let this = &mut *self.state.borrow_mut();
+        match layout_input.width_constraint {
+            SizingConstraint::Available(space) | SizingConstraint::Exact(space) => {
+                this.paragraph.layout(space as f32);
+                LayoutOutput {
+                    width: this.paragraph.longest_line() as f64,
+                    height: this.paragraph.height() as f64,
+                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
+                }
+            }
+            SizingConstraint::MinContent => {
+                this.paragraph.layout(f32::INFINITY);
+                LayoutOutput {
+                    width: this.paragraph.min_intrinsic_width() as f64,
+                    height: this.paragraph.height() as f64,
+                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
+                }
+            }
+            SizingConstraint::MaxContent => {
+                this.paragraph.layout(f32::INFINITY);
+                LayoutOutput {
+                    width: this.paragraph.max_intrinsic_width() as f64,
+                    height: this.paragraph.height() as f64,
+                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
+                }
+            }
+        }
+    }
+
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        let measure = self.measure(children, layout_input);
+        self.state.borrow_mut().size = Size::new(measure.width, measure.height);
+        measure
+
+        /*let this = &mut *self.state.borrow_mut();
 
         let available_width = if this.wrap_mode == WrapMode::Wrap || this.text_overflow == TextOverflow::Ellipsis {
             // Force max width constraints when ellipsis mode is requested, because
@@ -621,12 +663,12 @@ impl ElementMethods for TextEdit {
             baseline: Some(alphabetic_baseline as f64),
             bounding_rect: this.size.to_rect(),
             paint_bounding_rect: this.size.to_rect(),
-        }
+        }*/
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let this = &mut *self.state.borrow_mut();
-        let bounds = self.geometry().size;
+        let bounds = self.size();
 
         ctx.with_canvas(|canvas| {
             // draw rect around bounds
@@ -682,9 +724,8 @@ impl ElementMethods for TextEdit {
                     // select word under cursor
                     this.select_word_under_cursor();
                     selection_changed = true;
-                    self.gesture.set(Some(Gesture::WordSelection {
-                        anchor: this.selection,
-                    }));
+                    self.gesture
+                        .set(Some(Gesture::WordSelection { anchor: this.selection }));
                 } else if event.repeat_count == 3 {
                     // TODO select line under cursor
                 } else {

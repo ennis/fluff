@@ -1,15 +1,17 @@
-use crate::drawing::ToSkia;
-use crate::element::{Element, ElementMethods};
-use crate::event::Event;
-use crate::layout::{BoxConstraints, Geometry, IntrinsicSizes};
-use crate::PaintCtx;
-use kurbo::{Point, Size};
-use skia_safe::textlayout;
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 use std::rc::Rc;
-use tracy_client::span;
-use crate::text::{TextRun, TextLayout};
+
+use kurbo::{Point, Size};
+use skia_safe::textlayout;
+use tracing::{trace, trace_span};
+
+use crate::drawing::ToSkia;
+use crate::element::{Element, ElementMethods};
+use crate::event::Event;
+use crate::layout::{LayoutInput, LayoutOutput, SizingConstraint};
+use crate::PaintCtx;
+use crate::text::{TextLayout, TextRun};
 
 pub struct Text {
     element: Element,
@@ -43,63 +45,52 @@ impl Text {
     }
 }
 
-
 impl ElementMethods for Text {
     fn element(&self) -> &Element {
         &self.element
     }
 
-
-    fn intrinsic_sizes(&self) -> IntrinsicSizes {
-        let size = self.calculate_intrinsic_size();
-        IntrinsicSizes {
-            min: size,
-            max: size,
-        }
-    }
-
-    fn layout(&self, _children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
-        // layout paragraph in available space
-        let _span = span!("text layout");
-
-        // available space for layout
-        let available_width = constraints.max.width;
-        let _available_height = constraints.max.height;
-
-        // We can reuse the previous layout if and only if:
-        // - the new available width is >= the current paragraph width (otherwise new line breaks are necessary)
-        // - the current layout is still valid (i.e. it hasn't been previously invalidated)
+    fn measure(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        let _span = trace_span!(
+            "Text::measure"
+        ).entered();
 
         let paragraph = &mut *self.paragraph.borrow_mut();
+        let output = match layout_input.width_constraint {
+            SizingConstraint::MinContent => {
+                paragraph.layout(f32::INFINITY);
+                LayoutOutput {
+                    width: paragraph.min_intrinsic_width() as f64,
+                    height: paragraph.height() as f64,
+                    baseline: Some(paragraph.alphabetic_baseline() as f64),
+                }
+            }
+            SizingConstraint::MaxContent => {
+                paragraph.layout(f32::INFINITY);
+                LayoutOutput {
+                    width: paragraph.max_intrinsic_width() as f64,
+                    height: paragraph.height() as f64,
+                    baseline: Some(paragraph.alphabetic_baseline() as f64),
+                }
+            }
+            SizingConstraint::Available(space) | SizingConstraint::Exact(space) => {
+                paragraph.layout(space as f32);
+                LayoutOutput {
+                    width: paragraph.longest_line() as f64,
+                    height: paragraph.height() as f64,
+                    baseline: Some(paragraph.alphabetic_baseline() as f64),
+                }
+            }
+        };
 
-        if !self.relayout.get() && paragraph.longest_line() <= available_width as f32 {
-            let paragraph_size = Size {
-                width: paragraph.longest_line() as f64,
-                height: paragraph.height() as f64,
-            };
-            let size = constraints.constrain(paragraph_size);
-            return Geometry {
-                size,
-                baseline: Some(paragraph.alphabetic_baseline() as f64),
-                bounding_rect: paragraph_size.to_rect(),
-                paint_bounding_rect: paragraph_size.to_rect(),
-            };
-        }
+        trace!("Measured text: {:?} -> {:?}", layout_input, output);
 
-        paragraph.layout(available_width as skia_safe::scalar);
-        let w = paragraph.longest_line() as f64;
-        let h = paragraph.height() as f64;
-        let alphabetic_baseline = paragraph.alphabetic_baseline();
-        let unconstrained_size = Size::new(w, h);
-        let size = constraints.constrain(unconstrained_size);
         self.relayout.set(false);
+        output
+    }
 
-        Geometry {
-            size,
-            baseline: Some(alphabetic_baseline as f64),
-            bounding_rect: size.to_rect(),
-            paint_bounding_rect: size.to_rect(),
-        }
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        self.measure(children, layout_input)
     }
 
     fn hit_test(&self, _point: Point) -> bool {

@@ -94,3 +94,50 @@ Possible grid layout simplifications:
 -> use taffy; it won't be tied to the Element tree anyway. If somehow at some point we want to make a UI (for a game?)
 that doesn't need taffy or that needs a simpler layout/styling model for performance, we don't have to pay for it
 (just don't use frames).
+
+# Intuitive layout system
+
+* Element = boxes. A box is represented as a combination of a size + the offset in the container coordinate space.
+* Elements determine their size depending on available space passed down from containers, and the parent container size,
+  if it is known
+* Parent can request sizes from their children in h or v axes separately, and under different sizing modes
+* There are different sizing modes available, inspired from CSS box sizing
+    * min-content: minimum size so that the content isn't clipped (typical example: min-content size of a paragraph is
+      the size of its longest word)
+    * max-content: size given infinite available space (as if the available space was infinite)
+    * definite: there is definite available space
+* Sizes can be defined as a percentage of the parent container size
+    * When measuring, if the parent container size is not known, then it uses the max-content size
+* Elements can overflow their parent container. This should be handled by the container.
+* Usually the parent container positions the element itself, but the child element can return positioning
+  info (an explicit vec2 offset in the coord space of the container, relative to the content box)
+* The parent container size isn't necessarily equal to the available size
+
+For positioning, the child element could also return information:
+
+- alignment
+- spacing relative to prev/next element? spacing along main axis
+- spacing along cross axis (before/after)
+
+- top/left/right/bottom: Sizing
+    - if top == Sizing::Flex, then it acts as a spring in that dimension
+
+~~# Alternative: linear system of equations
+Each box has~~
+-> don't do this, too limited, no min/max in eqns, no inequality constraints, text layout becomes complicated
+
+## Box positioning and alignment
+
+5 reference lines: top, bottom, left, right, and baseline
+left/right: spacing between the left/right edge of the container (or the right/left edge of the previous/next item) and
+the left/right edge of this box
+
+Issue: centering? There's no reference line for the horizontal and vertical centers
+
+For positioning, only one of top/bottom/baseline should be set to determine the position of the box.
+
+However, for items in column flex containers, both top and bottom can be specified at the same time to set the spacing
+before and after the element. Also, baseline alignment is meaningless in that context, as is the horizontal center line.
+-> it quickly devolves into a non-linear system of constraints which isn't super intuitive
+
+* For centering, use 1x stretch on each side of the axis to center

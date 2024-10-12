@@ -1,44 +1,41 @@
 use kurbo::Point;
 pub use kurbo::{self, Size};
-pub use skia_safe as skia;
-use std::future::pending;
-use tokio::select;
-use kyute::{application, text};
 use kyute::layout::flex::Axis;
 use kyute::style::{Style, StyleExt};
 use kyute::text::TextStyle;
-use kyute::widgets::text::Text;
 use kyute::widgets::button::button;
-use kyute::widgets::frame::Frame;
+use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
+use kyute::widgets::text::Text;
 use kyute::widgets::text_edit::{TextEdit, TextOverflow, WrapMode};
-use kyute::Color;
-use kyute::WindowOptions;
-use kyute::Window;
-
+use kyute::{application, text, Color, Window, WindowOptions};
+pub use skia_safe as skia;
+use std::future::pending;
+use tokio::select;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
+use tracing_tree::HierarchicalLayer;
 
 fn main() {
+    let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
     application::run(async {
         let main_button = button("Test"); // &str
 
         // want to turn it into a sequence of AttributedRange
 
         let frame = Frame::new(
-            Style::new()
-                .background_color(Color::from_hex("211e13"))
-                .direction(Axis::Vertical)
-                .border_radius(8.0)
-                .min_width(200.0.into())
-                .min_height(50.0.into())
-                .max_width(400.0.into())
-                .padding_left(20.0.into())
-                .padding_right(20.0.into())
-                .padding_top(20.0.into())
-                .padding_bottom(20.0.into())
-                .border_color(Color::from_hex("5f5637"))
-                .border_left(1.0.into())
-                .border_right(1.0.into())
-                .border_top(1.0.into())
-                .border_bottom(1.0.into()),
+            FrameStyle {
+                layout: FrameLayout::Flex {
+                    direction: Axis::Vertical,
+                    main_axis_alignment: Default::default(),
+                    cross_axis_alignment: Default::default(),
+                },
+                border_color: Color::from_hex("5f5637"),
+                border_radius: 8.0.into(),
+                background_color: Color::from_hex("211e13"),
+                ..Default::default()
+            }
         );
 
         let text_edit = TextEdit::new();

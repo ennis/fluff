@@ -1,5 +1,5 @@
 use std::any::{Any, TypeId};
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::{Cell, Ref, RefCell, UnsafeCell};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
@@ -12,12 +12,13 @@ use crate::compositor::DrawableSurface;
 use bitflags::bitflags;
 use futures_util::future::LocalBoxFuture;
 use futures_util::FutureExt;
-use kurbo::{Affine, Point, Vec2};
+use kurbo::{Affine, Point, Size, Vec2};
+use tracing::warn;
 
 use crate::event::Event;
-use crate::layout::{BoxConstraints, Geometry, IntrinsicSizes};
+use crate::layout::{LayoutInput, LayoutOutput};
 use crate::window::WeakWindow;
-use crate::{PaintCtx, Style};
+use crate::PaintCtx;
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -31,18 +32,31 @@ bitflags! {
 pub trait AttachedProperty: Any {
     type Value: Clone;
 
-    fn set(self, item: &dyn ElementMethods, value: Self::Value)
+    fn set(self, item: &Element, value: Self::Value)
     where
         Self: Sized,
     {
-        item.set::<Self>(value);
+        item.set(self, value);
     }
 
-    fn get(self, item: &dyn ElementMethods) -> Option<Self::Value>
+    fn get(self, item: &Element) -> Option<Self::Value>
     where
         Self: Sized,
     {
-        item.get::<Self>()
+        item.get(self)
+    }
+
+    /// Returns a reference to the attached property.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the nothing mutates the value of the attached property
+    /// while the returned reference is alive.
+    unsafe fn get_ref(self, item: &Element) -> &Self::Value
+    where
+        Self: Sized,
+    {
+        item.get_ref(self)
     }
 }
 
@@ -170,6 +184,7 @@ impl WeakNullableElemPtr {
     }
 }
 
+/*
 pub struct SiblingIter {
     next: Option<Rc<dyn ElementMethods>>,
 }
@@ -183,6 +198,7 @@ impl Iterator for SiblingIter {
         r
     }
 }
+*/
 
 /// Depth-first traversal of the visual tree.
 pub struct Cursor {
@@ -196,17 +212,19 @@ impl Iterator for Cursor {
         let Some(next) = self.next.clone() else {
             return None;
         };
-
-        if let Some(first_child) = next.first_child.get() {
-            self.next = Some(first_child);
-        } else if let Some(next) = next.next.get() {
-            self.next = Some(next);
+        let index = next.index_in_parent.get();
+        let parent_child_count = next.parent().map(|p| p.child_count()).unwrap_or(0);
+        let child_count = next.child_count();
+        if child_count > 0 {
+            self.next = Some(next.children.borrow()[0].clone());
+        } else if index + 1 < parent_child_count {
+            self.next = Some(next.parent().unwrap().children.borrow()[index + 1].clone());
         } else {
             // go up until we find a parent with a next sibling
             let mut parent = next.parent();
             self.next = None;
             while let Some(p) = parent {
-                if let Some(next) = p.next.get() {
+                if let Some(next) = p.next() {
                     self.next = Some(next);
                     break;
                 }
@@ -222,21 +240,24 @@ impl Iterator for Cursor {
 ///
 /// Concrete elements hold a field of this type, and implement the corresponding `ElementMethods` trait.
 pub struct Element {
+    // TODO remove, this is a relic of a previous implementation
     _pin: PhantomPinned,
-    /// Weak pointer to this element.
+    parent: WeakNullableElemPtr,
+    // Weak pointer to this element.
     weak_this: Weak<dyn ElementMethods>,
-    prev: WeakNullableElemPtr,
-    next: NullableElemPtr,
-    first_child: NullableElemPtr,
-    last_child: WeakNullableElemPtr,
+    children: RefCell<Vec<Rc<dyn ElementMethods>>>,
+    index_in_parent: Cell<usize>,
+
+    //prev: WeakNullableElemPtr,
+    //next: NullableElemPtr,
+    //first_child: NullableElemPtr,
+    //last_child: WeakNullableElemPtr,
     /// Pointer to the parent owner window.
     pub(crate) window: RefCell<WeakWindow>,
-    /// This element's parent.
-    parent: WeakNullableElemPtr,
     /// Layout: transform from local to parent coordinates.
     transform: Cell<Affine>,
     /// Layout: geometry (size and baseline) of this element.
-    geometry: Cell<Geometry>,
+    geometry: Cell<Size>,
     /// TODO unused
     change_flags: Cell<ChangeFlags>,
     // List of child elements.
@@ -245,11 +266,8 @@ pub struct Element {
     name: RefCell<String>,
     /// Whether the element is focusable via tab-navigation.
     focusable: Cell<bool>,
-    /// Style properties of this element. Inherits the style of its parent.
-    // Note: this means that to resolve a style property you need to traverse the parent chain.
-    //
-    style: Style,
-    attached_properties: RefCell<BTreeMap<TypeId, Box<dyn Any>>>,
+    /// Map of attached properties.
+    attached_properties: UnsafeCell<BTreeMap<TypeId, Box<dyn Any>>>,
 }
 
 impl Element {
@@ -257,18 +275,19 @@ impl Element {
         Element {
             _pin: PhantomPinned,
             weak_this: weak_this.clone(),
-            prev: Default::default(),
-            next: Default::default(),
-            first_child: Default::default(),
-            last_child: Default::default(),
+            //prev: Default::default(),
+            //next: Default::default(),
+            //first_child: Default::default(),
+            //last_child: Default::default(),
+            children: Default::default(),
+            index_in_parent: Default::default(),
             window: Default::default(),
             parent: Default::default(),
             transform: Cell::new(Affine::default()),
-            geometry: Cell::new(Geometry::default()),
+            geometry: Cell::new(Size::default()),
             change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
             name: RefCell::new(format!("{:p}", weak_this.as_ptr())),
             focusable: Cell::new(false),
-            style: Default::default(),
             attached_properties: Default::default(),
         }
     }
@@ -285,54 +304,109 @@ impl Element {
 
     /// Detaches this element from the tree.
     pub fn detach(&self) {
-        // this.prev.next = this.next
-        // OR this.parent.first_child = this.next
-        if let Some(prev) = self.prev.upgrade() {
-            prev.next.set(self.next.get());
-        } else if let Some(parent) = self.parent() {
-            parent.first_child.set(self.next.get());
-        }
-
-        // this.next.prev = this.prev
-        // OR this.parent.last_child = this.prev
-        if let Some(next) = self.next.get() {
-            next.prev.set(self.prev.get());
-        } else if let Some(parent) = self.parent() {
-            parent.last_child.set(self.prev.get());
-        }
-
-        self.prev.set(None);
-        self.next.set(None);
-
         if let Some(parent) = self.parent() {
+            // remove from parent's children
+            let mut children = parent.children.borrow_mut();
+            let index = self.index_in_parent.get();
+            children.remove(index);
+            // update the indices of the siblings
+            for i in index..children.len() {
+                children[i].index_in_parent.set(i);
+            }
             parent.mark_needs_relayout();
         }
 
         self.parent.set(None);
     }
 
+    pub fn insert_child_at(&self, at: usize, to_insert: &Element) {
+        to_insert.detach();
+        to_insert.parent.set(Some(self.weak()));
+        //to_insert.set_parent_window(self.window.clone());
+        // SAFETY: no other references may exist to the children vector at this point,
+        // provided the safety contracts of other unsafe methods are upheld.
+        let mut children = self.children.borrow_mut();
+        assert!(at <= children.len());
+        children.insert(at, to_insert.rc());
+        for i in at..children.len() {
+            children[i].index_in_parent.set(i);
+        }
+        self.mark_needs_relayout();
+    }
+
     /// Inserts the specified element after this element.
     pub fn insert_after(&self, to_insert: &Element) {
-        to_insert.detach();
-        // ins.prev = this
-        to_insert.prev.set(Some(self.weak()));
-        // ins.next = this.next
-        to_insert.next.set(self.next.get());
-        // this.next.prev = ins
-        // OR this.parent.last_child = ins
-        if let Some(next) = self.next.get() {
-            next.prev.set(Some(to_insert.weak()));
-        } else if let Some(parent) = self.parent() {
-            parent.last_child.set(Some(to_insert.weak()));
+        if let Some(parent) = self.parent.upgrade() {
+            parent.insert_child_at(self.index_in_parent.get() + 1, to_insert);
+        } else {
+            warn!("tried to insert after an element with no parent");
         }
-        // this.next = ins
-        self.next.set(Some(to_insert.rc()));
-        // ins.parent = this.parent
-        to_insert.parent.set(self.parent.get());
+    }
 
+    /// Inserts the specified element at the end of the children of this element.
+    pub fn add_child(&self, child: &Element) {
+        child.detach();
+        // SAFETY: no other references may exist to the children vector at this point,
+        // provided the safety contracts of other unsafe methods are upheld.
+        let mut children = self.children.borrow_mut();
+        child.parent.set(Some(self.weak()));
+        child.index_in_parent.set(children.len());
+        children.push(child.rc());
+        self.mark_needs_relayout();
+    }
+
+    pub fn next(&self) -> Option<Rc<dyn ElementMethods>> {
         if let Some(parent) = self.parent() {
-            parent.mark_needs_relayout();
+            let index_in_parent = self.index_in_parent.get();
+            // SAFETY: no mutable references may exist to the children vector at this point,
+            // provided the safety contracts of other unsafe methods are upheld.
+            // There may be other shared references but that's not an issue.
+            parent.children().get(index_in_parent + 1).cloned()
+        } else {
+            None
         }
+    }
+
+    /// Returns the number of children of this element.
+    pub fn child_count(&self) -> usize {
+        // SAFETY: no mutable references may exist to the children vector at this point,
+        // provided the safety contracts of other unsafe methods are upheld.
+        unsafe { self.children_ref().len() }
+    }
+
+    /// Returns the child element at the specified index.
+    pub fn child_at(&self, index: usize) -> Option<Rc<dyn ElementMethods>> {
+        // SAFETY: same as `child_count`
+        unsafe { self.children_ref().get(index).cloned() }
+    }
+
+    /// Returns a slice of all children of this element.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no mutable references to the children vector exist, or are created,
+    /// while the returned slice is alive. In practice, this means that the caller should not:
+    /// - `detach` any children of this element
+    /// - call `insert_child_at` or `add_child` on this element
+    pub unsafe fn children_ref(&self) -> &[Rc<dyn ElementMethods>] {
+        &*self.children.try_borrow_unguarded().unwrap()
+    }
+
+    /// Returns a reference to the child element as the specified index.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no mutable references to the children vector exist, or are created,
+    /// while the returned object is alive. In practice, this means that the caller should not:
+    /// - `detach` any children of this element
+    /// - call `insert_child_at` or `add_child` on this element
+    pub unsafe fn child_ref_at(&self, index: usize) -> &dyn ElementMethods {
+        &**self.children_ref().get(index).expect("child index out of bounds")
+    }
+
+    /// Returns a reference to the list of children of this element.
+    pub fn children(&self) -> Ref<[Rc<dyn ElementMethods>]> {
+        Ref::map(self.children.borrow(), |v| v.as_slice())
     }
 
     /// Returns a cursor at this element
@@ -340,36 +414,15 @@ impl Element {
         Cursor { next: Some(self.rc()) }
     }
 
-    /// Inserts the specified element at the end of the children of this element.
-    pub fn add_child(&self, child: &Element) {
-        child.detach();
-        // child.prev = this.last_child;
-        // child.next = None;
-        // this.last_child.next = child;
-        // this.last_child = child;
-        // child.parent = this;
-        child.prev.set(self.last_child.get());
-        child.next.set(None);
-        if let Some(last_child) = self.last_child.upgrade() {
-            last_child.next.set(Some(child.rc()));
-        } else {
-            self.first_child.set(Some(child.rc()));
-        }
-        self.last_child.set(Some(child.weak()));
-        child.parent.set(Some(self.weak()));
-        self.mark_needs_relayout()
-    }
-
     pub(crate) fn set_parent_window(&self, window: WeakWindow) {
         if !Weak::ptr_eq(&self.window.borrow().shared, &window.shared) {
             self.window.replace(window.clone());
             // recursively update the parent window of the children
-            for child in self.iter_children() {
+            for child in self.children().iter() {
                 child.set_parent_window(window.clone());
             }
         }
     }
-
 
     /// Returns the next focusable element.
     pub fn next_focusable_element(&self) -> Option<Rc<dyn ElementMethods>> {
@@ -383,12 +436,13 @@ impl Element {
         None
     }
 
+    /*
     /// Returns an iterator over this element's children.
     pub fn iter_children(&self) -> impl Iterator<Item=Rc<dyn ElementMethods>> {
         SiblingIter {
             next: self.first_child.get(),
         }
-    }
+    }*/
 
     /// Requests focus for the current element.
     pub async fn set_focus(&self) {
@@ -407,7 +461,7 @@ impl Element {
         Ref::map(self.children.borrow(), |v| v.as_slice())
     }*/
 
-    pub fn geometry(&self) -> Geometry {
+    pub fn size(&self) -> Size {
         self.geometry.get()
     }
 
@@ -422,15 +476,13 @@ impl Element {
 
     /// Removes all child visuals.
     pub fn clear_children(&self) {
-        for c in self.iter_children() {
+        for c in self.children().iter() {
             // TODO: don't do that if there's only one reference remaining
             // detach from window
             c.window.replace(WeakWindow::default());
             // detach from parent
             c.parent.set(None);
         }
-        self.first_child.set(None);
-        self.last_child.set(None);
     }
 
     /// Returns the parent of this visual, if it has one.
@@ -492,11 +544,12 @@ impl Element {
         self.weak_this.clone()
     }
 
+    /*
     /// Returns the list of children.
     pub fn children(&self) -> Vec<Rc<dyn ElementMethods + 'static>> {
         // traverse the linked list
         self.iter_children().collect()
-    }
+    }*/
 
     fn set_dirty_flags(&self, flags: ChangeFlags) {
         let flags = self.change_flags.get() | flags;
@@ -535,52 +588,83 @@ impl Element {
     }
 
     /// Sets the value of an attached property.
-    pub fn set<T: AttachedProperty>(&self, value: T::Value) {
-        self.attached_properties
-            .borrow_mut()
-            .insert(TypeId::of::<T>(), Box::new(value));
+    ///
+    /// This replaces the value if the property is already set.
+    pub fn set<T: AttachedProperty>(&self, _property: T, value: T::Value) {
+        // SAFETY: no other references to the BTreeMap exist at this point (provided
+        // the safety contract of the unsafe method `get_ref` is upheld), and this method cannot
+        // call itself recursively.
+        let attached_properties = unsafe { &mut *self.attached_properties.get() };
+        attached_properties.insert(TypeId::of::<T>(), Box::new(value));
     }
 
     /// Gets the value of an attached property.
-    pub fn get<T: AttachedProperty>(&self) -> Option<T::Value> {
-        self.attached_properties.borrow().get(&TypeId::of::<T>()).map(|v| {
-            v.downcast_ref::<T::Value>()
-                .expect("invalid type of attached property")
-                .clone()
-        })
+    pub fn get<T: AttachedProperty>(&self, property: T) -> Option<T::Value> {
+        // SAFETY: no other mutable references to the BTreeMap exists at this point (the only one
+        // is localized entirely within `set`).
+        unsafe { self.try_get_ref(property).cloned() }
+    }
+
+    /// Returns a reference to the specified attached property.
+    ///
+    /// # Panics
+    /// Panics if the attached property is not set.
+    ///
+    /// # Safety
+    ///
+    /// This function unsafely borrows the value of the attached property.
+    /// The caller must ensure that the value isn't mutated (via `set`) while the reference is alive.
+    ///
+    /// In most cases you should prefer `get` over this function.
+    pub unsafe fn get_ref<T: AttachedProperty>(&self, property: T) -> &T::Value {
+        self.try_get_ref::<T>(property).expect("attached property not set")
+    }
+
+    /// Returns a reference to the specified attached property, or `None` if it is not set.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `get_ref`.
+    pub unsafe fn try_get_ref<T: AttachedProperty>(&self, _property: T) -> Option<&T::Value> {
+        let attached_properties = unsafe { &*self.attached_properties.get() };
+        attached_properties
+            .get(&TypeId::of::<T>())
+            .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
     }
 }
 
-
-/// Nodes in the visual tree.
+/// Methods of elements in the element tree.
 pub trait ElementMethods: EventTarget {
     fn element(&self) -> &Element;
 
-    fn intrinsic_sizes(&self) -> IntrinsicSizes {
+    /*/// Calculates the size of the widget under the specified constraints.
+    fn measure(&self) -> IntrinsicSizes {
         // TODO
         IntrinsicSizes {
             min: Default::default(),
             max: Default::default(),
         }
-    }
+    }*/
 
-    // TODO: this could take a "SiblingIter"
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], constraints: &BoxConstraints) -> Geometry {
+    /// Asks the widget to measure itself under the specified constraints, but without actually laying
+    /// out the children.
+    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput;
+
+    /// Lays out the children of this widget under the specified constraints.
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], input: &LayoutInput) -> LayoutOutput {
         // The default implementation just returns the union of the geometry of the children.
-        let mut geometry = Geometry::default();
+        let mut output = LayoutOutput::default();
         for child in children {
-            let child_geometry = child.do_layout(constraints);
-            geometry.size.width = geometry.size.width.max(child_geometry.size.width);
-            geometry.size.height = geometry.size.height.max(child_geometry.size.height);
-            geometry.bounding_rect = geometry.bounding_rect.union(child_geometry.bounding_rect);
-            geometry.paint_bounding_rect = geometry.paint_bounding_rect.union(child_geometry.paint_bounding_rect);
+            let child_output = child.do_layout(input);
+            output.width = output.width.max(child_output.width);
+            output.height = output.height.max(child_output.height);
             child.set_offset(Vec2::ZERO);
         }
-        geometry
+        output
     }
 
     fn hit_test(&self, point: Point) -> bool {
-        self.element().geometry.get().size.to_rect().contains(point)
+        self.element().geometry.get().to_rect().contains(point)
     }
     #[allow(unused_variables)]
     fn paint(&self, ctx: &mut PaintCtx) {}
@@ -594,7 +678,7 @@ pub trait ElementMethods: EventTarget {
     {}
 }
 
-/// Implementation detail of `Visual` to get an object-safe version of `async fn event()`.
+/// Implementation detail of `ElementMethods` to get an object-safe version of `async fn event()`.
 #[doc(hidden)]
 pub trait EventTarget {
     fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()>;
@@ -655,11 +739,15 @@ impl dyn ElementMethods + '_ {
         self.element().children.borrow().len()
     }*/
 
-    pub fn do_layout(&self, constraints: &BoxConstraints) -> Geometry {
+    pub fn do_measure(&self, layout_input: &LayoutInput) -> LayoutOutput {
         let children = self.children();
+        self.measure(&*children, layout_input)
+    }
 
-        let geometry = self.layout(&*children, constraints);
-        self.geometry.set(geometry);
+    pub fn do_layout(&self, layout_input: &LayoutInput) -> LayoutOutput {
+        let children = self.children();
+        let geometry = self.layout(&*children, layout_input);
+        self.geometry.set(Size::new(geometry.width, geometry.height));
         self.mark_layout_done();
         geometry
     }
@@ -674,7 +762,12 @@ impl dyn ElementMethods + '_ {
         // Helper function to recursively hit-test the children of a visual.
         // point: point in the local coordinate space of the visual
         // transform: accumulated transform from the local coord space of `visual` to the root coord space
-        fn hit_test_rec(visual: &dyn ElementMethods, point: Point, transform: Affine, result: &mut Vec<AnyVisual>) -> bool {
+        fn hit_test_rec(
+            visual: &dyn ElementMethods,
+            point: Point,
+            transform: Affine,
+            result: &mut Vec<AnyVisual>,
+        ) -> bool {
             let mut hit = false;
             // hit-test ourselves
             if visual.hit_test(point) {
@@ -682,10 +775,10 @@ impl dyn ElementMethods + '_ {
                 result.push(visual.rc().into());
             }
 
-            for child in visual.iter_children() {
+            for child in visual.children().iter() {
                 let transform = transform * child.transform();
                 let local_point = transform.inverse() * point;
-                if hit_test_rec(&*child, local_point, transform, result) {
+                if hit_test_rec(&**child, local_point, transform, result) {
                     hit = true;
                     break;
                 }
@@ -709,10 +802,10 @@ impl dyn ElementMethods + '_ {
         // Recursively paint the UI tree.
         fn paint_rec(visual: &dyn ElementMethods, ctx: &mut PaintCtx) {
             visual.paint(ctx);
-            for child in visual.iter_children() {
+            for child in visual.children().iter() {
                 ctx.with_transform(&child.transform(), |ctx| {
                     // TODO clipping
-                    paint_rec(&*child, ctx);
+                    paint_rec(&**child, ctx);
                     child.mark_paint_done();
                 });
             }

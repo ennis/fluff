@@ -27,7 +27,7 @@ use crate::drawing::ToSkia;
 use crate::element::{AnyVisual, Element, ElementMethods, WeakNullableElemPtr};
 use crate::event::{Event, key_event_to_key_code, PointerButton, PointerButtons, PointerEvent};
 use crate::handler::Handler;
-use crate::layout::BoxConstraints;
+use crate::layout::{BoxConstraints, LayoutInput, RequestedAxis, SizingConstraint};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -546,6 +546,7 @@ impl WindowInner {
                     let size = Size::new(size.width as f64, size.height as f64);
                     self.layer.set_surface_size(size);
                 }
+                self.root.mark_needs_relayout();
             }
             WindowEvent::Focused(focused) => {
                 self.focus_changed.emit(*focused).await;
@@ -574,7 +575,11 @@ impl WindowInner {
         }
 
         if self.root.needs_relayout() {
-            let _geom = self.root.do_layout(&BoxConstraints::loose(size));
+            let _geom = self.root.do_layout(&LayoutInput {
+                axis: RequestedAxis::Both,
+                width_constraint: SizingConstraint::Available(size.width),
+                height_constraint: SizingConstraint::Available(size.height),
+            });
         }
 
         let surface = self.layer.acquire_drawing_surface();

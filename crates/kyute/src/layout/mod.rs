@@ -1,13 +1,17 @@
 //! Types and functions used for layouting widgets.
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::ops::{Range, RangeBounds};
+
 use kurbo::{Insets, Rect, Size, Vec2};
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    ops::{Range, RangeBounds},
-};
+use tracing::trace;
+
+use crate::element::AttachedProperty;
+use crate::ElementMethods;
+use crate::layout::flex::Axis;
 
 pub mod flex;
-pub mod grid;
+//pub mod grid;
 
 #[derive(Copy, Clone, PartialEq)]
 //#[cfg_attr(feature = "serializing", derive(serde::Deserialize))]
@@ -235,6 +239,484 @@ impl BoxConstraints {
     }
 }
 
+/// Which axis should be measured.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum RequestedAxis {
+    /// Compute the layout in the horizontal axis only (i.e. the width).
+    Horizontal,
+    /// Compute the layout in the vertical axis only (i.e. the height).
+    Vertical,
+    /// Compute the layout in both axes.
+    Both,
+}
+
+impl From<Axis> for RequestedAxis {
+    fn from(axis: Axis) -> Self {
+        match axis {
+            Axis::Horizontal => RequestedAxis::Horizontal,
+            Axis::Vertical => RequestedAxis::Vertical,
+        }
+    }
+}
+
+/// Specifies the size of a visual element in one dimension.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub enum SizeValue {
+    /// Automatic size. This inherits the constraints from the parent container.
+    #[default]
+    Auto,
+    /// The element should have a fixed length (in unspecified units for layout, but interpreted as device-independent pixels for painting).
+    Fixed(f64),
+    /// The element should size itself as a percentage of the available space in the parent container.
+    Percentage(f64),
+    /// The element should size itself to its minimum content size: the smallest size it can be
+    /// without its content overflowing.
+    MinContent,
+    /// The element should size itself to its maximum content size: the largest size it can be
+    /// that still tightly wraps its content.
+    MaxContent,
+}
+
+/// Specifies the size of a visual element in one dimension.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct Sizing {
+    /// The preferred size of the item.
+    pub value: SizeValue,
+    /// Minimum size.
+    pub min: SizeValue,
+    /// Maximum size.
+    pub max: SizeValue,
+    /// The element should size itself as a proportion of the remaining available space in the parent container after all fixed lengths have been resolved.
+    ///
+    /// Equivalent to `flex-grow` in CSS.
+    ///
+    /// If 0.0, the element doesn't grow. Has no effect for the cross axis in a flex container.
+    pub flex: f64,
+}
+
+impl Sizing {
+    pub const NULL: Sizing = Sizing {
+        value: SizeValue::Fixed(0.0),
+        min: SizeValue::Fixed(0.0),
+        max: SizeValue::Fixed(0.0),
+        flex: 0.0,
+    };
+}
+
+/// Resolved box size values.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BoxMeasurements {
+    /// Preferred size.
+    pub size: f64,
+    /// Minimum size.
+    pub min: f64,
+    /// Maximum size.
+    pub max: f64,
+    /// Flex factor. Zero means that the box doesn't grow.
+    pub flex: f64,
+}
+
+impl BoxMeasurements {
+    pub const NULL: BoxMeasurements = BoxMeasurements {
+        size: 0.0,
+        min: 0.0,
+        max: 0.0,
+        flex: 0.0,
+    };
+}
+
+pub fn measure_element(
+    element: &dyn ElementMethods,
+    axis: Axis,
+    sizing: Sizing,
+    mut main_axis_constraint: SizingConstraint,
+    mut cross_axis_constraint: SizingConstraint,
+) -> BoxMeasurements {
+    let _span = tracing::trace_span!("measure_element").entered();
+
+    // relax constraints: we only want to inherit available space, min-content and max-content constraints
+    // TODO maybe this should be done by the caller
+    if let SizingConstraint::Exact(space) = main_axis_constraint {
+        main_axis_constraint = SizingConstraint::Available(space);
+    }
+    if let SizingConstraint::Exact(space) = cross_axis_constraint {
+        cross_axis_constraint = SizingConstraint::Available(space);
+    }
+
+    let measure_size = |main_axis_constraint: SizingConstraint,
+                        cross_axis_constraint: SizingConstraint,
+                        size_value: SizeValue,
+                        element: &dyn ElementMethods|
+                        -> f64 {
+        let main_axis_constraint = match size_value {
+            SizeValue::Fixed(s) => SizingConstraint::Exact(s),
+            SizeValue::Percentage(p) => {
+                match main_axis_constraint {
+                    SizingConstraint::Available(space) => SizingConstraint::Exact(p * space),
+                    _ => {
+                        main_axis_constraint
+                    }
+                }
+            }
+            SizeValue::MinContent => SizingConstraint::MinContent,
+            SizeValue::MaxContent => SizingConstraint::MaxContent,
+            _ => main_axis_constraint,
+        };
+
+        match main_axis_constraint {
+            SizingConstraint::Available(_) | SizingConstraint::MinContent | SizingConstraint::MaxContent => element
+                .do_measure(&LayoutInput::from_main_cross_constraints(
+                    axis,
+                    axis.into(),
+                    main_axis_constraint,
+                    cross_axis_constraint,
+                ))
+                .size(axis),
+            SizingConstraint::Exact(size) => {
+                // We don't need to measure the element if we know its exact size
+                size
+            }
+        }
+    };
+
+    let min = measure_size(main_axis_constraint, cross_axis_constraint, sizing.min, element);
+    let max = measure_size(main_axis_constraint, cross_axis_constraint, sizing.max, element);
+    let preferred = measure_size(main_axis_constraint, cross_axis_constraint, sizing.value, element);
+    let size = preferred.clamp(min, max);
+
+    trace!("Measured element: axis={:?}, sizing={:?}, min={}, max={}, preferred={}, size={}", axis, sizing, min, max, preferred, size);
+
+    BoxMeasurements {
+        min,
+        max,
+        size,
+        flex: sizing.flex,
+    }
+}
+
+/// Represents a sizing constraint passed down from a container to a child element during layout.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum SizingConstraint {
+    /// The element has the specified available space to layout itself.
+    Available(f64),
+    /// The element should size itself to its minimum content size: the smallest size it can be
+    /// without its content overflowing.
+    MinContent,
+    /// The element should size itself to its maximum content size: the largest size it can be
+    /// that still tightly wraps its content.
+    MaxContent,
+    /// The element should have the specified exact size.
+    Exact(f64),
+}
+
+impl SizingConstraint {
+    /// Resolves a percentage length to a concrete value if the provided sizing constraint is exact.
+    /// Otherwise, returns 0.
+    pub fn resolve_length(&self, length: LengthOrPercentage) -> f64 {
+        let reference = match self {
+            SizingConstraint::Exact(size) => *size,
+            _ => 0.0,
+        };
+        length.resolve(reference)
+    }
+
+    /// Reserves space if the constraint is `Exact`, or `Available`, then returns the constraint for the remaining space.
+    pub fn deflate(&self, space: f64) -> SizingConstraint {
+        match self {
+            SizingConstraint::Exact(size) => SizingConstraint::Exact((size - space).max(0.0)),
+            SizingConstraint::Available(available) => SizingConstraint::Available((available - space).max(0.0)),
+            _ => *self,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct LayoutInput {
+    /// Which axis should be measured. If not `Both`, then only the corresponding dimension of
+    /// the returned `LayoutOutput` needs to be valid.
+    pub axis: RequestedAxis,
+    /// The sizing constraint in the horizontal axis.
+    pub width_constraint: SizingConstraint,
+    /// The sizing constraint in the vertical axis.
+    pub height_constraint: SizingConstraint,
+}
+
+impl LayoutInput {
+    pub fn from_main_cross_constraints(
+        main_axis: Axis,
+        requested_axis: RequestedAxis,
+        main: SizingConstraint,
+        cross: SizingConstraint,
+    ) -> Self {
+        match main_axis {
+            Axis::Horizontal => LayoutInput {
+                axis: requested_axis,
+                width_constraint: main,
+                height_constraint: cross,
+            },
+            Axis::Vertical => LayoutInput {
+                axis: requested_axis,
+                width_constraint: cross,
+                height_constraint: main,
+            },
+        }
+    }
+
+    pub fn with_axis_constraint(self, axis: Axis, constraint: SizingConstraint) -> Self {
+        match axis {
+            Axis::Horizontal => LayoutInput {
+                width_constraint: constraint,
+                ..self
+            },
+            Axis::Vertical => LayoutInput {
+                height_constraint: constraint,
+                ..self
+            },
+        }
+    }
+
+    pub fn set_axis_constraint(&mut self, axis: Axis, constraint: SizingConstraint) {
+        match axis {
+            Axis::Horizontal => self.width_constraint = constraint,
+            Axis::Vertical => self.height_constraint = constraint,
+        }
+    }
+
+    pub fn with_requested_axis(self, axis: Axis) -> Self {
+        LayoutInput {
+            axis: axis.into(),
+            ..self
+        }
+    }
+
+    pub fn resolve_length(&self, axis: Axis, length: LengthOrPercentage) -> f64 {
+        match axis {
+            Axis::Horizontal => self.width_constraint.resolve_length(length),
+            Axis::Vertical => self.height_constraint.resolve_length(length),
+        }
+    }
+}
+
+
+/// Spacing values.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct FlexSize {
+    /// Minimum space.
+    pub size: f64,
+    /// Flex factor (0.0 means no stretching).
+    pub flex: f64,
+}
+
+impl FlexSize {
+    pub const NULL: FlexSize = FlexSize { size: 0.0, flex: 0.0 };
+
+    /// Combines two flex sizes, e.g. two margins that collapse.
+    pub fn combine(self, other: FlexSize) -> FlexSize {
+        FlexSize {
+            size: self.size.max(other.size),
+            flex: self.flex.max(other.flex),
+        }
+    }
+
+    pub fn grow(self, available: f64) -> f64 {
+        if self.flex != 0.0 && available.is_finite() {
+            self.size.max(available)
+        } else {
+            self.size
+        }
+    }
+}
+
+/// The output of the layout process.
+///
+/// Returned by the `measure` and `layout` methods.
+#[derive(Copy, Clone, Debug)]
+pub struct LayoutOutput {
+    /// The width of the element.
+    ///
+    /// This needs to be valid if the requested axis is `Horizontal` or `Both`.
+    pub width: f64,
+    /// The height of the element.
+    ///
+    /// This needs to be valid if the requested axis is `Vertical` or `Both`.
+    pub height: f64,
+    /// Baseline offset relative to the top of the element box.
+    pub baseline: Option<f64>,
+}
+
+impl LayoutOutput {
+    pub fn from_main_cross_sizes(axis: Axis, main: f64, cross: f64, baseline: Option<f64>) -> Self {
+        match axis {
+            Axis::Horizontal => LayoutOutput {
+                width: main,
+                height: cross,
+                baseline,
+            },
+            Axis::Vertical => LayoutOutput {
+                width: cross,
+                height: main,
+                baseline,
+            },
+        }
+    }
+}
+
+/// Attached property that controls the width of items inside containers.
+#[derive(Copy, Clone, Debug)]
+pub struct Width;
+
+impl AttachedProperty for Width {
+    type Value = Sizing;
+}
+
+/// Attached property that controls the height of items inside containers.
+#[derive(Copy, Clone, Debug)]
+pub struct Height;
+
+impl AttachedProperty for Height {
+    type Value = Sizing;
+}
+
+/// Attached property that controls start/end margins on flex items.
+#[derive(Copy, Clone, Debug)]
+pub struct FlexMargins;
+
+impl AttachedProperty for FlexMargins {
+    type Value = (FlexSize, FlexSize);
+}
+
+/// Attached property that controls horizontal positioning of items inside a container.
+#[derive(Copy, Clone, Debug)]
+pub struct HorizontalAlignment;
+
+impl AttachedProperty for HorizontalAlignment {
+    type Value = Alignment;
+}
+
+/// Attached property that controls vertical positioning of items inside a container.
+#[derive(Copy, Clone, Debug)]
+pub struct VerticalAlignment;
+
+impl AttachedProperty for VerticalAlignment {
+    type Value = Alignment;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PaddingLeft;
+
+impl AttachedProperty for PaddingLeft {
+    type Value = LengthOrPercentage;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PaddingRight;
+
+impl AttachedProperty for PaddingRight {
+    type Value = LengthOrPercentage;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PaddingTop;
+
+impl AttachedProperty for PaddingTop {
+    type Value = LengthOrPercentage;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PaddingBottom;
+
+impl AttachedProperty for PaddingBottom {
+    type Value = LengthOrPercentage;
+}
+
+// button.set(Margins, (FlexSize::NULL, FlexSize::stretch(1.0)));
+// button.set(VerticalPosition, Center);
+
+// Absolute positioning:
+// button.set(HorizontalPosition, Positioning::Start(10.0));
+// button.set(VerticalPosition, Positioning::Start(10.0));
+
+/*
+#[derive(Copy, Clone, Debug)]
+pub enum Positioning {
+    /// Position the start edge of the box at the specified offset relative to the start of the parent box.
+    Start(f64),
+    /// Position the end edge of the box at the specified offset relative to the end of the parent box.
+    End(f64),
+    /// Position both the start and edges of the box relative to the start and edges of the parent box.
+    ///
+    /// Note that this needs the size of the box to be flexible in order to accommodate both constraints.
+    Both { start: f64, end: f64 },
+    /// Center the box in the parent.
+    Center,
+    /// Align the baseline of the box with the baseline of the parent.
+    Baseline,
+}
+
+pub(crate) fn position_box(
+    parent_container_size: f64,
+    parent_container_baseline: f64,
+    box_size: FlexSize,
+    positioning: Positioning,
+) -> (f64, f64) {
+    let offset;
+    let actual_size;
+
+    match positioning {
+        Positioning::Start(start) => {
+            offset = start;
+            actual_size = box_size.grow(parent_container_size - start);
+        }
+        Positioning::End(offset) => {
+            offset = parent_container_size - box_size.size - offset;
+            actual_size = box_size.grow(offset);
+        }
+        Positioning::Both { start, end } => {
+            let space = parent_container_size - box_size.size;
+            start.max(0.0).min(space) + end.max(0.0).min(space)
+        }
+        Positioning::Center => (parent_container_size - box_size.size) / 2.0,
+        Positioning::Baseline => 0.0,
+    }
+}
+
+impl Positioning {
+    pub fn resolve(&self, parent_container_size: f64, parent_container_baseline: f64, box_size: FlexSize) -> f64 {
+        match self {
+            Positioning::Start(offset) => *offset,
+            Positioning::End(offset) => parent_container_size - box_size - offset,
+            Positioning::Both { start, end } => {
+                let space = parent_container_size - box_size;
+                start.max(0.0).min(space) + end.max(0.0).min(space)
+            }
+            Positioning::Center => (parent_container_size - box_size) / 2.0,
+            Positioning::Baseline => 0.0,
+        }
+    }
+}
+*/
+
+impl LayoutOutput {
+    pub const NULL: LayoutOutput = LayoutOutput {
+        width: 0.0,
+        height: 0.0,
+        baseline: None,
+    };
+
+    pub fn size(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.width,
+            Axis::Vertical => self.height,
+        }
+    }
+}
+
+impl Default for LayoutOutput {
+    fn default() -> Self {
+        LayoutOutput::NULL
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Alignment
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -270,13 +752,6 @@ impl Default for Alignment {
 pub struct IntrinsicSizes {
     pub min: Size,
     pub max: Size,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Sizing {
-    Length(LengthOrPercentage),
-    MinContent,
-    MaxContent,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
