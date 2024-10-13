@@ -9,7 +9,7 @@ use tracing::{trace, trace_span};
 use crate::drawing::ToSkia;
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
-use crate::layout::{LayoutInput, LayoutOutput, SizingConstraint};
+use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::PaintCtx;
 use crate::text::{TextLayout, TextRun};
 
@@ -56,41 +56,26 @@ impl ElementMethods for Text {
         ).entered();
 
         let paragraph = &mut *self.paragraph.borrow_mut();
-        let output = match layout_input.width_constraint {
-            SizingConstraint::MinContent => {
-                paragraph.layout(f32::INFINITY);
-                LayoutOutput {
-                    width: paragraph.min_intrinsic_width() as f64,
-                    height: paragraph.height() as f64,
-                    baseline: Some(paragraph.alphabetic_baseline() as f64),
-                }
-            }
-            SizingConstraint::MaxContent => {
-                paragraph.layout(f32::INFINITY);
-                LayoutOutput {
-                    width: paragraph.max_intrinsic_width() as f64,
-                    height: paragraph.height() as f64,
-                    baseline: Some(paragraph.alphabetic_baseline() as f64),
-                }
-            }
-            SizingConstraint::Available(space) | SizingConstraint::Exact(space) => {
-                paragraph.layout(space as f32);
-                LayoutOutput {
-                    width: paragraph.longest_line() as f64,
-                    height: paragraph.height() as f64,
-                    baseline: Some(paragraph.alphabetic_baseline() as f64),
-                }
-            }
+
+        let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
+        paragraph.layout(space);
+
+        let output = LayoutOutput {
+            width: paragraph.longest_line() as f64,
+            height: paragraph.height() as f64,
+            baseline: Some(paragraph.alphabetic_baseline() as f64),
         };
 
         trace!("Measured text: {:?} -> {:?}", layout_input, output);
-
         self.relayout.set(false);
         output
     }
 
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        self.measure(children, layout_input)
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+        self.measure(children, &LayoutInput {
+            width: SizeConstraint::Available(size.width),
+            height: SizeConstraint::Available(size.height),
+        })
     }
 
     fn hit_test(&self, _point: Point) -> bool {

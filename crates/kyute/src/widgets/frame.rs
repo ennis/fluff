@@ -4,20 +4,20 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use bitflags::bitflags;
-use kurbo::{Insets, RoundedRect};
+use kurbo::{Insets, RoundedRect, Size};
 use smallvec::SmallVec;
 use tracing::{trace, trace_span};
 
-use crate::{Color, drawing, PaintCtx};
 use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
+use crate::layout::flex::{do_flex_layout, Axis, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
 use crate::layout::{
-    FlexSize, LayoutInput, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft, PaddingRight,
-    PaddingTop,
+    FlexSize, LayoutInput, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft, PaddingRight, PaddingTop,
+    SizeConstraint, SizeValue, Sizing,
 };
-use crate::layout::flex::{Axis, CrossAxisAlignment, do_flex_layout, FlexLayoutParams, MainAxisAlignment};
+use crate::{drawing, layout, Color, PaintCtx};
 
 /*
 #[derive(Clone, Default)]
@@ -73,19 +73,13 @@ pub struct FrameStyleOverride {
 
 #[derive(Clone)]
 pub enum FrameLayout {
-    Flex {
-        direction: Axis,
-        main_axis_alignment: MainAxisAlignment,
-        cross_axis_alignment: CrossAxisAlignment,
-    }, // TODO grid
+    Flex { direction: Axis }, // TODO grid
 }
 
 impl Default for FrameLayout {
     fn default() -> Self {
         FrameLayout::Flex {
             direction: Axis::Horizontal,
-            main_axis_alignment: MainAxisAlignment::Start,
-            cross_axis_alignment: CrossAxisAlignment::Start,
         }
     }
 }
@@ -296,33 +290,26 @@ fn compute_intrinsic_sizes(direction: Axis, children: &[Rc<dyn ElementMethods>])
 }
 */
 
-impl ElementMethods for Frame {
-    fn element(&self) -> &Element {
-        &self.element
-    }
-
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let _span = trace_span!(
-            "Frame::measure",
-        ).entered();
-        // defer to layout for now
-        self.layout(children, layout_input)
-    }
-
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let _span = trace_span!(
-            "Frame::layout",
-        ).entered();
+impl Frame {
+    fn measure_content(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        let _span = trace_span!("Frame::layout",).entered();
 
         self.calculate_style();
-
         let s = self.resolved_style.borrow();
 
         // resolve padding
-        let padding_left = layout_input.resolve_length(Axis::Horizontal, self.get(PaddingLeft).unwrap_or_default());
-        let padding_right = layout_input.resolve_length(Axis::Horizontal, self.get(PaddingRight).unwrap_or_default());
-        let padding_top = layout_input.resolve_length(Axis::Vertical, self.get(PaddingTop).unwrap_or_default());
-        let padding_bottom = layout_input.resolve_length(Axis::Vertical, self.get(PaddingBottom).unwrap_or_default());
+        let padding_left = layout_input
+            .width
+            .resolve_length(self.get(PaddingLeft).unwrap_or_default());
+        let padding_right = layout_input
+            .width
+            .resolve_length(self.get(PaddingRight).unwrap_or_default());
+        let padding_top = layout_input
+            .height
+            .resolve_length(self.get(PaddingTop).unwrap_or_default());
+        let padding_bottom = layout_input
+            .height
+            .resolve_length(self.get(PaddingBottom).unwrap_or_default());
 
         let direction = match s.layout {
             FrameLayout::Flex { direction, .. } => direction,
@@ -332,10 +319,8 @@ impl ElementMethods for Frame {
         // TODO other layouts
         let flex_params = FlexLayoutParams {
             axis: direction,
-            width_constraint: layout_input.width_constraint.deflate(padding_left + padding_right),
-            height_constraint: layout_input.height_constraint.deflate(padding_top + padding_bottom),
-            cross_axis_alignment: CrossAxisAlignment::Center,
-            main_axis_alignment: MainAxisAlignment::Center,
+            width_constraint: layout_input.width.deflate(padding_left + padding_right),
+            height_constraint: layout_input.height.deflate(padding_top + padding_bottom),
             gap: FlexSize::NULL,
             initial_gap: FlexSize::NULL,
             final_gap: FlexSize::NULL,
@@ -346,6 +331,130 @@ impl ElementMethods for Frame {
         layout_output.height += padding_top + padding_bottom;
         layout_output.baseline.as_mut().map(|b| *b += padding_top);
         layout_output
+    }
+
+    /// Measures a box element sized according to the specified constraints.
+    fn measure_axis(
+        &self,
+        children: &[Rc<dyn ElementMethods>],
+        axis: Axis,
+        sizing: Sizing,
+        main_axis_constraint: SizeConstraint,
+        cross_axis_constraint: SizeConstraint,
+    ) -> f64 {
+        let _span = tracing::trace_span!("measure_element").entered();
+
+        let mut min_content = LayoutOutput::NULL;
+        let mut max_content = LayoutOutput::NULL;
+
+        if sizing.min == SizeValue::MinContent
+            || sizing.max == SizeValue::MinContent
+            || sizing.preferred == SizeValue::MinContent
+        {
+            min_content = self.measure_content(children, &LayoutInput::main_cross(
+                axis,
+                SizeConstraint::MIN,
+                cross_axis_constraint,
+            ))
+        };
+
+        if sizing.min == SizeValue::MaxContent
+            || sizing.max == SizeValue::MaxContent
+            || sizing.preferred == SizeValue::MaxContent
+        {
+            max_content = self.measure_content(children, &LayoutInput::main_cross(
+                axis,
+                SizeConstraint::MAX,
+                cross_axis_constraint,
+            ))
+        };
+
+        let min = match sizing.min {
+            SizeValue::Auto => 0.0,
+            SizeValue::Fixed(s) => s,
+            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(0.0),
+            SizeValue::MinContent => min_content.size(axis),
+            SizeValue::MaxContent => max_content.size(axis),
+        };
+        let max = match sizing.max {
+            SizeValue::Auto => f64::INFINITY,
+            SizeValue::Fixed(s) => s,
+            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(f64::INFINITY),
+            SizeValue::MinContent => min_content.size(axis),
+            SizeValue::MaxContent => max_content.size(axis),
+        };
+
+        let preferred = match sizing.preferred {
+            SizeValue::Auto => self.measure_content(children, &LayoutInput::main_cross(
+                axis,
+                main_axis_constraint,
+                cross_axis_constraint,
+            ))
+                .size(axis),
+            SizeValue::Fixed(s) => s,
+            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(0.0),
+            SizeValue::MinContent => min_content.size(axis),
+            SizeValue::MaxContent => max_content.size(axis),
+        };
+
+        // clamp preferred size to min and max
+        let size = preferred.clamp(min, max);
+
+        trace!(
+            "Measured element: axis={:?}, sizing={:?}, min={}, max={}, preferred={}, size={}",
+            axis,
+            sizing,
+            min,
+            max,
+            preferred,
+            size
+        );
+
+        size
+    }
+}
+
+impl ElementMethods for Frame {
+    fn element(&self) -> &Element {
+        &self.element
+    }
+
+    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+        // measure and apply constraints in the width direction
+        let width = self.measure_axis(
+            children,
+            Axis::Horizontal,
+            self.get(layout::Width).unwrap_or_default(),
+            layout_input.width,
+            layout_input.height,
+        );
+        // then measure and apply constraints in the height direction
+        let height = self.measure_axis(
+            children,
+            Axis::Vertical,
+            self.get(layout::Height).unwrap_or_default(),
+            layout_input.height,
+            width.into(),
+        );
+        LayoutOutput {
+            width,
+            height,
+            baseline: None,
+        }
+    }
+
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+        let _span = trace_span!("Frame::layout").entered();
+
+        // defer to measure for now
+        let output = self.measure(
+            children,
+            &LayoutInput {
+                width: size.width.into(),
+                height: size.height.into(),
+            },
+        );
+        output
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

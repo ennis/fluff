@@ -15,7 +15,7 @@ use crate::drawing::{FromSkia, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
-use crate::layout::{LayoutInput, LayoutOutput, SizingConstraint};
+use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
 
 #[derive(Debug, Copy, Clone)]
@@ -591,36 +591,24 @@ impl ElementMethods for TextEdit {
         ).entered();
 
         let this = &mut *self.state.borrow_mut();
-        match layout_input.width_constraint {
-            SizingConstraint::Available(space) | SizingConstraint::Exact(space) => {
-                this.paragraph.layout(space as f32);
-                LayoutOutput {
-                    width: this.paragraph.longest_line() as f64,
-                    height: this.paragraph.height() as f64,
-                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
-                }
-            }
-            SizingConstraint::MinContent => {
-                this.paragraph.layout(f32::INFINITY);
-                LayoutOutput {
-                    width: this.paragraph.min_intrinsic_width() as f64,
-                    height: this.paragraph.height() as f64,
-                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
-                }
-            }
-            SizingConstraint::MaxContent => {
-                this.paragraph.layout(f32::INFINITY);
-                LayoutOutput {
-                    width: this.paragraph.max_intrinsic_width() as f64,
-                    height: this.paragraph.height() as f64,
-                    baseline: Some(this.paragraph.alphabetic_baseline() as f64),
-                }
-            }
-        }
+
+        let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
+        this.paragraph.layout(space);
+
+        let output = LayoutOutput {
+            width: this.paragraph.longest_line() as f64,
+            height: this.paragraph.height() as f64,
+            baseline: Some(this.paragraph.alphabetic_baseline() as f64),
+        };
+
+        output
     }
 
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let measure = self.measure(children, layout_input);
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+        let measure = self.measure(children, &LayoutInput {
+            width: SizeConstraint::Available(size.width),
+            height: SizeConstraint::Available(size.height),
+        });
         self.state.borrow_mut().size = Size::new(measure.width, measure.height);
         measure
 

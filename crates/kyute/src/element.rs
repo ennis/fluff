@@ -651,11 +651,11 @@ pub trait ElementMethods: EventTarget {
     fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput;
 
     /// Lays out the children of this widget under the specified constraints.
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], input: &LayoutInput) -> LayoutOutput {
+    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
         // The default implementation just returns the union of the geometry of the children.
         let mut output = LayoutOutput::default();
         for child in children {
-            let child_output = child.do_layout(input);
+            let child_output = child.do_layout(size);
             output.width = output.width.max(child_output.width);
             output.height = output.height.max(child_output.height);
             child.set_offset(Vec2::ZERO);
@@ -744,9 +744,10 @@ impl dyn ElementMethods + '_ {
         self.measure(&*children, layout_input)
     }
 
-    pub fn do_layout(&self, layout_input: &LayoutInput) -> LayoutOutput {
+
+    pub fn do_layout(&self, size: Size) -> LayoutOutput {
         let children = self.children();
-        let geometry = self.layout(&*children, layout_input);
+        let geometry = self.layout(&*children, size);
         self.geometry.set(Size::new(geometry.width, geometry.height));
         self.mark_layout_done();
         geometry

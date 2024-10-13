@@ -28,8 +28,6 @@ fn main() {
             FrameStyle {
                 layout: FrameLayout::Flex {
                     direction: Axis::Vertical,
-                    main_axis_alignment: Default::default(),
-                    cross_axis_alignment: Default::default(),
                 },
                 border_color: Color::from_hex("5f5637"),
                 border_radius: 8.0.into(),
@@ -55,8 +53,8 @@ fn main() {
         //let attributed_text = text!( { "Hello," i "world!\n" b "This is bold" } "This is a " { rgb(255,0,0) "red" } " word\n" "Value=" i "{value}" );
         // We could directly return `FormattedText`.
 
-        frame.add_child(&text_edit);
-        frame.add_child(&text_edit2);
+        //frame.add_child(&text_edit);
+        //frame.add_child(&text_edit2);
 
         let value = 450;
         frame.add_child(&Text::new(text!( size(12.0) family("Inter") #EEE { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" )));
@@ -64,7 +62,7 @@ fn main() {
         //frame.add_child(&Text::new(text![ size(40.0) family("Inter") { "طوال اليوم." } i {"الفبای فارسی"}  ]));
         //frame.add_child(&Text::new(text![ size(40.0) family("Inter")  "Sample\nSample\nSample\nSample\nSample\nSample\nSample"  ]));
 
-        frame.add_child(&main_button);
+        //frame.add_child(&main_button);
 
         let window_options = WindowOptions {
             title: "Hello, world!",
