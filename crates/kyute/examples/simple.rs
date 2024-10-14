@@ -26,15 +26,14 @@ fn main() {
 
         let frame = Frame::new(
             FrameStyle {
-                layout: FrameLayout::Flex {
-                    direction: Axis::Vertical,
-                },
                 border_color: Color::from_hex("5f5637"),
                 border_radius: 8.0.into(),
                 background_color: Color::from_hex("211e13"),
                 ..Default::default()
             }
         );
+
+        frame.set_layout(FrameLayout::Flex { direction: Axis::Vertical, gap: 4.0.into(), initial_gap: 4.0.into(), final_gap: 4.0.into() });
 
         let text_edit = TextEdit::new();
         text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));

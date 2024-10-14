@@ -14,7 +14,6 @@ fn button_style() -> FrameStyle {
     thread_local! {
         pub static BUTTON_STYLE: FrameStyle =
         FrameStyle {
-            layout: Default::default(),
             border_left: Default::default(),
             border_right: Default::default(),
             border_top: Default::default(),

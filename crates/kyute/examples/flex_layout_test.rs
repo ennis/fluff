@@ -18,14 +18,13 @@ use kyute::layout::{FlexFactor, FlexMargins, FlexSize, Height, PaddingBottom, Pa
 
 fn frame(direction: Axis, text: &str, content: Vec<Rc<Frame>>, margin_before: FlexSize, margin_after: FlexSize) -> Rc<Frame> {
     let frame = Frame::new(FrameStyle {
-        layout: FrameLayout::Flex {
-            direction,
-        },
         border_color: Color::from_hex("5f5637"),
         border_radius: 8.0.into(),
         background_color: Color::from_hex("211e13"),
         ..Default::default()
     });
+
+    frame.set_layout(FrameLayout::Flex { direction, gap: Default::default(), initial_gap: Default::default(), final_gap: Default::default() });
 
     if !text.is_empty() {
         let text = Text::new(text![family("Inter") size(12.0) #FFF "{text}"]);

@@ -78,7 +78,7 @@ impl Flex {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Axis {
     #[default]
     Vertical,
@@ -208,9 +208,9 @@ pub struct FlexLayoutParams {
     /// The direction of the flex
     pub axis: Axis,
     /// Sizing constraint in the horizontal direction.
-    pub width_constraint: SizeConstraint,
+    pub width: SizeConstraint,
     /// Sizing constraint in the vertical direction.
-    pub height_constraint: SizeConstraint,
+    pub height: SizeConstraint,
     /// Default gap between children.
     pub gap: FlexSize,
     /// Initial gap before the first child (padding).
@@ -224,8 +224,8 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
     let cross_axis = main_axis.cross();
     let child_count = children.len();
     let (main_axis_sizing, cross_axis_sizing) = match main_axis {
-        Axis::Horizontal => (p.width_constraint, p.height_constraint),
-        Axis::Vertical => (p.height_constraint, p.width_constraint),
+        Axis::Horizontal => (p.width, p.height),
+        Axis::Vertical => (p.height, p.width),
     };
 
     // ======
@@ -257,11 +257,11 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
     margins[0] = p.initial_gap;
     margins[child_count] = p.final_gap;
 
-    trace!(
+    /*trace!(
         "Before flex layout: width_constraint: {:?}, height_constraint: {:?}",
-        p.width_constraint,
-        p.height_constraint
-    );
+        p.width,
+        p.height
+    );*/
 
     // Measure each child along the main axis (flex factor, ideal and maximum sizes), including fixed spacing.
     for (i, child) in children.iter().enumerate() {
@@ -270,10 +270,10 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
         let flex = child.get(layout::FlexFactor).unwrap_or_default();
 
         // get the element's ideal size along the main axis, using the parent constraints for the size.
-        let item_main = child.do_measure(&LayoutInput::main_cross(main_axis, main_axis_sizing, cross_axis_sizing)).size(main_axis);
+        let item_main = child.do_measure(&LayoutInput::from_main_cross(main_axis, main_axis_sizing, cross_axis_sizing)).size(main_axis);
         // if flex != 0, also measure the max width so that we know how much it can grow
         let max_item_main = if flex != 0.0 {
-            child.do_measure(&LayoutInput::main_cross(main_axis, SizeConstraint::MAX, cross_axis_sizing)).size(main_axis)
+            child.do_measure(&LayoutInput::from_main_cross(main_axis, SizeConstraint::MAX, cross_axis_sizing)).size(main_axis)
         } else {
             0.0
         };
@@ -370,12 +370,7 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
     let mut child_layouts = vec![LayoutOutput::NULL; child_count];
 
     for (i, child) in children.iter().enumerate() {
-        let sizing = match cross_axis {
-            Axis::Horizontal => child.get(layout::Width).unwrap_or_default(),
-            Axis::Vertical => child.get(layout::Height).unwrap_or_default(),
-        };
-
-        let item_cross = child.do_measure(&LayoutInput::main_cross(main_axis, main_measures[i].size.into(), cross_axis_sizing)).size(cross_axis);
+        let item_cross = child.do_measure(&LayoutInput::from_main_cross(main_axis, main_measures[i].size.into(), cross_axis_sizing)).size(cross_axis);
 
         // perform final child layout, since we know the size in both axes
         let layout = child.do_layout(Size::from_main_cross(main_axis, main_measures[i].size, item_cross));

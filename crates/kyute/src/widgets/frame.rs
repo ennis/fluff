@@ -71,34 +71,32 @@ pub struct FrameStyleOverride {
     pub shadows: Option<SmallVec<BoxShadow, 2>>,
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum FrameLayout {
-    Flex { direction: Axis }, // TODO grid
+    Flex {
+        direction: Axis,
+        /// Default gap between children.
+        gap: FlexSize,
+        /// Initial gap before the first child (padding).
+        initial_gap: FlexSize,
+        /// Final gap after the last child (padding).
+        final_gap: FlexSize,
+    },
 }
 
 impl Default for FrameLayout {
     fn default() -> Self {
         FrameLayout::Flex {
-            direction: Axis::Horizontal,
+            direction: Axis::Vertical,
+            gap: FlexSize::NULL,
+            initial_gap: FlexSize::NULL,
+            final_gap: FlexSize::NULL,
         }
     }
 }
 
 #[derive(Clone, Default)]
 pub struct FrameStyle {
-    //pub width: Option<Sizing>,
-    //pub height: Option<Sizing>,
-    //pub padding_left: LengthOrPercentage,
-    //pub padding_right: LengthOrPercentage,
-    //pub padding_top: LengthOrPercentage,
-    //pub padding_bottom: LengthOrPercentage,
-    //pub horizontal_align: Alignment,
-    //pub vertical_align: Alignment,
-    //pub min_width: Option<LengthOrPercentage>,
-    //pub max_width: Option<LengthOrPercentage>,
-    //pub min_height: Option<LengthOrPercentage>,
-    //pub max_height: Option<LengthOrPercentage>,
-    pub layout: FrameLayout,
     pub border_left: LengthOrPercentage,
     pub border_right: LengthOrPercentage,
     pub border_top: LengthOrPercentage,
@@ -133,6 +131,56 @@ impl FrameStyle {
     }
 }
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum LayoutCacheEntry {
+    // Width and height specified and finite
+    FullySpecified = 0,
+    // Width=inf, height whatever
+    WidthInfinite,
+    Count,
+}
+
+/// Layout cache.
+#[derive(Default)]
+struct LayoutCache {
+    entries: [Option<(LayoutInput, LayoutOutput)>; LayoutCacheEntry::Count as usize],
+}
+
+impl LayoutCache {
+    fn get_or_insert_with(
+        &mut self,
+        layout_input: &LayoutInput,
+        f: impl FnOnce(&LayoutInput) -> LayoutOutput,
+    ) -> LayoutOutput {
+        let entry_index = match layout_input {
+            LayoutInput {
+                width: SizeConstraint::Available(w),
+                height: SizeConstraint::Available(h),
+            } if w.is_finite() && h.is_finite() => LayoutCacheEntry::FullySpecified,
+            LayoutInput {
+                width: SizeConstraint::Available(w),
+                ..
+            } if *w == f64::INFINITY => LayoutCacheEntry::WidthInfinite,
+            _ => LayoutCacheEntry::Count,
+        };
+
+        if entry_index < LayoutCacheEntry::Count {
+            if let Some(entry) = self.entries[entry_index as usize] {
+                if entry.0 == *layout_input {
+                    trace!("using cached layout for entry {entry:?}: {layout_input:?}");
+                    return entry.1;
+                }
+            }
+            let output = f(layout_input);
+            self.entries[entry_index as usize] = Some((*layout_input, output));
+            output
+        } else {
+            f(layout_input)
+        }
+    }
+}
+
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
     element: Element,
@@ -141,6 +189,8 @@ pub struct Frame {
     pub active: Handler<bool>,
     pub focused: Handler<bool>,
     pub state_changed: Handler<InteractState>,
+    layout: RefCell<FrameLayout>,
+    layout_cache: RefCell<LayoutCache>,
     state: Cell<InteractState>,
     style: FrameStyle,
     style_changed: Cell<bool>,
@@ -166,6 +216,8 @@ impl Frame {
             active: Default::default(),
             focused: Default::default(),
             state_changed: Default::default(),
+            layout: RefCell::new(Default::default()),
+            layout_cache: RefCell::new(Default::default()),
             state: Cell::new(Default::default()),
             style: style.clone(),
             style_changed: Cell::new(true),
@@ -176,6 +228,11 @@ impl Frame {
 
     pub fn set_content(&self, content: &dyn ElementMethods) {
         (self as &dyn ElementMethods).add_child(content);
+    }
+
+    pub fn set_layout(&self, layout: FrameLayout) {
+        *self.layout.borrow_mut() = layout;
+        self.mark_needs_relayout();
     }
 
     pub async fn clicked(&self) {
@@ -291,126 +348,137 @@ fn compute_intrinsic_sizes(direction: Axis, children: &[Rc<dyn ElementMethods>])
 */
 
 impl Frame {
-    fn measure_content(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let _span = trace_span!("Frame::layout",).entered();
-
-        self.calculate_style();
-        let s = self.resolved_style.borrow();
-
-        // resolve padding
-        let padding_left = layout_input
-            .width
-            .resolve_length(self.get(PaddingLeft).unwrap_or_default());
-        let padding_right = layout_input
-            .width
-            .resolve_length(self.get(PaddingRight).unwrap_or_default());
-        let padding_top = layout_input
-            .height
-            .resolve_length(self.get(PaddingTop).unwrap_or_default());
-        let padding_bottom = layout_input
-            .height
-            .resolve_length(self.get(PaddingBottom).unwrap_or_default());
-
-        let direction = match s.layout {
-            FrameLayout::Flex { direction, .. } => direction,
-        };
-
-        // layout children
-        // TODO other layouts
-        let flex_params = FlexLayoutParams {
-            axis: direction,
-            width_constraint: layout_input.width.deflate(padding_left + padding_right),
-            height_constraint: layout_input.height.deflate(padding_top + padding_bottom),
-            gap: FlexSize::NULL,
-            initial_gap: FlexSize::NULL,
-            final_gap: FlexSize::NULL,
-        };
-
-        let mut layout_output = do_flex_layout(&flex_params, children);
-        layout_output.width += padding_left + padding_right;
-        layout_output.height += padding_top + padding_bottom;
-        layout_output.baseline.as_mut().map(|b| *b += padding_top);
-        layout_output
-    }
-
-    /// Measures a box element sized according to the specified constraints.
-    fn measure_axis(
+    fn measure_content(
         &self,
         children: &[Rc<dyn ElementMethods>],
         axis: Axis,
-        sizing: Sizing,
-        main_axis_constraint: SizeConstraint,
-        cross_axis_constraint: SizeConstraint,
-    ) -> f64 {
-        let _span = tracing::trace_span!("measure_element").entered();
+        main: SizeConstraint,
+        cross: SizeConstraint,
+    ) -> LayoutOutput {
+        let layout_input = LayoutInput::from_main_cross(axis, main, cross);
+        self.layout_cache.borrow_mut().get_or_insert_with(&layout_input, |li| {
+            let _span = trace_span!("Flex::measure_content", ?layout_input).entered();
 
-        let mut min_content = LayoutOutput::NULL;
-        let mut max_content = LayoutOutput::NULL;
+            // resolve padding
+            let padding_left = layout_input
+                .width
+                .resolve_length(self.get(PaddingLeft).unwrap_or_default());
+            let padding_right = layout_input
+                .width
+                .resolve_length(self.get(PaddingRight).unwrap_or_default());
+            let padding_top = layout_input
+                .height
+                .resolve_length(self.get(PaddingTop).unwrap_or_default());
+            let padding_bottom = layout_input
+                .height
+                .resolve_length(self.get(PaddingBottom).unwrap_or_default());
 
-        if sizing.min == SizeValue::MinContent
-            || sizing.max == SizeValue::MinContent
-            || sizing.preferred == SizeValue::MinContent
-        {
-            min_content = self.measure_content(children, &LayoutInput::main_cross(
-                axis,
-                SizeConstraint::MIN,
-                cross_axis_constraint,
-            ))
+            let FrameLayout::Flex {
+                direction,
+                gap,
+                initial_gap,
+                final_gap,
+            } = self.layout.borrow().clone();
+
+            // layout children
+            // TODO other layouts
+            let flex_params = FlexLayoutParams {
+                axis: direction,
+                width: layout_input.width.deflate(padding_left + padding_right),
+                height: layout_input.height.deflate(padding_top + padding_bottom),
+                gap,
+                initial_gap,
+                final_gap,
+            };
+
+            let mut layout_output = do_flex_layout(&flex_params, children);
+            layout_output.width += padding_left + padding_right;
+            layout_output.height += padding_top + padding_bottom;
+            layout_output.baseline.as_mut().map(|b| *b += padding_top);
+            layout_output
+        })
+    }
+
+    /// Measures a box element sized according to the specified constraints.
+    fn measure_inner(
+        &self,
+        children: &[Rc<dyn ElementMethods>],
+        main_axis: Axis,
+        main_sz: Sizing,
+        cross_sz: Sizing,
+        parent_main_sc: SizeConstraint,
+        parent_cross_sc: SizeConstraint,
+    ) -> LayoutOutput {
+        let _span = trace_span!("measure_axis", ?main_axis).entered();
+        let cross_axis = main_axis.cross();
+
+        fn sizing_to_constraint(parent: SizeConstraint, sizing: SizeValue) -> SizeConstraint {
+            match sizing {
+                SizeValue::Auto => parent,
+                SizeValue::Fixed(value) => SizeConstraint::Available(value),
+                SizeValue::Percentage(p) => SizeConstraint::Available(parent.available().map(|s| p * s).unwrap_or(0.0)),
+                SizeValue::MinContent => SizeConstraint::MIN,
+                SizeValue::MaxContent => SizeConstraint::MAX,
+            }
+        }
+
+        let content_main_sc = sizing_to_constraint(parent_main_sc, main_sz.preferred);
+        let content_cross_sc = sizing_to_constraint(parent_cross_sc, cross_sz.preferred);
+
+        // Note that if main_sz and cross_sz are both fixed or percentage, the size is already
+        // fully determine and we don't need to measure it; however we do need to call `measure_content`
+        // to get the baseline.
+
+        let mut layout = self.measure_content(children, main_axis, content_main_sc, content_cross_sc);
+
+        // (main, cross) now holds the content box size
+
+        // it now needs to be constrained; do it one axis at a time, starting from the main axis
+        let eval_size = |size: SizeValue,
+                         axis: Axis,
+                         parent_main_sc: SizeConstraint,
+                         parent_cross_sc: SizeConstraint,
+                         default: f64|
+                         -> f64 {
+            match size {
+                SizeValue::Auto => default,
+                SizeValue::Fixed(s) => s,
+                SizeValue::Percentage(p) => parent_main_sc.available().map(|s| p * s).unwrap_or(default),
+                SizeValue::MinContent => self
+                    .measure_content(children, axis, SizeConstraint::MIN, parent_cross_sc)
+                    .size(axis),
+                SizeValue::MaxContent => self
+                    .measure_content(children, axis, SizeConstraint::MAX, parent_cross_sc)
+                    .size(axis),
+            }
         };
 
-        if sizing.min == SizeValue::MaxContent
-            || sizing.max == SizeValue::MaxContent
-            || sizing.preferred == SizeValue::MaxContent
-        {
-            max_content = self.measure_content(children, &LayoutInput::main_cross(
-                axis,
-                SizeConstraint::MAX,
-                cross_axis_constraint,
-            ))
-        };
+        let main_min = eval_size(main_sz.min, main_axis, parent_main_sc, parent_cross_sc, 0.0);
+        let main_max = eval_size(main_sz.max, main_axis, parent_main_sc, parent_cross_sc, f64::INFINITY);
+        let cross_min = eval_size(cross_sz.min, cross_axis, parent_cross_sc, parent_main_sc, 0.0);
+        let cross_max = eval_size(cross_sz.max, cross_axis, parent_cross_sc, parent_main_sc, f64::INFINITY);
 
-        let min = match sizing.min {
-            SizeValue::Auto => 0.0,
-            SizeValue::Fixed(s) => s,
-            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(0.0),
-            SizeValue::MinContent => min_content.size(axis),
-            SizeValue::MaxContent => max_content.size(axis),
-        };
-        let max = match sizing.max {
-            SizeValue::Auto => f64::INFINITY,
-            SizeValue::Fixed(s) => s,
-            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(f64::INFINITY),
-            SizeValue::MinContent => min_content.size(axis),
-            SizeValue::MaxContent => max_content.size(axis),
-        };
+        // clamp main axis size first
+        let main = layout.size(main_axis);
+        let clamped_main = main.clamp(main_min, main_max);
+        if clamped_main != main {
+            // re-measure cross axis under new main axis constraints
+            layout = self.measure_content(
+                children,
+                main_axis,
+                SizeConstraint::Available(clamped_main),
+                parent_cross_sc,
+            );
+        }
 
-        let preferred = match sizing.preferred {
-            SizeValue::Auto => self.measure_content(children, &LayoutInput::main_cross(
-                axis,
-                main_axis_constraint,
-                cross_axis_constraint,
-            ))
-                .size(axis),
-            SizeValue::Fixed(s) => s,
-            SizeValue::Percentage(p) => main_axis_constraint.available().map(|s| p * s).unwrap_or(0.0),
-            SizeValue::MinContent => min_content.size(axis),
-            SizeValue::MaxContent => max_content.size(axis),
-        };
+        // clamp cross axis size
+        // we don't ask for a re-measure, because this might in turn affect the main axis size,
+        // and we don't want to loop indefinitely, this isn't a fixed-point solver
+        let clamped_cross = layout.size(cross_axis).clamp(cross_min, cross_max);
+        layout.set_axis(cross_axis, clamped_cross);
 
-        // clamp preferred size to min and max
-        let size = preferred.clamp(min, max);
-
-        trace!(
-            "Measured element: axis={:?}, sizing={:?}, min={}, max={}, preferred={}, size={}",
-            axis,
-            sizing,
-            min,
-            max,
-            preferred,
-            size
-        );
-
-        size
+        trace!("Measured element: size={:?}", layout);
+        layout
     }
 }
 
@@ -420,25 +488,18 @@ impl ElementMethods for Frame {
     }
 
     fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        // measure and apply constraints in the width direction
-        let width = self.measure_axis(
+        let (main_constraint, cross_constraint) = layout_input.main_cross(Axis::Horizontal);
+        let size = self.measure_inner(
             children,
             Axis::Horizontal,
             self.get(layout::Width).unwrap_or_default(),
-            layout_input.width,
-            layout_input.height,
-        );
-        // then measure and apply constraints in the height direction
-        let height = self.measure_axis(
-            children,
-            Axis::Vertical,
             self.get(layout::Height).unwrap_or_default(),
-            layout_input.height,
-            width.into(),
+            main_constraint,
+            cross_constraint,
         );
         LayoutOutput {
-            width,
-            height,
+            width: size.width,
+            height: size.height,
             baseline: None,
         }
     }

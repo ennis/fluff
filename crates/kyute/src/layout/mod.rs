@@ -172,6 +172,12 @@ impl FlexSize {
     }
 }
 
+impl From<f64> for FlexSize {
+    fn from(size: f64) -> Self {
+        FlexSize { size, flex: 0.0 }
+    }
+}
+
 /// Represents a sizing constraint passed down from a container to a child element during layout.
 // Refactor this:
 // Remove "Exact", pass either "Available", "MinContent" or "MaxContent".
@@ -206,13 +212,22 @@ impl FlexSize {
 
 // Issue: this doesn't account for min-content and max-content
 // When requesting max, it will return max-width, which can be different from max-content
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum SizeConstraint {
     /// The element has the specified available space to layout itself.
     /// If 0, the element should return its minimum size, if infinite, it should return its maximum size.
     Available(f64),
     /// Requests the element ideal size.
     Unspecified,
+}
+
+impl fmt::Debug for SizeConstraint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SizeConstraint::Available(size) => write!(f, "{:.2}", size),
+            SizeConstraint::Unspecified => write!(f, "unspecified"),
+        }
+    }
 }
 
 impl SizeConstraint {
@@ -282,7 +297,7 @@ impl From<Axis> for RequestedAxis {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct LayoutInput {
     /// The sizing constraint in the horizontal axis.
     pub width: SizeConstraint,
@@ -290,8 +305,15 @@ pub struct LayoutInput {
     pub height: SizeConstraint,
 }
 
+impl fmt::Debug for LayoutInput {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}×{:?}", self.width, self.height)
+    }
+}
+
+
 impl LayoutInput {
-    pub fn main_cross(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint) -> Self {
+    pub fn from_main_cross(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
                 width: main,
@@ -330,23 +352,36 @@ impl LayoutInput {
             Axis::Vertical => self.height.resolve_length(length),
         }
     }
+
+    pub fn main_cross(&self, main_axis: Axis) -> (SizeConstraint, SizeConstraint) {
+        match main_axis {
+            Axis::Horizontal => (self.width, self.height),
+            Axis::Vertical => (self.height, self.width),
+        }
+    }
 }
 
 /// The output of the layout process.
 ///
 /// Returned by the `measure` and `layout` methods.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct LayoutOutput {
     /// The width of the element.
-    ///
-    /// This needs to be valid if the requested axis is `Horizontal` or `Both`.
     pub width: f64,
     /// The height of the element.
-    ///
-    /// This needs to be valid if the requested axis is `Vertical` or `Both`.
     pub height: f64,
     /// Baseline offset relative to the top of the element box.
     pub baseline: Option<f64>,
+}
+
+impl fmt::Debug for LayoutOutput {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:.2}×{:.2}", self.width, self.height)?;
+        if let Some(baseline) = self.baseline {
+            write!(f, " baseline={:.2}", baseline)?;
+        }
+        Ok(())
+    }
 }
 
 impl LayoutOutput {
@@ -377,6 +412,20 @@ impl LayoutOutput {
             Axis::Vertical => self.height,
         }
     }
+
+    pub fn main_cross(&self, axis: Axis) -> (f64, f64) {
+        match axis {
+            Axis::Horizontal => (self.width, self.height),
+            Axis::Vertical => (self.height, self.width),
+        }
+    }
+
+    pub fn set_axis(&mut self, axis: Axis, size: f64) {
+        match axis {
+            Axis::Horizontal => self.width = size,
+            Axis::Vertical => self.height = size,
+        }
+    }
 }
 
 impl Default for LayoutOutput {
@@ -400,6 +449,7 @@ pub struct Height;
 impl AttachedProperty for Height {
     type Value = Sizing;
 }
+
 
 /// Flex factor of an item inside a flex container.
 #[derive(Copy, Clone, Debug)]
