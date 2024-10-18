@@ -1,6 +1,6 @@
 use kurbo::Point;
 pub use kurbo::{self, Size};
-use kyute::layout::flex::Axis;
+use kyute::layout::Axis;
 use kyute::text::{TextRun, TextStyle};
 use kyute::widgets::button::button;
 use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};

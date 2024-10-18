@@ -6,8 +6,8 @@ use tracing::trace;
 use crate::element::{AttachedProperty, ElementMethods};
 use crate::layout;
 use crate::layout::{
-    Alignment, BoxMeasurements, FlexMargins, FlexSize,
-    LayoutInput, LayoutOutput, RequestedAxis, SizeConstraint,
+    Alignment, Axis, AxisSizeHelper, BoxMeasurements, FlexMargins, FlexSize, LayoutInput, LayoutMode, LayoutOutput,
+    RequestedAxis, SizeConstraint,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
@@ -37,173 +37,6 @@ impl AttachedProperty for FlexFactor {
     type Value = f64;
 }
 
-/*
-////////////////////////////////////////////////////////////////////////////////////////////////////
-pub struct Flex {
-    pub element: Element,
-    pub axis: Axis,
-    pub main_axis_alignment: MainAxisAlignment,
-    pub cross_axis_alignment: CrossAxisAlignment,
-}
-
-impl Flex {
-    pub fn new(axis: Axis) -> Rc<Flex> {
-        Element::new_derived(|element| Flex {
-            element,
-            axis,
-            main_axis_alignment: MainAxisAlignment::Start,
-            cross_axis_alignment: CrossAxisAlignment::Start,
-        })
-    }
-
-    pub fn row() -> Rc<Flex> {
-        Flex::new(Axis::Horizontal)
-    }
-
-    pub fn column() -> Rc<Flex> {
-        Flex::new(Axis::Vertical)
-    }
-
-    pub fn push(&self, item: &dyn Visual) {
-        // FIXME yeah that's not very good looking
-        (self as &dyn Visual).add_child(item);
-    }
-
-    pub fn push_flex(&self, item: &dyn Visual, flex: f64) {
-        FlexFactor.set(item, flex);
-        (self as &dyn Visual).add_child(item);
-    }
-}
-*/
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Axis {
-    #[default]
-    Vertical,
-    Horizontal,
-}
-
-impl Axis {
-    pub fn cross(&self) -> Axis {
-        match self {
-            Axis::Horizontal => Axis::Vertical,
-            Axis::Vertical => Axis::Horizontal,
-        }
-    }
-}
-
-/*
-impl Axis {
-    fn constraints(
-        &self,
-        main_axis_min: f64,
-        main_axis_max: f64,
-        cross_axis_min: f64,
-        cross_axis_max: f64,
-    ) -> BoxConstraints {
-        match self {
-            Axis::Horizontal => BoxConstraints {
-                min: Size {
-                    width: main_axis_min,
-                    height: cross_axis_min,
-                },
-                max: Size {
-                    width: main_axis_max,
-                    height: cross_axis_max,
-                },
-            },
-            Axis::Vertical => BoxConstraints {
-                min: Size {
-                    width: cross_axis_min,
-                    height: main_axis_min,
-                },
-                max: Size {
-                    width: cross_axis_max,
-                    height: main_axis_max,
-                },
-            },
-        }
-    }
-}*/
-
-/// Helper trait for main axis/cross axis sizes
-trait AxisSizeHelper {
-    fn main_length(&self, main_axis: Axis) -> f64;
-    fn cross_length(&self, main_axis: Axis) -> f64;
-
-    fn from_main_cross(main_axis: Axis, main: f64, cross: f64) -> Self;
-}
-
-impl AxisSizeHelper for Size {
-    fn main_length(&self, main_axis: Axis) -> f64 {
-        match main_axis {
-            Axis::Horizontal => self.width,
-            Axis::Vertical => self.height,
-        }
-    }
-
-    fn cross_length(&self, main_axis: Axis) -> f64 {
-        match main_axis {
-            Axis::Horizontal => self.height,
-            Axis::Vertical => self.width,
-        }
-    }
-
-    fn from_main_cross(main_axis: Axis, main: f64, cross: f64) -> Self {
-        match main_axis {
-            Axis::Horizontal => Size {
-                width: main,
-                height: cross,
-            },
-            Axis::Vertical => Size {
-                width: cross,
-                height: main,
-            },
-        }
-    }
-}
-
-trait AxisOffsetHelper {
-    fn set_axis(&mut self, axis: Axis, offset: f64);
-}
-
-impl AxisOffsetHelper for Vec2 {
-    fn set_axis(&mut self, axis: Axis, offset: f64) {
-        match axis {
-            Axis::Horizontal => self.x = offset,
-            Axis::Vertical => self.y = offset,
-        }
-    }
-}
-
-/*
-fn main_cross_constraints(axis: Axis, min_main: f64, max_main: f64, min_cross: f64, max_cross: f64) -> BoxConstraints {
-    match axis {
-        Axis::Horizontal => BoxConstraints {
-            min: Size {
-                width: min_main,
-                height: min_cross,
-            },
-            max: Size {
-                width: max_main,
-                height: max_cross,
-            },
-        },
-        Axis::Vertical => BoxConstraints {
-            min: Size {
-                width: min_cross,
-                height: min_main,
-            },
-            max: Size {
-                width: max_cross,
-                height: max_main,
-            },
-        },
-    }
-}*/
-
 pub struct FlexLayoutParams {
     /// The direction of the flex
     pub axis: Axis,
@@ -211,6 +44,8 @@ pub struct FlexLayoutParams {
     pub width: SizeConstraint,
     /// Sizing constraint in the vertical direction.
     pub height: SizeConstraint,
+    pub parent_width: Option<f64>,
+    pub parent_height: Option<f64>,
     /// Default gap between children.
     pub gap: FlexSize,
     /// Initial gap before the first child (padding).
@@ -219,13 +54,14 @@ pub struct FlexLayoutParams {
     pub final_gap: FlexSize,
 }
 
-pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>]) -> LayoutOutput {
     let main_axis = p.axis;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
-    let (main_axis_sizing, cross_axis_sizing) = match main_axis {
-        Axis::Horizontal => (p.width, p.height),
-        Axis::Vertical => (p.height, p.width),
+
+    let (main_axis_sizing, cross_axis_sizing, parent_main, parent_cross) = match main_axis {
+        Axis::Horizontal => (p.width, p.height, p.parent_width, p.parent_height),
+        Axis::Vertical => (p.height, p.width, p.parent_height, p.parent_width),
     };
 
     // ======
@@ -246,34 +82,43 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
 
     #[derive(Copy, Clone, Default)]
     struct ItemMeasure {
-        size: f64,
+        main: f64,
+        cross: f64,
         max: f64,
         flex: f64,
     }
-    let mut main_measures = vec![ItemMeasure::default(); child_count]; // box measurements of children along the main axis
+    let mut measures = vec![ItemMeasure::default(); child_count]; // box measurements of children along the main axis
     let mut margins = vec![FlexSize::NULL; child_count + 1]; // margins between children
 
     // Set the initial and final gaps
     margins[0] = p.initial_gap;
     margins[child_count] = p.final_gap;
 
-    /*trace!(
-        "Before flex layout: width_constraint: {:?}, height_constraint: {:?}",
-        p.width,
-        p.height
-    );*/
-
     // Measure each child along the main axis (flex factor, ideal and maximum sizes), including fixed spacing.
     for (i, child) in children.iter().enumerate() {
-
         // get child flex factor
         let flex = child.get(layout::FlexFactor).unwrap_or_default();
-
         // get the element's ideal size along the main axis, using the parent constraints for the size.
-        let item_main = child.do_measure(&LayoutInput::from_main_cross(main_axis, main_axis_sizing, cross_axis_sizing)).size(main_axis);
+        let (item_main, item_cross) = child
+            .do_measure(&LayoutInput::from_main_cross(
+                main_axis,
+                main_axis_sizing,
+                cross_axis_sizing,
+                parent_main,
+                parent_cross,
+            ))
+            .main_cross(main_axis);
         // if flex != 0, also measure the max width so that we know how much it can grow
         let max_item_main = if flex != 0.0 {
-            child.do_measure(&LayoutInput::from_main_cross(main_axis, SizeConstraint::MAX, cross_axis_sizing)).size(main_axis)
+            child
+                .do_measure(&LayoutInput::from_main_cross(
+                    main_axis,
+                    SizeConstraint::MAX,
+                    cross_axis_sizing,
+                    parent_main,
+                    parent_cross,
+                ))
+                .axis(main_axis)
         } else {
             0.0
         };
@@ -281,8 +126,9 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
         non_flex_main_total += item_main;
         flex_sum += flex;
 
-        main_measures[i] = ItemMeasure {
-            size: item_main,
+        measures[i] = ItemMeasure {
+            main: item_main,
+            cross: item_cross,
             max: max_item_main,
             flex,
         };
@@ -330,10 +176,14 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
 
             // grow children with flex factors
             //let size = child_layouts[i].size(main_axis);
-            if main_measures[i].flex != 0.0 {
-                let growth = (main_max - main_size) * main_measures[i].flex / flex_sum;
-                main_measures[i].size += growth;
-                flex_sum -= main_measures[i].flex;
+            if measures[i].flex != 0.0 {
+                let growth = (main_max - main_size) * measures[i].flex / flex_sum;
+                if growth > 0.0 {
+                    measures[i].main += growth;
+                    // invalidate cross size as it may have changed due to more space being allocated on the main axis
+                    measures[i].cross = -1.0;
+                }
+                flex_sum -= measures[i].flex;
                 main_size += growth;
                 //child_layouts[i] = layout;
                 // TODO respect max_width in the measure
@@ -358,7 +208,7 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
     );
 
     // ======
-    // ====== Layout children, and measure cross axis size + baselines ======
+    // ====== Measure cross axis size
     // ======
 
     // Same as main_axis_max
@@ -370,27 +220,62 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
     let mut child_layouts = vec![LayoutOutput::NULL; child_count];
 
     for (i, child) in children.iter().enumerate() {
-        let item_cross = child.do_measure(&LayoutInput::from_main_cross(main_axis, main_measures[i].size.into(), cross_axis_sizing)).size(cross_axis);
+        // re-measure item cross size if necessary
+        if measures[i].cross < 0.0 {
+            // NOTE: there's no guarantee that the child will return the grown main size.
+            // For instance, it may resize itself only in discrete increments, and
+            // even if the provided main size has grown, it may return the same main size.
+            // Concrete example: text elements
+            measures[i].cross = child
+                .do_measure(&LayoutInput::from_main_cross(
+                    main_axis,
+                    measures[i].main.into(),
+                    cross_axis_sizing,
+                    parent_main,
+                    parent_cross,
+                ))
+                .axis(cross_axis);
+        }
 
-        // perform final child layout, since we know the size in both axes
-        let layout = child.do_layout(Size::from_main_cross(main_axis, main_measures[i].size, item_cross));
+        max_child_cross_size = max_child_cross_size.max(measures[i].cross);
 
-        max_child_cross_size = max_child_cross_size.max(item_cross);
-
-        // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
+        // If baseline alignment is requested, we need to perform child layout to get the baseline,
+        // and perform alignment to know the final cross size.
         let alignment = match cross_axis {
             Axis::Horizontal => child.get(layout::HorizontalAlignment).unwrap_or_default(),
             Axis::Vertical => child.get(layout::VerticalAlignment).unwrap_or_default(),
         };
+
         if alignment == Alignment::FirstBaseline {
+            // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
+            let layout = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
-            max_below_baseline = max_below_baseline.max(item_cross - baseline);
+            max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
+            child_layouts[i] = layout;
         }
-        child_layouts[i] = layout;
     }
 
     let mut non_flex_cross_size = max_child_cross_size.max(max_baseline + max_below_baseline);
+    // clamp it to max cross size
+    let cross_size = non_flex_cross_size.min(cross_max);
+    //let cross_slack = cross_axis_max - cross_size;
+
+    // ======
+    // ====== If we're only measuring, we can stop here
+    // ======
+    if mode == LayoutMode::Measure {
+        return LayoutOutput::from_main_cross_sizes(main_axis, main_size, cross_size, Some(max_baseline));
+    }
+
+    // ======
+    // ====== Layout children
+    // ======
+    for (i, child) in children.iter().enumerate() {
+        // TODO don't layout again if we already have the layout (the child may be already laid out
+        // due to baseline alignment)
+        child_layouts[i] = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, cross_size));
+    }
 
     trace!(
         "After cross axis size determination: non_flex_cross_size: {}, max_baseline: {}, max_below_baseline: {}",
@@ -398,10 +283,6 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
         max_baseline,
         max_below_baseline
     );
-
-    // clamp it to max cross size
-    let cross_size = non_flex_cross_size.min(cross_max);
-    //let cross_slack = cross_axis_max - cross_size;
 
     // ======
     // ====== align children along the cross axis
@@ -417,16 +298,20 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
 
         let offset_cross = match alignment {
             Alignment::Relative(p) => p * (cross_size - cross_child_size),
-            Alignment::FirstBaseline => {
-                max_baseline - child_layouts[i].baseline.unwrap_or(0.0)
-            }
+            Alignment::FirstBaseline => max_baseline - child_layouts[i].baseline.unwrap_or(0.0),
             Alignment::LastBaseline => {
                 // TODO last baseline
                 0.0
             }
         };
 
-        trace!("Child {}: size={}, offset_main = {}, offset_cross = {}", i, main_measures[i].size, offset_main, offset_cross);
+        trace!(
+            "Child {}: size={}, offset_main = {}, offset_cross = {}",
+            i,
+            measures[i].main,
+            offset_main,
+            offset_cross
+        );
         // set child offset
         match main_axis {
             Axis::Horizontal => {
@@ -436,9 +321,9 @@ pub fn do_flex_layout(p: &FlexLayoutParams, children: &[Rc<dyn ElementMethods>])
                 child.set_offset(Vec2::new(offset_cross, offset_main));
             }
         }
-        offset_main += main_measures[i].size + margins[i + 1].size;
+        offset_main += measures[i].main + margins[i + 1].size;
     }
 
-    // TODO baseline may be wrong here
+    // TODO baseline may be wrong here?
     LayoutOutput::from_main_cross_sizes(main_axis, main_size, cross_size, Some(max_baseline))
 }

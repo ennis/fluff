@@ -9,7 +9,6 @@ use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
 use tracing::trace_span;
 use unicode_segmentation::GraphemeCursor;
 
-use crate::{Color, PaintCtx};
 use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
@@ -17,6 +16,7 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
+use crate::{Color, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -585,73 +585,25 @@ impl ElementMethods for TextEdit {
         &self.element
     }
 
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let _span = trace_span!(
-            "TextEdit::measure",
-        ).entered();
+    fn measure(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size {
+        let _span = trace_span!("TextEdit::measure",).entered();
 
         let this = &mut *self.state.borrow_mut();
-
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         this.paragraph.layout(space);
+        Size::new(this.paragraph.longest_line() as f64, this.paragraph.height() as f64)
+    }
 
+    fn layout(&self, _children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+        let this = &mut *self.state.borrow_mut();
+        this.paragraph.layout(size.width as f32);
         let output = LayoutOutput {
             width: this.paragraph.longest_line() as f64,
             height: this.paragraph.height() as f64,
             baseline: Some(this.paragraph.alphabetic_baseline() as f64),
         };
-
+        self.state.borrow_mut().size = Size::new(output.width, output.height);
         output
-    }
-
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
-        let measure = self.measure(children, &LayoutInput {
-            width: SizeConstraint::Available(size.width),
-            height: SizeConstraint::Available(size.height),
-        });
-        self.state.borrow_mut().size = Size::new(measure.width, measure.height);
-        measure
-
-        /*let this = &mut *self.state.borrow_mut();
-
-        let available_width = if this.wrap_mode == WrapMode::Wrap || this.text_overflow == TextOverflow::Ellipsis {
-            // Force max width constraints when ellipsis mode is requested, because
-            // otherwise skia won't know where to clip.
-            //
-            // The behavior seems to be like so:
-            // - the text is **always** laid out with wrapping
-            // - the text is laid out with wrapping until the max number of lines is reached
-            // - then, if ellipsis is set, the ellipsis is put there
-            // - setEllipsis seems to set the max number of lines to 1
-            constraints.max.width
-        } else {
-            f64::INFINITY
-        };
-
-        let invalidate_layout = this.relayout || this.last_available_width != available_width;
-        if invalidate_layout {
-            this.paragraph.layout(available_width as f32);
-        }
-        this.relayout = false;
-        this.last_available_width = available_width;
-
-        let w = this.paragraph.longest_line() as f64;
-        let h = this.paragraph.height() as f64;
-        let alphabetic_baseline = this.paragraph.alphabetic_baseline();
-        let unconstrained_size = Size::new(w, h);
-        this.size = constraints.constrain(unconstrained_size);
-
-        /*eprintln!("[text_edit] - constraints: {:?}\n -> longest_line: {}\n -> height: {}\n -> constrained_size: {}\n -> did_exceed_max_lines: {}",
-                  constraints, this.paragraph.longest_line(), this.paragraph.height(),
-                  this.size, this.paragraph.did_exceed_max_lines()
-        );*/
-
-        Geometry {
-            size: this.size,
-            baseline: Some(alphabetic_baseline as f64),
-            bounding_rect: this.size.to_rect(),
-            paint_bounding_rect: this.size.to_rect(),
-        }*/
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

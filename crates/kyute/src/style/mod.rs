@@ -2,8 +2,7 @@ use std::any::TypeId;
 
 use crate::Color;
 use crate::drawing::BoxShadow;
-use crate::layout::{Alignment, LengthOrPercentage, Sizing};
-use crate::layout::flex::Axis;
+use crate::layout::{Alignment, Axis, LengthOrPercentage, Sizing};
 
 
 pub trait IntoStyleValue {

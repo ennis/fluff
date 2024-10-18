@@ -10,8 +10,8 @@ use crate::drawing::ToSkia;
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
-use crate::PaintCtx;
 use crate::text::{TextLayout, TextRun};
+use crate::PaintCtx;
 
 pub struct Text {
     element: Element,
@@ -50,32 +50,25 @@ impl ElementMethods for Text {
         &self.element
     }
 
-    fn measure(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
-        let _span = trace_span!(
-            "Text::measure"
-        ).entered();
+    fn measure(&self, _children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size {
+        let _span = trace_span!("TextEdit::measure",).entered();
 
-        let paragraph = &mut *self.paragraph.borrow_mut();
-
+        let p = &mut *self.paragraph.borrow_mut();
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
-        paragraph.layout(space);
-
-        let output = LayoutOutput {
-            width: paragraph.longest_line() as f64,
-            height: paragraph.height() as f64,
-            baseline: Some(paragraph.alphabetic_baseline() as f64),
-        };
-
-        trace!("Measured text: {:?} -> {:?}", layout_input, output);
-        self.relayout.set(false);
-        output
+        p.layout(space);
+        Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
-        self.measure(children, &LayoutInput {
-            width: SizeConstraint::Available(size.width),
-            height: SizeConstraint::Available(size.height),
-        })
+    fn layout(&self, _children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+        let _span = trace_span!("Text::layout").entered();
+        let p = &mut *self.paragraph.borrow_mut();
+        p.layout(size.width as f32);
+        let output = LayoutOutput {
+            width: p.longest_line() as f64,
+            height: p.height() as f64,
+            baseline: Some(p.alphabetic_baseline() as f64),
+        };
+        output
     }
 
     fn hit_test(&self, _point: Point) -> bool {

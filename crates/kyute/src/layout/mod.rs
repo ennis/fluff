@@ -7,7 +7,6 @@ use kurbo::{Insets, Rect, Size, Vec2};
 use tracing::trace;
 
 use crate::element::AttachedProperty;
-use crate::layout::flex::Axis;
 use crate::ElementMethods;
 
 pub mod flex;
@@ -59,6 +58,76 @@ impl From<f64> for LengthOrPercentage {
         LengthOrPercentage::Px(px)
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Axis
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Axis {
+    #[default]
+    Vertical,
+    Horizontal,
+}
+
+impl Axis {
+    pub fn cross(&self) -> Axis {
+        match self {
+            Axis::Horizontal => Axis::Vertical,
+            Axis::Vertical => Axis::Horizontal,
+        }
+    }
+}
+
+/// Helper trait for main axis/cross axis sizes
+pub trait AxisSizeHelper {
+    fn main_cross(&self, main_axis: Axis) -> (f64, f64);
+    fn axis(&self, axis: Axis) -> f64;
+    fn from_main_cross(main_axis: Axis, main: f64, cross: f64) -> Self;
+}
+
+impl AxisSizeHelper for Size {
+    fn main_cross(&self, main_axis: Axis) -> (f64, f64) {
+        match main_axis {
+            Axis::Horizontal => (self.width, self.height),
+            Axis::Vertical => (self.height, self.width),
+        }
+    }
+
+    fn axis(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.width,
+            Axis::Vertical => self.height,
+        }
+    }
+
+    fn from_main_cross(main_axis: Axis, main: f64, cross: f64) -> Self {
+        match main_axis {
+            Axis::Horizontal => Size {
+                width: main,
+                height: cross,
+            },
+            Axis::Vertical => Size {
+                width: cross,
+                height: main,
+            },
+        }
+    }
+}
+
+trait AxisOffsetHelper {
+    fn set_axis(&mut self, axis: Axis, offset: f64);
+}
+
+impl AxisOffsetHelper for Vec2 {
+    fn set_axis(&mut self, axis: Axis, offset: f64) {
+        match axis {
+            Axis::Horizontal => self.x = offset,
+            Axis::Vertical => self.y = offset,
+        }
+    }
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Alignment
@@ -178,40 +247,13 @@ impl From<f64> for FlexSize {
     }
 }
 
-/// Represents a sizing constraint passed down from a container to a child element during layout.
-// Refactor this:
-// Remove "Exact", pass either "Available", "MinContent" or "MaxContent".
-// The child should determine its own size from that, without relying on the parent to provide an "Exact" size.
-//
-// Issue: child layout doesn't return flex factors (i.e. doesn't return if it can grow or not)
-//
-// For example: given available space of 500px, a child returns a size of, say, 100px.
-// It's in a flex container, and has remaining space to allocate, so it will assign a proportion of the
-// remaining space to the child, and call layout again with an available space of 125px.
-// There's no reason for the child to return a different result on the second call.
-// In this case, it makes more sense for the final size to be decided by the parent.
-//
-// Another approach:
-// - the "measure" method only computes intrinsic sizes (possibly given a fixed size on the other axis, or definite sizes)
-//      - this takes into account preferred width/height
-//      - this returns "BoxMeasurements", with preferred/min/max sizes
-// - "layout" is always called with a definitive width and height
-// - the parent passes a layout constraint to the child that is either MinContent or MaxContent (for measuring)
-// - the child returns its measured size
-// - the parent then decides how to allocate the remaining space, and calls layout again
-//
-// Issue: after measuring, the parent doesn't know if the child can grow or not, and by how much
-// (i.e. what is its maximum size)
-//
-// Alternative protocol, from swiftUI:
-// Call measure to return minimum size, maximum size, and ideal size
-// - minimum size is CSS:min-width which can be min-content
-// - maximum size is CSS:max-width, the upper growth limit
-// - ideal size is the preferred size (CSS: width)
-// - size under available space
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LayoutMode {
+    Measure,
+    Place,
+}
 
-// Issue: this doesn't account for min-content and max-content
-// When requesting max, it will return max-width, which can be different from max-content
+/// Represents a sizing constraint passed down from a container to a child element during layout.
 #[derive(Copy, Clone, PartialEq)]
 pub enum SizeConstraint {
     /// The element has the specified available space to layout itself.
@@ -303,6 +345,9 @@ pub struct LayoutInput {
     pub width: SizeConstraint,
     /// The sizing constraint in the vertical axis.
     pub height: SizeConstraint,
+
+    pub parent_width: Option<f64>,
+    pub parent_height: Option<f64>,
 }
 
 impl fmt::Debug for LayoutInput {
@@ -313,15 +358,19 @@ impl fmt::Debug for LayoutInput {
 
 
 impl LayoutInput {
-    pub fn from_main_cross(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint) -> Self {
+    pub fn from_main_cross(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint, parent_main: Option<f64>, parent_cross: Option<f64>) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
                 width: main,
                 height: cross,
+                parent_width: parent_main,
+                parent_height: parent_cross,
             },
             Axis::Vertical => LayoutInput {
                 width: cross,
                 height: main,
+                parent_width: parent_cross,
+                parent_height: parent_main,
             },
         }
     }

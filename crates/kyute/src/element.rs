@@ -648,7 +648,7 @@ pub trait ElementMethods: EventTarget {
 
     /// Asks the widget to measure itself under the specified constraints, but without actually laying
     /// out the children.
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput;
+    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size;
 
     /// Lays out the children of this widget under the specified constraints.
     fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
@@ -739,7 +739,7 @@ impl dyn ElementMethods + '_ {
         self.element().children.borrow().len()
     }*/
 
-    pub fn do_measure(&self, layout_input: &LayoutInput) -> LayoutOutput {
+    pub fn do_measure(&self, layout_input: &LayoutInput) -> Size {
         let children = self.children();
         self.measure(&*children, layout_input)
     }

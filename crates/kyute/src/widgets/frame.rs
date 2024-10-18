@@ -12,10 +12,10 @@ use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{Element, ElementMethods};
 use crate::event::Event;
 use crate::handler::Handler;
-use crate::layout::flex::{do_flex_layout, Axis, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
+use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
 use crate::layout::{
-    FlexSize, LayoutInput, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft, PaddingRight, PaddingTop,
-    SizeConstraint, SizeValue, Sizing,
+    Axis, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft,
+    PaddingRight, PaddingTop, SizeConstraint, SizeValue, Sizing,
 };
 use crate::{drawing, layout, Color, PaintCtx};
 
@@ -148,15 +148,56 @@ struct LayoutCache {
 }
 
 impl LayoutCache {
+    fn get_cached(&self, entry: LayoutCacheEntry, input: &LayoutInput) -> Option<LayoutOutput> {
+        let Some((cached_input, cached_output)) = self.entries[entry as usize] else {
+            // no entry in cache
+            return None;
+        };
+
+        if cached_input == *input {
+            // exact match
+            return Some(cached_output);
+        }
+
+        let (
+            SizeConstraint::Available(w),
+            SizeConstraint::Available(h),
+            SizeConstraint::Available(cached_w),
+            SizeConstraint::Available(cached_h),
+        ) = (input.width, input.height, cached_input.width, cached_input.height)
+        else {
+            return None;
+        };
+
+        // if we returned a box of size w x h for request W1 x H1, and now we're asked for W2 x H2,
+        // with w < W2 < W1  and h < H2 < H1, we can still use the cached layout
+        // (the new box is smaller but the previous result still fits inside)
+        // We can't do that if the new request is larger than the previous one, because given a larger
+        // request the element might choose to layout itself differently.
+
+        if cached_output.width <= w && w <= cached_w && cached_output.height <= h && h <= cached_h {
+            return Some(cached_output);
+        }
+
+        // No match
+        return None;
+    }
+
     fn get_or_insert_with(
         &mut self,
         layout_input: &LayoutInput,
+        mode: LayoutMode,
         f: impl FnOnce(&LayoutInput) -> LayoutOutput,
     ) -> LayoutOutput {
+        if mode == LayoutMode::Place {
+            return f(layout_input);
+        }
+
         let entry_index = match layout_input {
             LayoutInput {
                 width: SizeConstraint::Available(w),
                 height: SizeConstraint::Available(h),
+                ..
             } if w.is_finite() && h.is_finite() => LayoutCacheEntry::FullySpecified,
             LayoutInput {
                 width: SizeConstraint::Available(w),
@@ -166,11 +207,9 @@ impl LayoutCache {
         };
 
         if entry_index < LayoutCacheEntry::Count {
-            if let Some(entry) = self.entries[entry_index as usize] {
-                if entry.0 == *layout_input {
-                    trace!("using cached layout for entry {entry:?}: {layout_input:?}");
-                    return entry.1;
-                }
+            if let Some(layout) = self.get_cached(entry_index, layout_input) {
+                trace!("using cached layout for entry {entry_index:?}: {layout:?}");
+                return layout;
             }
             let output = f(layout_input);
             self.entries[entry_index as usize] = Some((*layout_input, output));
@@ -248,130 +287,37 @@ impl Frame {
     }
 }
 
-/*
-#[derive(Debug)]
-struct FrameSizes {
-    parent_min: f64,
-    parent_max: f64,
-    content_min: f64,
-    content_max: f64,
-    self_min: Option<f64>,
-    self_max: Option<f64>,
-    fixed: Option<Sizing>,
-    padding_before: f64,
-    padding_after: f64,
+struct Padding {
+    left: LengthOrPercentage,
+    right: LengthOrPercentage,
+    top: LengthOrPercentage,
+    bottom: LengthOrPercentage,
 }
 
-impl FrameSizes {
-    fn compute_child_constraint(&self) -> (f64, f64) {
-        assert!(self.parent_min <= self.parent_max);
-
-        /*// sanity check
-        if let (Some(ref mut min), Some(ref mut max)) = (self.self_min, self.self_max) {
-            if *min > *max {
-                warn!("min width is greater than max width");
-                *min = *max;
-            }
-        }*/
-
-        let padding = self.padding_before + self.padding_after;
-        let mut min = self.self_min.unwrap_or(0.0).clamp(self.parent_min, self.parent_max);
-        let mut max = self.self_max.unwrap_or(f64::INFINITY).clamp(self.parent_min, self.parent_max);
-
-        // apply fixed width
-        if let Some(fixed) = self.fixed {
-            let w = match fixed {
-                Sizing::Length(len) => len.resolve(self.parent_max),
-                Sizing::MinContent => self.content_min + padding,
-                Sizing::MaxContent => self.content_max + padding,
-            };
-            let w = w.clamp(min, max);
-            min = w;
-            max = w;
-        }
-
-        // deflate by padding
-        min -= padding;
-        max -= padding;
-        min = min.max(0.0);
-        max = max.max(0.0);
-        (min, max)
-    }
-
-    fn compute_self_size(&self, child_len: f64) -> f64 {
-        let mut size = child_len;
-        let padding = self.padding_before + self.padding_after;
-        if let Some(fixed) = self.fixed {
-            size = match fixed {
-                Sizing::Length(len) => len.resolve(self.parent_max),
-                Sizing::MinContent => self.content_min + padding,
-                Sizing::MaxContent => self.content_max + padding,
-            };
-        } else {
-            size += padding;
-        }
-        // apply min and max width
-        let min = self.self_min.unwrap_or(0.0).clamp(self.parent_min, self.parent_max);
-        let max = self.self_max.unwrap_or(f64::INFINITY).clamp(self.parent_min, self.parent_max);
-        size = size.clamp(min, max);
-        size
-    }
+struct BoxSizingParams<'a> {
+    axis: Axis,
+    padding: Padding,
+    children: &'a [Rc<dyn ElementMethods>],
 }
-
-fn compute_intrinsic_sizes(direction: Axis, children: &[Rc<dyn ElementMethods>]) -> IntrinsicSizes {
-    let mut isizes = IntrinsicSizes::default();
-    for c in children.iter() {
-        let s = c.intrinsic_sizes();
-        match direction {
-            Axis::Horizontal => {
-                // horizontal layout
-                // width is sum of all children
-                // height is max of all children
-                isizes.min.width += s.min.width;
-                isizes.max.width += s.max.width;
-                isizes.min.height = isizes.min.height.max(s.min.height);
-                isizes.max.height = isizes.max.height.max(s.max.height);
-            }
-            Axis::Vertical => {
-                // vertical layout
-                // width is max of all children
-                // height is sum of all children
-                isizes.min.height += s.min.height;
-                isizes.max.height += s.max.height;
-                isizes.min.width = isizes.min.width.max(s.min.width);
-                isizes.max.width = isizes.max.width.max(s.max.width);
-            }
-        }
-    }
-    isizes
-}
-*/
 
 impl Frame {
-    fn measure_content(
+    fn layout_content(
         &self,
-        children: &[Rc<dyn ElementMethods>],
-        axis: Axis,
+        p: &BoxSizingParams,
+        mode: LayoutMode,
         main: SizeConstraint,
         cross: SizeConstraint,
     ) -> LayoutOutput {
-        let layout_input = LayoutInput::from_main_cross(axis, main, cross);
-        self.layout_cache.borrow_mut().get_or_insert_with(&layout_input, |li| {
-            let _span = trace_span!("Flex::measure_content", ?layout_input).entered();
+        // TODO parent size
+        let layout_input = LayoutInput::from_main_cross(p.axis, main, cross, None, None);
+        self.layout_cache.borrow_mut().get_or_insert_with(&layout_input, mode, |li| {
+            let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
 
             // resolve padding
-            let padding_left = layout_input
-                .width
-                .resolve_length(self.get(PaddingLeft).unwrap_or_default());
-            let padding_right = layout_input
-                .width
-                .resolve_length(self.get(PaddingRight).unwrap_or_default());
-            let padding_top = layout_input
-                .height
-                .resolve_length(self.get(PaddingTop).unwrap_or_default());
-            let padding_bottom = layout_input
-                .height
-                .resolve_length(self.get(PaddingBottom).unwrap_or_default());
+            let padding_left = layout_input.width.resolve_length(p.padding.left);
+            let padding_right = layout_input.width.resolve_length(p.padding.right);
+            let padding_top = layout_input.height.resolve_length(p.padding.top);
+            let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
 
             let FrameLayout::Flex {
                 direction,
@@ -386,31 +332,33 @@ impl Frame {
                 axis: direction,
                 width: layout_input.width.deflate(padding_left + padding_right),
                 height: layout_input.height.deflate(padding_top + padding_bottom),
+                parent_width: None,
+                parent_height: None,
                 gap,
                 initial_gap,
                 final_gap,
             };
 
-            let mut layout_output = do_flex_layout(&flex_params, children);
-            layout_output.width += padding_left + padding_right;
-            layout_output.height += padding_top + padding_bottom;
-            layout_output.baseline.as_mut().map(|b| *b += padding_top);
-            layout_output
+            let mut output = flex_layout(mode, &flex_params, p.children);
+            output.width += padding_left + padding_right;
+            output.height += padding_top + padding_bottom;
+            output.baseline.as_mut().map(|b| *b += padding_top);
+            output
         })
     }
 
     /// Measures a box element sized according to the specified constraints.
-    fn measure_inner(
+    fn layout_inner(
         &self,
-        children: &[Rc<dyn ElementMethods>],
-        main_axis: Axis,
+        p: &BoxSizingParams,
+        mode: LayoutMode,
         main_sz: Sizing,
         cross_sz: Sizing,
         parent_main_sc: SizeConstraint,
         parent_cross_sc: SizeConstraint,
     ) -> LayoutOutput {
-        let _span = trace_span!("measure_axis", ?main_axis).entered();
-        let cross_axis = main_axis.cross();
+        let _span = trace_span!("Frame::layout_inner", ?mode, ?p.axis).entered();
+        let cross_axis = p.axis.cross();
 
         fn sizing_to_constraint(parent: SizeConstraint, sizing: SizeValue) -> SizeConstraint {
             match sizing {
@@ -426,13 +374,22 @@ impl Frame {
         let content_cross_sc = sizing_to_constraint(parent_cross_sc, cross_sz.preferred);
 
         // Note that if main_sz and cross_sz are both fixed or percentage, the size is already
-        // fully determine and we don't need to measure it; however we do need to call `measure_content`
-        // to get the baseline.
+        // fully determined, and we don't need to measure it.
+        let mut layout = match (main_sz.preferred, cross_sz.preferred) {
+            (SizeValue::Fixed(_) | SizeValue::Percentage(_), SizeValue::Fixed(_) | SizeValue::Percentage(_))
+            if mode == LayoutMode::Measure =>
+                {
+                    LayoutOutput::from_main_cross_sizes(
+                        p.axis,
+                        content_main_sc.available().unwrap(),
+                        content_cross_sc.available().unwrap(),
+                        None,
+                    )
+                }
+            _ => self.layout_content(p, mode, content_main_sc, content_cross_sc),
+        };
 
-        let mut layout = self.measure_content(children, main_axis, content_main_sc, content_cross_sc);
-
-        // (main, cross) now holds the content box size
-
+        // layout now holds the content box size
         // it now needs to be constrained; do it one axis at a time, starting from the main axis
         let eval_size = |size: SizeValue,
                          axis: Axis,
@@ -443,32 +400,28 @@ impl Frame {
             match size {
                 SizeValue::Auto => default,
                 SizeValue::Fixed(s) => s,
-                SizeValue::Percentage(p) => parent_main_sc.available().map(|s| p * s).unwrap_or(default),
+                SizeValue::Percentage(percent) => parent_main_sc.available().map(|s| percent * s).unwrap_or(default),
                 SizeValue::MinContent => self
-                    .measure_content(children, axis, SizeConstraint::MIN, parent_cross_sc)
+                    .layout_content(p, LayoutMode::Measure, SizeConstraint::MIN, parent_cross_sc)
                     .size(axis),
                 SizeValue::MaxContent => self
-                    .measure_content(children, axis, SizeConstraint::MAX, parent_cross_sc)
+                    .layout_content(p, LayoutMode::Measure, SizeConstraint::MAX, parent_cross_sc)
                     .size(axis),
             }
         };
 
-        let main_min = eval_size(main_sz.min, main_axis, parent_main_sc, parent_cross_sc, 0.0);
-        let main_max = eval_size(main_sz.max, main_axis, parent_main_sc, parent_cross_sc, f64::INFINITY);
+        let main_min = eval_size(main_sz.min, p.axis, parent_main_sc, parent_cross_sc, 0.0);
+        let main_max = eval_size(main_sz.max, p.axis, parent_main_sc, parent_cross_sc, f64::INFINITY);
         let cross_min = eval_size(cross_sz.min, cross_axis, parent_cross_sc, parent_main_sc, 0.0);
         let cross_max = eval_size(cross_sz.max, cross_axis, parent_cross_sc, parent_main_sc, f64::INFINITY);
 
         // clamp main axis size first
-        let main = layout.size(main_axis);
+        let main = layout.size(p.axis);
         let clamped_main = main.clamp(main_min, main_max);
+
         if clamped_main != main {
-            // re-measure cross axis under new main axis constraints
-            layout = self.measure_content(
-                children,
-                main_axis,
-                SizeConstraint::Available(clamped_main),
-                parent_cross_sc,
-            );
+            // re-layout cross axis under new main axis constraints
+            layout = self.layout_content(p, mode, SizeConstraint::Available(clamped_main), parent_cross_sc);
         }
 
         // clamp cross axis size
@@ -480,6 +433,15 @@ impl Frame {
         trace!("Measured element: size={:?}", layout);
         layout
     }
+
+    fn get_padding(&self) -> Padding {
+        Padding {
+            left: self.get(PaddingLeft).unwrap_or_default(),
+            right: self.get(PaddingRight).unwrap_or_default(),
+            top: self.get(PaddingTop).unwrap_or_default(),
+            bottom: self.get(PaddingBottom).unwrap_or_default(),
+        }
+    }
 }
 
 impl ElementMethods for Frame {
@@ -487,33 +449,42 @@ impl ElementMethods for Frame {
         &self.element
     }
 
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> LayoutOutput {
+    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size {
+        let _span = trace_span!("Frame::measure").entered();
+        // TODO vertical direction layout
         let (main_constraint, cross_constraint) = layout_input.main_cross(Axis::Horizontal);
-        let size = self.measure_inner(
+        let p = BoxSizingParams {
+            axis: Axis::Horizontal,
+            padding: self.get_padding(),
             children,
-            Axis::Horizontal,
+        };
+        let output = self.layout_inner(
+            &p,
+            LayoutMode::Measure,
             self.get(layout::Width).unwrap_or_default(),
             self.get(layout::Height).unwrap_or_default(),
             main_constraint,
             cross_constraint,
         );
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
-        }
+        Size::new(output.width, output.height)
     }
 
     fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
-
-        // defer to measure for now
-        let output = self.measure(
+        // TODO vertical direction layout
+        let p = BoxSizingParams {
+            axis: Axis::Horizontal,
+            padding: self.get_padding(),
             children,
-            &LayoutInput {
-                width: size.width.into(),
-                height: size.height.into(),
-            },
+        };
+        // defer to measure for now
+        let output = self.layout_inner(
+            &p,
+            LayoutMode::Place,
+            self.get(layout::Width).unwrap_or_default(),
+            self.get(layout::Height).unwrap_or_default(),
+            size.width.into(),
+            size.height.into(),
         );
         output
     }

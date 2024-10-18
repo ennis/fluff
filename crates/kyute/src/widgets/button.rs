@@ -3,12 +3,12 @@ use std::rc::Rc;
 use kurbo::Vec2;
 use smallvec::smallvec;
 
-use crate::{Color, text};
 use crate::drawing::BoxShadow;
 use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
 use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride, InteractState};
 use crate::widgets::text::Text;
+use crate::{text, Color};
 
 fn button_style() -> FrameStyle {
     thread_local! {
