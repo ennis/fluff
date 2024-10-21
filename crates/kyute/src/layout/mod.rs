@@ -7,7 +7,7 @@ use kurbo::{Insets, Rect, Size, Vec2};
 use tracing::trace;
 
 use crate::element::AttachedProperty;
-use crate::ElementMethods;
+use crate::Element;
 
 pub mod flex;
 //pub mod grid;

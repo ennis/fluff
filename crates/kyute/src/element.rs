@@ -29,17 +29,22 @@ bitflags! {
     }
 }
 
+/// Alias for commonly-used `Rc<dyn Element>`.
+pub type RcElement = Rc<dyn Element>;
+/// Alias for commonly-used `Weak<dyn Element>`.
+pub type WeakElement = Weak<dyn Element>;
+
 pub trait AttachedProperty: Any {
     type Value: Clone;
 
-    fn set(self, item: &Element, value: Self::Value)
+    fn set(self, item: &Node, value: Self::Value)
     where
         Self: Sized,
     {
         item.set(self, value);
     }
 
-    fn get(self, item: &Element) -> Option<Self::Value>
+    fn get(self, item: &Node) -> Option<Self::Value>
     where
         Self: Sized,
     {
@@ -52,7 +57,7 @@ pub trait AttachedProperty: Any {
     ///
     /// The caller must ensure that the nothing mutates the value of the attached property
     /// while the returned reference is alive.
-    unsafe fn get_ref(self, item: &Element) -> &Self::Value
+    unsafe fn get_ref(self, item: &Node) -> &Self::Value
     where
         Self: Sized,
     {
@@ -60,46 +65,47 @@ pub trait AttachedProperty: Any {
     }
 }
 
-/// Wrapper over Rc<dyn Visual> that has PartialEq impl.
+/// Wrapper over Rc<dyn Element> that has reference equality semantics.
+/// This should be the default for `RcElement`
 #[derive(Clone)]
 #[repr(transparent)]
-pub struct AnyVisual(pub(crate) Rc<dyn ElementMethods>);
+pub struct RcElementPtrEq(pub(crate) RcElement);
 
-impl PartialOrd for AnyVisual {
+impl PartialOrd for RcElementPtrEq {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for AnyVisual {
+impl Ord for RcElementPtrEq {
     fn cmp(&self, other: &Self) -> Ordering {
         Rc::as_ptr(&self.0).cast::<()>().cmp(&Rc::as_ptr(&other.0).cast::<()>())
     }
 }
 
-impl Eq for AnyVisual {}
+impl Eq for RcElementPtrEq {}
 
-impl From<Rc<dyn ElementMethods>> for AnyVisual {
-    fn from(rc: Rc<dyn ElementMethods>) -> Self {
-        AnyVisual(rc)
+impl From<Rc<dyn Element>> for RcElementPtrEq {
+    fn from(rc: Rc<dyn Element>) -> Self {
+        RcElementPtrEq(rc)
     }
 }
 
-impl Deref for AnyVisual {
-    type Target = dyn ElementMethods;
+impl Deref for RcElementPtrEq {
+    type Target = dyn Element;
 
     fn deref(&self) -> &Self::Target {
         &*self.0
     }
 }
 
-impl PartialEq for AnyVisual {
+impl PartialEq for RcElementPtrEq {
     fn eq(&self, other: &Self) -> bool {
         self.0.is_same(&*other.0)
     }
 }
 
-pub(crate) struct NullableElemPtr(UnsafeCell<Option<Rc<dyn ElementMethods>>>);
+pub(crate) struct NullableElemPtr(UnsafeCell<Option<Rc<dyn Element>>>);
 
 impl Default for NullableElemPtr {
     fn default() -> Self {
@@ -108,27 +114,27 @@ impl Default for NullableElemPtr {
 }
 
 impl NullableElemPtr {
-    pub fn get(&self) -> Option<Rc<dyn ElementMethods>> {
+    pub fn get(&self) -> Option<Rc<dyn Element>> {
         unsafe { &*self.0.get() }.as_ref().cloned()
     }
 
-    pub fn set(&self, other: Option<Rc<dyn ElementMethods>>) {
+    pub fn set(&self, other: Option<Rc<dyn Element>>) {
         unsafe {
             *self.0.get() = other;
         }
     }
 }
 
-impl<'a> From<&'a Element> for NullableElemPtr {
-    fn from(element: &'a Element) -> Self {
+impl<'a> From<&'a Node> for NullableElemPtr {
+    fn from(element: &'a Node) -> Self {
         NullableElemPtr(UnsafeCell::new(Some(element.rc())))
     }
 }
 
-pub(crate) struct WeakNullableElemPtr(UnsafeCell<Option<Weak<dyn ElementMethods>>>);
+pub(crate) struct WeakNullableElemPtr(UnsafeCell<Option<Weak<dyn Element>>>);
 
-impl<'a> PartialEq<Option<&'a Element>> for WeakNullableElemPtr {
-    fn eq(&self, other: &Option<&'a Element>) -> bool {
+impl<'a> PartialEq<Option<&'a Node>> for WeakNullableElemPtr {
+    fn eq(&self, other: &Option<&'a Node>) -> bool {
         let this = unsafe { &*self.0.get() }.as_ref();
         let other = other.map(|e| &e.weak_this);
         match (this, other) {
@@ -139,8 +145,8 @@ impl<'a> PartialEq<Option<&'a Element>> for WeakNullableElemPtr {
     }
 }
 
-impl PartialEq<Element> for WeakNullableElemPtr {
-    fn eq(&self, other: &Element) -> bool {
+impl PartialEq<Node> for WeakNullableElemPtr {
+    fn eq(&self, other: &Node) -> bool {
         let this = unsafe { &*self.0.get() }.as_ref();
         let other = &other.weak_this;
         if let Some(this) = this {
@@ -165,21 +171,21 @@ impl Default for WeakNullableElemPtr {
 }
 
 impl WeakNullableElemPtr {
-    pub fn get(&self) -> Option<Weak<dyn ElementMethods>> {
+    pub fn get(&self) -> Option<Weak<dyn Element>> {
         unsafe { &*self.0.get() }.clone()
     }
 
-    pub fn set(&self, other: Option<Weak<dyn ElementMethods>>) {
+    pub fn set(&self, other: Option<Weak<dyn Element>>) {
         unsafe {
             *self.0.get() = other;
         }
     }
 
-    pub fn replace(&self, other: Option<Weak<dyn ElementMethods>>) -> Option<Weak<dyn ElementMethods>> {
+    pub fn replace(&self, other: Option<Weak<dyn Element>>) -> Option<Weak<dyn Element>> {
         unsafe { mem::replace(&mut *self.0.get(), other) }
     }
 
-    pub fn upgrade(&self) -> Option<Rc<dyn ElementMethods>> {
+    pub fn upgrade(&self) -> Option<Rc<dyn Element>> {
         self.get().as_ref().and_then(Weak::upgrade)
     }
 }
@@ -202,11 +208,11 @@ impl Iterator for SiblingIter {
 
 /// Depth-first traversal of the visual tree.
 pub struct Cursor {
-    next: Option<Rc<dyn ElementMethods>>,
+    next: Option<Rc<dyn Element>>,
 }
 
 impl Iterator for Cursor {
-    type Item = Rc<dyn ElementMethods>;
+    type Item = Rc<dyn Element>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some(next) = self.next.clone() else {
@@ -239,19 +245,15 @@ impl Iterator for Cursor {
 /// State common to all elements (the "base class" of all elements).
 ///
 /// Concrete elements hold a field of this type, and implement the corresponding `ElementMethods` trait.
-pub struct Element {
+pub struct Node {
     // TODO remove, this is a relic of a previous implementation
     _pin: PhantomPinned,
     parent: WeakNullableElemPtr,
     // Weak pointer to this element.
-    weak_this: Weak<dyn ElementMethods>,
-    children: RefCell<Vec<Rc<dyn ElementMethods>>>,
+    weak_this: WeakElement,
+    children: RefCell<Vec<RcElement>>,
     index_in_parent: Cell<usize>,
 
-    //prev: WeakNullableElemPtr,
-    //next: NullableElemPtr,
-    //first_child: NullableElemPtr,
-    //last_child: WeakNullableElemPtr,
     /// Pointer to the parent owner window.
     pub(crate) window: RefCell<WeakWindow>,
     /// Layout: transform from local to parent coordinates.
@@ -270,9 +272,9 @@ pub struct Element {
     attached_properties: UnsafeCell<BTreeMap<TypeId, Box<dyn Any>>>,
 }
 
-impl Element {
-    pub(crate) fn new(weak_this: &Weak<dyn ElementMethods>) -> Element {
-        Element {
+impl Node {
+    pub(crate) fn new(weak_this: &Weak<dyn Element>) -> Node {
+        Node {
             _pin: PhantomPinned,
             weak_this: weak_this.clone(),
             //prev: Default::default(),
@@ -293,10 +295,10 @@ impl Element {
     }
 
     /// Creates a new element with the specified type and constructor.
-    pub fn new_derived<'a, T: ElementMethods + 'static>(f: impl FnOnce(Element) -> T) -> Rc<T> {
+    pub fn new_derived<'a, T: Element + 'static>(f: impl FnOnce(Node) -> T) -> Rc<T> {
         Rc::new_cyclic(move |weak: &Weak<T>| {
-            let weak: Weak<dyn ElementMethods> = weak.clone();
-            let element = Element::new(&weak);
+            let weak: Weak<dyn Element> = weak.clone();
+            let element = Node::new(&weak);
             let visual = f(element);
             visual
         })
@@ -319,7 +321,7 @@ impl Element {
         self.parent.set(None);
     }
 
-    pub fn insert_child_at(&self, at: usize, to_insert: &Element) {
+    pub fn insert_child_at(&self, at: usize, to_insert: RcElement) {
         to_insert.detach();
         to_insert.parent.set(Some(self.weak()));
         //to_insert.set_parent_window(self.window.clone());
@@ -327,7 +329,7 @@ impl Element {
         // provided the safety contracts of other unsafe methods are upheld.
         let mut children = self.children.borrow_mut();
         assert!(at <= children.len());
-        children.insert(at, to_insert.rc());
+        children.insert(at, to_insert);
         for i in at..children.len() {
             children[i].index_in_parent.set(i);
         }
@@ -335,7 +337,7 @@ impl Element {
     }
 
     /// Inserts the specified element after this element.
-    pub fn insert_after(&self, to_insert: &Element) {
+    pub fn insert_after(&self, to_insert: RcElement) {
         if let Some(parent) = self.parent.upgrade() {
             parent.insert_child_at(self.index_in_parent.get() + 1, to_insert);
         } else {
@@ -344,7 +346,7 @@ impl Element {
     }
 
     /// Inserts the specified element at the end of the children of this element.
-    pub fn add_child(&self, child: &Element) {
+    pub fn add_child(&self, child: RcElement) {
         child.detach();
         // SAFETY: no other references may exist to the children vector at this point,
         // provided the safety contracts of other unsafe methods are upheld.
@@ -355,7 +357,7 @@ impl Element {
         self.mark_needs_relayout();
     }
 
-    pub fn next(&self) -> Option<Rc<dyn ElementMethods>> {
+    pub fn next(&self) -> Option<RcElement> {
         if let Some(parent) = self.parent() {
             let index_in_parent = self.index_in_parent.get();
             // SAFETY: no mutable references may exist to the children vector at this point,
@@ -375,7 +377,7 @@ impl Element {
     }
 
     /// Returns the child element at the specified index.
-    pub fn child_at(&self, index: usize) -> Option<Rc<dyn ElementMethods>> {
+    pub fn child_at(&self, index: usize) -> Option<RcElement> {
         // SAFETY: same as `child_count`
         unsafe { self.children_ref().get(index).cloned() }
     }
@@ -388,7 +390,7 @@ impl Element {
     /// while the returned slice is alive. In practice, this means that the caller should not:
     /// - `detach` any children of this element
     /// - call `insert_child_at` or `add_child` on this element
-    pub unsafe fn children_ref(&self) -> &[Rc<dyn ElementMethods>] {
+    pub unsafe fn children_ref(&self) -> &[RcElement] {
         &*self.children.try_borrow_unguarded().unwrap()
     }
 
@@ -400,12 +402,12 @@ impl Element {
     /// while the returned object is alive. In practice, this means that the caller should not:
     /// - `detach` any children of this element
     /// - call `insert_child_at` or `add_child` on this element
-    pub unsafe fn child_ref_at(&self, index: usize) -> &dyn ElementMethods {
+    pub unsafe fn child_ref_at(&self, index: usize) -> &dyn Element {
         &**self.children_ref().get(index).expect("child index out of bounds")
     }
 
     /// Returns a reference to the list of children of this element.
-    pub fn children(&self) -> Ref<[Rc<dyn ElementMethods>]> {
+    pub fn children(&self) -> Ref<[RcElement]> {
         Ref::map(self.children.borrow(), |v| v.as_slice())
     }
 
@@ -425,7 +427,7 @@ impl Element {
     }
 
     /// Returns the next focusable element.
-    pub fn next_focusable_element(&self) -> Option<Rc<dyn ElementMethods>> {
+    pub fn next_focusable_element(&self) -> Option<RcElement> {
         let mut cursor = self.cursor();
         cursor.next(); // skip self
         while let Some(node) = cursor.next() {
@@ -486,7 +488,7 @@ impl Element {
     }
 
     /// Returns the parent of this visual, if it has one.
-    pub fn parent(&self) -> Option<Rc<dyn ElementMethods>> {
+    pub fn parent(&self) -> Option<RcElement> {
         self.parent.upgrade()
     }
 
@@ -523,7 +525,7 @@ impl Element {
 
     /// Returns the list of ancestors of this visual, plus this visual itself, sorted from the root
     /// to this visual.
-    pub fn ancestors_and_self(&self) -> Vec<Rc<dyn ElementMethods>> {
+    pub fn ancestors_and_self(&self) -> Vec<RcElement> {
         let mut ancestors = Vec::new();
         let mut current = self.rc();
         while let Some(parent) = current.parent() {
@@ -536,11 +538,11 @@ impl Element {
     }
 
     /// Returns this visual as a reference-counted pointer.
-    pub fn rc(&self) -> Rc<dyn ElementMethods + 'static> {
+    pub fn rc(&self) -> Rc<dyn Element + 'static> {
         self.weak_this.upgrade().unwrap()
     }
 
-    pub fn weak(&self) -> Weak<dyn ElementMethods + 'static> {
+    pub fn weak(&self) -> Weak<dyn Element + 'static> {
         self.weak_this.clone()
     }
 
@@ -634,8 +636,8 @@ impl Element {
 }
 
 /// Methods of elements in the element tree.
-pub trait ElementMethods: EventTarget {
-    fn element(&self) -> &Element;
+pub trait Element: EventTarget {
+    fn node(&self) -> &Node;
 
     /*/// Calculates the size of the widget under the specified constraints.
     fn measure(&self) -> IntrinsicSizes {
@@ -648,10 +650,10 @@ pub trait ElementMethods: EventTarget {
 
     /// Asks the widget to measure itself under the specified constraints, but without actually laying
     /// out the children.
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size;
+    fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size;
 
     /// Lays out the children of this widget under the specified constraints.
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+    fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
         // The default implementation just returns the union of the geometry of the children.
         let mut output = LayoutOutput::default();
         for child in children {
@@ -664,7 +666,7 @@ pub trait ElementMethods: EventTarget {
     }
 
     fn hit_test(&self, point: Point) -> bool {
-        self.element().geometry.get().to_rect().contains(point)
+        self.node().geometry.get().to_rect().contains(point)
     }
     #[allow(unused_variables)]
     fn paint(&self, ctx: &mut PaintCtx) {}
@@ -686,7 +688,7 @@ pub trait EventTarget {
 
 impl<T> EventTarget for T
 where
-    T: ElementMethods,
+    T: Element,
 {
     fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()> {
         self.event(event).boxed_local()
@@ -697,7 +699,7 @@ where
 #[derive(Clone)]
 pub struct HitTestEntry {
     /// The visual in the chain.
-    pub element: Rc<dyn ElementMethods>,
+    pub element: Rc<dyn Element>,
     // Transform from the visual's CS to the CS of the visual on which `do_hit_test` was called (usually the root visual of the window).
     //pub root_transform: Affine,
 }
@@ -710,25 +712,26 @@ impl PartialEq for HitTestEntry {
 
 impl Eq for HitTestEntry {}
 
-impl<'a> Deref for dyn ElementMethods + 'a {
-    type Target = Element;
+impl<'a> Deref for dyn Element + 'a {
+    type Target = Node;
 
     fn deref(&self) -> &Self::Target {
-        self.element()
+        self.node()
     }
 }
 
-impl dyn ElementMethods + '_ {
+
+impl dyn Element + '_ {
     /*pub fn children(&self) -> Ref<[AnyVisual]> {
         self.element().children()
     }*/
 
     pub fn set_name(&self, name: impl Into<String>) {
-        self.element().name.replace(name.into());
+        self.node().name.replace(name.into());
     }
 
     /// Identity comparison.
-    pub fn is_same(&self, other: &dyn ElementMethods) -> bool {
+    pub fn is_same(&self, other: &dyn Element) -> bool {
         // It's probably OK to compare the addresses directly since they should be allocated with
         // Rcs, which always allocates even with ZSTs.
         addr_eq(self, other)
@@ -759,15 +762,15 @@ impl dyn ElementMethods + '_ {
     }
 
     /// Hit-tests this visual and its children.
-    pub(crate) fn do_hit_test(&self, point: Point) -> Vec<AnyVisual> {
+    pub(crate) fn do_hit_test(&self, point: Point) -> Vec<RcElementPtrEq> {
         // Helper function to recursively hit-test the children of a visual.
         // point: point in the local coordinate space of the visual
         // transform: accumulated transform from the local coord space of `visual` to the root coord space
         fn hit_test_rec(
-            visual: &dyn ElementMethods,
+            visual: &dyn Element,
             point: Point,
             transform: Affine,
-            result: &mut Vec<AnyVisual>,
+            result: &mut Vec<RcElementPtrEq>,
         ) -> bool {
             let mut hit = false;
             // hit-test ourselves
@@ -801,7 +804,7 @@ impl dyn ElementMethods + '_ {
         };
 
         // Recursively paint the UI tree.
-        fn paint_rec(visual: &dyn ElementMethods, ctx: &mut PaintCtx) {
+        fn paint_rec(visual: &dyn Element, ctx: &mut PaintCtx) {
             visual.paint(ctx);
             for child in visual.children().iter() {
                 ctx.with_transform(&child.transform(), |ctx| {

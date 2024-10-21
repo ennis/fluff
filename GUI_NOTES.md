@@ -25,11 +25,37 @@ Alternative: allocate elements in a pool?
 Can we store `&Element`? Of course not, would need to add a lifetime to every struct that holds it, and the lifetime
 isn't clear in the first place.
 
+## Concretely
+
+An element is a combination of its base fields and the derived fields. It can be represented in rust like this:
+
+```rust 
+// Derived-owns-base
+struct Derived {
+    base: Base,
+}
+
+// Base-owns-derived (unsized)
+struct Base<T: ?Sized> {
+    // base fields...
+    derived: T
+}
+
+impl Derived {
+    fn test(&self) {
+        // how to access base fields?
+    }
+}
+
+```
+
+The first approach seems nicer because methods on `Derived` are automatically aware of the base fields, whereas in the
+second approach the base fields must be passed as a separate parameter.
+
 ## Alternative design
 
 - With arbitrary_self_types, methods on `T` get `self: &Element<Self>`, i.e. it's inside-out (the Element owns the
-  derived
-  type).
+  derived type).
 - Refer to nodes by IDs (possibly strongly-typed)
     - ~~There's only one tree in the whole application anyway~~, and it should be accessible only on the main thread.
     - There's one tree per window, but all trees could share the same arena
@@ -141,3 +167,218 @@ before and after the element. Also, baseline alignment is meaningless in that co
 -> it quickly devolves into a non-linear system of constraints which isn't super intuitive
 
 * For centering, use 1x stretch on each side of the axis to center
+
+# Component model
+
+## Proposal A: async
+
+Three objects:
+
+1. the element in the UI tree: holds an abort handle to the task
+2. the async task: waits for changes in the model, or events emitted by the elements, as an alternative to callbacks;
+   emits signals
+3. the model object: holds property values, events, methods to get/set/watch changes and emit events.
+
+When creating a component, the user gets two things: the model object which can be used to communicate and control the
+component (communicate with the async task) and the element, to place in the UI tree.
+
+Dependencies between values are explicit: i.e. there is always code somewhere that watches for changes in the value
+and then re-runs some code when it changes.
+
+There are no callbacks; in place of callbacks, there are async tasks that are scheduled to run when the value of a model
+changes. Unsure whether this is better than callbacks.
+
+Notifications emitted by the model include the index of the property that changed and information about which items
+of the property changed if it is a collection.
+
+Issues:
+The main problem with this approach is communicating with the async task from the component above. It's no longer
+a simple function call.
+
+## Proposal B: callbacks
+
+One object: the element/component in the UI tree
+
+The component holds a list of callbacks to invoke when properties change. A callback is composed of a weak pointer
+to a receiver, and a function pointer. The weak pointer is upgraded when the callback is invoked.
+
+Issues: the user must be careful not to smuggle a Rc inside a callback that would create a reference cycle.
+Also, all callbacks are invoked immediately (unless a queueing mechanism is added).
+
+## Proposal C: async II
+
+Two (one-and-a-half) objects:
+
+- the element/component in the async tree
+- the async task, owned by the component and self-referential
+
+Methods can be called directly on the component if it doesn't need to communicate with the async task.
+The async task gets a reference (not a strong ref) to the component. It's only there to handle events.
+It's safe to store a ref to the component in the async task because it is pinned, and no mut refs are possible.
+When the component is dropped, the abort handle is dropped as well, which cancels the task before it has a chance of
+observing an invalid component.
+There's some subtlety to figure out around destructors inside the async task, since they may reference the component.
+
+# Alternative to trait ElementMethods: enum
+
+```rust
+use std::marker::PhantomData;
+
+enum ElementKind {
+    Frame(FrameElement),
+    Text(TextElement),
+    Component {
+        component: Rc<dyn Component>,
+        task_abort_handle: AbortHandle,
+    },
+    Custom {
+        // handles layout, painting, etc.
+        delegate: Rc<dyn ElementDelegate>
+    }
+}
+
+struct FrameElement {
+    children: RefCell<Element>,
+}
+
+struct Element {
+    weak_this: Weak<Element>,
+    kind: ElementKind,
+}
+
+impl Element {
+    pub fn frame() -> Rc<Element> {
+        // ...
+    }
+
+    pub fn children(&self) -> Ref<[Rc<Element>]> {
+        // ...
+    }
+
+    pub fn add_child(&self, child: &Element) {}
+}
+
+trait Component {
+    fn root(&self) -> &Element;
+}
+
+// Issue: `Element`s lose the component type
+// Solution: custom pointer type
+
+struct ComponentPtr<T> {
+    elem: Rc<Element>,
+    _phantom: PhantomData<Rc<T>>,
+}
+
+impl<T> ComponentPtr<T> {
+    pub fn new(component: T) -> ComponentPtr<T> {}
+}
+
+// Issue: this doesn't deref to Element, so this can't be used in `add_child`
+impl<T> Deref for ComponentPtr<T> {
+    type Target = T;
+}
+
+```
+
+Q: can we do cheaper than Rc?
+
+Observation: most elements live as long as the async scope in which they are instantiated.
+Thus, there is a well-defined lifetime for those (the scope of the async block).
+Subtrees could almost refer to their children by simple borrows, which would be cool.
+However, we would have no way of holding a pointer to an element outside the
+async scope in which they are declared: i.e. no `WeakElement` to hold the currently focused element, no parent links,
+etc.
+
+Alternative: NodeIds, and a global thread_local arena of Elements.
+Limitation: no way of borrowing stuff from this arena without `Ref` wrappers or closure-based APIs (yuck).
+
+```rust
+struct FrameEl<'a> {
+    children: RefCell<Vec<&'a Element>>,
+}
+
+struct Element<'a> {
+    // parent links are essential to propagate dirty flags since we don't have 
+    parent: UnsafeCell<*const>
+}
+
+// BAD IDEA
+```
+
+Proposal: instead of requiring `element()` in the `Element` impl, use `Element<T>`,
+and something like:
+
+```rust
+pub struct Widget {
+    // ...    
+}
+
+impl Widget {
+    pub fn new() -> Element<Widget> {
+        Element::new(|weak| {
+            Widget {
+                // can hold the weak ptr here if necessary
+            }
+        })
+    }
+
+    pub fn set_something(&self) {
+        // if necessary, use WeakElement to invalidate ourselves
+        // It's a bit inefficient since `set_something` will almost always be called from `Element<Widget>`
+        self.weak.mark_needs_layout();
+    }
+}
+
+```
+
+Issue: `Element<T> -> Element<dyn Element>` coercion is atrocious.
+
+Current approach: emulate inheritance by storing `Element` inside `Derived`, then impl `Deref<Target=Element>`
+
+- type erasure: `Derived` unsizes to `dyn ElementMethods`
+- access to derived methods: `Derived::new` returns `Rc<Derived>` so it's good
+- access to element methods inside the derived widget: methods on element are directly accessible since the derived owns
+  the element base
+
+Alternate approach: store the derived element inside `Element<Derived>`, then impl `Deref<Target=Derived>`
+
+- type erasure: `Element<Derived>` should unsize to `Element<dyn ElementMethods>` but that's not automatic yet,
+  functions should take `impl IntoElement`
+- access to derived methods: via Deref impl
+- access to element methods inside the derived widget: derived object should hold a weak pointer to itself
+
+Alternate-alternate approach: elements has an `ElementKind` enum, custom elements in a separate trait
+
+- type erasure: `Element` is the basic object and has no type parameter to erase; functions take `impl IntoElement`
+- access to derived methods: must use a custom wrapper over `Element` that derefs to the custom element
+
+What's wrong with the current types?
+
+Another alternative: require all elements to implement the `add_child`, etc. methods.
+These can be no-ops for elements without children.
+However we'd need to implement all this for every element type:
+
+- parent link
+- child list
+- transform/geometry
+- name
+- attached properties
+
+Conclusion: stay with current design, avoid using `&Element` (now `&Node`) directly, prefer `&dyn ElementMethods`
+(now `&dyn Element`).
+
+## Optimization opportunity
+
+Most subtrees are static. Instead of storing all elements in a `Vec<RcElement>`, use a generic `ElementTree`, that is
+implemented by arrays,
+vectors, etc.
+Reference elements with `(Rc<dyn ElementTree> + index)`. This avoids many allocations.
+The root object is an `Rc<dyn ElementTree>` instance.
+Element index `-1` is the root of the tree, `0..len` are the descendant elements. The descendant elements represent a
+flattened hierarchy, not a flat list of direct child elements.
+
+An `ElementTree` is composed of `ElementNode`s, each node is either:
+
+- a static node, holding the index of this node in the parent tree, and the range of children
+- a dynamic subtree node, holding a `Rc<ElementTree>`

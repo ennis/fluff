@@ -5,7 +5,7 @@ pub mod compositor;
 pub mod drawing;
 pub mod element;
 pub mod event;
-mod handler;
+pub mod handler;
 pub mod layout;
 mod paint_ctx;
 mod reactive;
@@ -15,11 +15,13 @@ pub mod text;
 pub mod theme;
 pub mod widgets;
 pub mod window;
+pub mod component;
 
 // reexports
 pub use app_globals::AppGlobals;
 pub use kyute_common::Color;
-pub use element::{Element, ElementMethods};
+pub use element::{Node, Element};
+pub use component::{Component, ComponentMethods};
 pub use event::Event;
 pub use kurbo::{self, Point, Rect, Size};
 pub use paint_ctx::PaintCtx;

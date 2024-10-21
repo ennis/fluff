@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use tracing::{trace, trace_span};
 
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementMethods};
+use crate::element::{Node, Element, RcElement};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
@@ -222,7 +222,7 @@ impl LayoutCache {
 
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
-    element: Element,
+    element: Node,
     pub clicked: Handler<()>,
     pub hovered: Handler<bool>,
     pub active: Handler<bool>,
@@ -237,8 +237,9 @@ pub struct Frame {
     resolved_style: RefCell<FrameStyle>,
 }
 
+
 impl Deref for Frame {
-    type Target = Element;
+    type Target = Node;
 
     fn deref(&self) -> &Self::Target {
         &self.element
@@ -248,7 +249,7 @@ impl Deref for Frame {
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
     pub fn new(style: FrameStyle) -> Rc<Frame> {
-        Element::new_derived(|element| Frame {
+        Node::new_derived(|element| Frame {
             element,
             clicked: Default::default(),
             hovered: Default::default(),
@@ -265,8 +266,8 @@ impl Frame {
         })
     }
 
-    pub fn set_content(&self, content: &dyn ElementMethods) {
-        (self as &dyn ElementMethods).add_child(content);
+    pub fn set_content(&self, content: RcElement) {
+        (self as &dyn Element).add_child(content);
     }
 
     pub fn set_layout(&self, layout: FrameLayout) {
@@ -297,7 +298,7 @@ struct Padding {
 struct BoxSizingParams<'a> {
     axis: Axis,
     padding: Padding,
-    children: &'a [Rc<dyn ElementMethods>],
+    children: &'a [Rc<dyn Element>],
 }
 
 impl Frame {
@@ -444,12 +445,12 @@ impl Frame {
     }
 }
 
-impl ElementMethods for Frame {
-    fn element(&self) -> &Element {
+impl Element for Frame {
+    fn node(&self) -> &Node {
         &self.element
     }
 
-    fn measure(&self, children: &[Rc<dyn ElementMethods>], layout_input: &LayoutInput) -> Size {
+    fn measure(&self, children: &[Rc<dyn Element>], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let (main_constraint, cross_constraint) = layout_input.main_cross(Axis::Horizontal);
@@ -469,7 +470,7 @@ impl ElementMethods for Frame {
         Size::new(output.width, output.height)
     }
 
-    fn layout(&self, children: &[Rc<dyn ElementMethods>], size: Size) -> LayoutOutput {
+    fn layout(&self, children: &[Rc<dyn Element>], size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
         // TODO vertical direction layout
         let p = BoxSizingParams {

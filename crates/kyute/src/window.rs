@@ -24,7 +24,7 @@ use crate::app_globals::AppGlobals;
 use crate::application::{WindowHandler, with_event_loop_window_target};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
-use crate::element::{AnyVisual, Element, ElementMethods, WeakNullableElemPtr};
+use crate::element::{RcElementPtrEq, Node, Element, WeakNullableElemPtr};
 use crate::event::{Event, key_event_to_key_code, PointerButton, PointerButtons, PointerEvent};
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, RequestedAxis, SizeConstraint};
@@ -89,8 +89,8 @@ struct InputState {
     pointer_buttons: PointerButtons,
     last_click: Option<LastClick>,
     // Result of the previous hit-test
-    last_innermost_hit: Option<AnyVisual>,
-    last_hits: BTreeSet<AnyVisual>,
+    last_innermost_hit: Option<RcElementPtrEq>,
+    last_hits: BTreeSet<RcElementPtrEq>,
     //prev_hit_test_result: Vec<HitTestEntry>,
 }
 
@@ -99,7 +99,7 @@ pub(crate) struct WindowInner {
     close_requested: Handler<()>,
     focus_changed: Handler<bool>,
     resized: Handler<PhysicalSize<u32>>,
-    root: Rc<dyn ElementMethods>,
+    root: Rc<dyn Element>,
     layer: Layer,
     window: winit::window::Window,
     hidden_before_first_draw: Cell<bool>,
@@ -117,18 +117,18 @@ pub(crate) struct WindowInner {
 }
 
 impl WindowInner {
-    fn is_focused(&self, element: &Element) -> bool {
+    fn is_focused(&self, element: &Node) -> bool {
         self.focus == *element
     }
 
-    fn check_belongs_to_window(&self, element: &Element) {
+    fn check_belongs_to_window(&self, element: &Node) {
         assert!(
             Weak::ptr_eq(&element.window.borrow().shared, &self.weak_this),
             "element must belong to this window"
         );
     }
 
-    async fn set_focus(&self, element: Option<&Element>) {
+    async fn set_focus(&self, element: Option<&Node>) {
         if let Some(element) = element {
             self.check_belongs_to_window(element);
             eprintln!("set_focus {}", element.name());
@@ -152,7 +152,7 @@ impl WindowInner {
         }
     }
 
-    fn set_pointer_capture(&self, element: &Element) {
+    fn set_pointer_capture(&self, element: &Node) {
         self.check_belongs_to_window(element);
         eprintln!("set_pointer_capture {}", element.name());
         self.pointer_capture.replace(Some(element.weak()));
@@ -163,7 +163,7 @@ impl WindowInner {
     /// It will first invoke the event handler of the target visual.
     /// If the event is "bubbling", it will invoke the event handler of the parent visual,
     /// and so on until the root visual is reached.
-    async fn dispatch_event(&self, target: &dyn ElementMethods, event: &mut Event, bubbling: bool) {
+    async fn dispatch_event(&self, target: &dyn Element, event: &mut Event, bubbling: bool) {
         // get dispatch chain
         let chain = target.ancestors_and_self();
         assert!(
@@ -657,20 +657,20 @@ impl WeakWindow {
         }
     }
 
-    pub async fn set_focus(&self, element: Option<&Element>) {
+    pub async fn set_focus(&self, element: Option<&Node>) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_focus(element).await;
         }
     }
 
-    pub fn set_pointer_capture(&self, element: &Element) {
+    pub fn set_pointer_capture(&self, element: &Node) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_pointer_capture(element);
         }
     }
 
     /// Returns a reference to the currently focused element.
-    pub fn is_focused(&self, element: &Element) -> bool {
+    pub fn is_focused(&self, element: &Node) -> bool {
         self.shared
             .upgrade()
             .map(|shared| shared.is_focused(element))
@@ -706,7 +706,7 @@ impl<'a> Default for WindowOptions<'a> {
 
 impl Window {
     /// TODO builder
-    pub fn new(options: &WindowOptions, root: &Element) -> Self {
+    pub fn new(options: &WindowOptions, root: &Node) -> Self {
         let window = with_event_loop_window_target(|event_loop| {
             // the window is initially invisible, we show it after the first frame is painted.
             let mut builder = winit::window::WindowBuilder::new()
@@ -777,7 +777,7 @@ impl Window {
         Window { shared }
     }
 
-    pub async fn set_focus(&self, element: Option<&Element>) {
+    pub async fn set_focus(&self, element: Option<&Node>) {
         self.shared.set_focus(element).await;
     }
 
