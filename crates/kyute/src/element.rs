@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
 use std::mem;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::ptr::addr_eq;
 use std::rc::{Rc, Weak};
 
@@ -248,11 +248,8 @@ impl Iterator for Cursor {
 pub struct Node {
     // TODO remove, this is a relic of a previous implementation
     _pin: PhantomPinned,
-    parent: WeakNullableElemPtr,
-    // Weak pointer to this element.
-    weak_this: WeakElement,
-    children: RefCell<Vec<RcElement>>,
-    index_in_parent: Cell<usize>,
+
+    weak_this: WeakElementRef,
 
     /// Pointer to the parent owner window.
     pub(crate) window: RefCell<WeakWindow>,
@@ -273,18 +270,11 @@ pub struct Node {
 }
 
 impl Node {
-    pub(crate) fn new(weak_this: &Weak<dyn Element>) -> Node {
+    pub(crate) fn new(weak_this: WeakElementRef) -> Node {
         Node {
             _pin: PhantomPinned,
-            weak_this: weak_this.clone(),
-            //prev: Default::default(),
-            //next: Default::default(),
-            //first_child: Default::default(),
-            //last_child: Default::default(),
-            children: Default::default(),
-            index_in_parent: Default::default(),
+            weak_this,
             window: Default::default(),
-            parent: Default::default(),
             transform: Cell::new(Affine::default()),
             geometry: Cell::new(Size::default()),
             change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
@@ -634,6 +624,49 @@ impl Node {
             .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
     }
 }
+
+
+/// A strong reference to an element in the element tree.
+#[derive(Clone)]
+pub struct ElementRef {
+    tree: Rc<dyn ElementTree>,
+    index: u32,
+    // ptr: *const T,   // guarantee that the element address is stable
+}
+
+pub struct WeakElementRef {
+    tree: Weak<dyn ElementTree>,
+    index: u32,
+}
+
+pub enum ElementTreeNode<'a> {
+    /// Static subtree within this tree.
+    Static {
+        parent: u32,
+        child_range: Range<u32>,
+    },
+    /// Dynamic subtree
+    Dynamic {
+        parent: u32,
+        subtree: Rc<dyn ElementTree>,
+    },
+}
+
+/// A subtree of elements.
+pub trait ElementTree {
+    /// Returns the root element of the tree.
+    fn root(&self) -> &dyn Element;
+
+    /// Returns the nth descendant element of the tree. 0th element is the root node.
+    fn descendant(&self, index: usize) -> Option<&dyn Element>;
+
+    /// Returns the subtree node at the specified index.
+    fn subtree(&self, index: usize) -> Option<ElementTreeNode>;
+}
+
+// Can't implement for `Vec<T: Element>` because the elements may move around.
+// However, possible to implement for `Vec<Rc<dyn Element>>`
+
 
 /// Methods of elements in the element tree.
 pub trait Element: EventTarget {
