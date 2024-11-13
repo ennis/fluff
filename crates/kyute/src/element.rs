@@ -244,12 +244,18 @@ impl Iterator for Cursor {
 
 /// State common to all elements (the "base class" of all elements).
 ///
-/// Concrete elements hold a field of this type, and implement the corresponding `ElementMethods` trait.
+/// Concrete elements hold a field of this type, and implement the corresponding `Element` trait.
 pub struct Node {
     // TODO remove, this is a relic of a previous implementation
     _pin: PhantomPinned,
 
-    weak_this: WeakElementRef,
+    //weak_this: WeakElementRef,
+
+    parent: WeakNullableElemPtr,
+    // Weak pointer to this element.
+    weak_this: WeakElement,
+    children: RefCell<Vec<RcElement>>,
+    index_in_parent: Cell<usize>,
 
     /// Pointer to the parent owner window.
     pub(crate) window: RefCell<WeakWindow>,
@@ -270,11 +276,14 @@ pub struct Node {
 }
 
 impl Node {
-    pub(crate) fn new(weak_this: WeakElementRef) -> Node {
+    pub(crate) fn new(weak_this: WeakElement) -> Node {
         Node {
             _pin: PhantomPinned,
-            weak_this,
+            weak_this: weak_this.clone(),
+            children: Default::default(),
+            index_in_parent: Default::default(),
             window: Default::default(),
+            parent: Default::default(),
             transform: Cell::new(Affine::default()),
             geometry: Cell::new(Size::default()),
             change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
@@ -288,7 +297,7 @@ impl Node {
     pub fn new_derived<'a, T: Element + 'static>(f: impl FnOnce(Node) -> T) -> Rc<T> {
         Rc::new_cyclic(move |weak: &Weak<T>| {
             let weak: Weak<dyn Element> = weak.clone();
-            let element = Node::new(&weak);
+            let element = Node::new(weak.clone());
             let visual = f(element);
             visual
         })
@@ -437,8 +446,8 @@ impl Node {
     }*/
 
     /// Requests focus for the current element.
-    pub async fn set_focus(&self) {
-        self.window.borrow().set_focus(Some(self)).await;
+    pub fn set_focus(&self) {
+        self.window.borrow().set_focus(Some(self));
     }
 
     pub fn set_tab_focusable(&self, focusable: bool) {
@@ -625,7 +634,7 @@ impl Node {
     }
 }
 
-
+/*
 /// A strong reference to an element in the element tree.
 #[derive(Clone)]
 pub struct ElementRef {
@@ -637,8 +646,8 @@ pub struct ElementRef {
 pub struct WeakElementRef {
     tree: Weak<dyn ElementTree>,
     index: u32,
-}
-
+}*/
+/*
 pub enum ElementTreeNode<'a> {
     /// Static subtree within this tree.
     Static {
@@ -650,8 +659,9 @@ pub enum ElementTreeNode<'a> {
         parent: u32,
         subtree: Rc<dyn ElementTree>,
     },
-}
+}*/
 
+/*
 /// A subtree of elements.
 pub trait ElementTree {
     /// Returns the root element of the tree.
@@ -662,14 +672,14 @@ pub trait ElementTree {
 
     /// Returns the subtree node at the specified index.
     fn subtree(&self, index: usize) -> Option<ElementTreeNode>;
-}
+}*/
 
 // Can't implement for `Vec<T: Element>` because the elements may move around.
 // However, possible to implement for `Vec<Rc<dyn Element>>`
 
 
 /// Methods of elements in the element tree.
-pub trait Element: EventTarget {
+pub trait Element {
     fn node(&self) -> &Node;
 
     /*/// Calculates the size of the widget under the specified constraints.
@@ -704,28 +714,9 @@ pub trait Element: EventTarget {
     #[allow(unused_variables)]
     fn paint(&self, ctx: &mut PaintCtx) {}
 
-    // Why async? this is because the visual may transfer control to async event handlers
-    // before returning.
     #[allow(unused_variables)]
-    async fn event(&self, event: &mut Event)
-    where
-        Self: Sized,
+    fn event(&self, event: &mut Event)
     {}
-}
-
-/// Implementation detail of `ElementMethods` to get an object-safe version of `async fn event()`.
-#[doc(hidden)]
-pub trait EventTarget {
-    fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()>;
-}
-
-impl<T> EventTarget for T
-where
-    T: Element,
-{
-    fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()> {
-        self.event(event).boxed_local()
-    }
 }
 
 /// An entry in the hit-test chain that leads to the visual that was hit.
@@ -789,9 +780,9 @@ impl dyn Element + '_ {
         geometry
     }
 
-    pub async fn send_event(&self, event: &mut Event) {
+    pub fn send_event(&self, event: &mut Event) {
         // issue: allocating on every event is not great
-        self.event_future(event).await;
+        self.event(event);
     }
 
     /// Hit-tests this visual and its children.

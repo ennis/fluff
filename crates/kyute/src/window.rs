@@ -12,22 +12,19 @@ use std::time::Instant;
 use keyboard_types::{Key, KeyboardEvent};
 use kurbo::{Affine, Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use skia_safe::{Font, FontMgr, FontStyle, Typeface};
 use skia_safe::font::Edging;
-use winit::dpi::PhysicalSize;
+use skia_safe::{Font, FontMgr, FontStyle, Typeface};
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::keyboard::KeyLocation;
 use winit::platform::windows::WindowBuilderExtWindows;
 
-use crate::{application, Color};
 use crate::app_globals::AppGlobals;
-use crate::application::{WindowHandler, with_event_loop_window_target};
+use crate::application::{with_event_loop_window_target, WindowHandler};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
-use crate::element::{RcElementPtrEq, Node, Element, WeakNullableElemPtr};
-use crate::event::{Event, key_event_to_key_code, PointerButton, PointerButtons, PointerEvent};
-use crate::handler::Handler;
-use crate::layout::{LayoutInput, RequestedAxis, SizeConstraint};
+use crate::element::{Element, Node, RcElementPtrEq, WeakNullableElemPtr};
+use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
+use crate::{application, Color};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -96,9 +93,11 @@ struct InputState {
 
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
-    close_requested: Handler<()>,
-    focus_changed: Handler<bool>,
-    resized: Handler<PhysicalSize<u32>>,
+
+    close_requested: RefCell<Option<Box<dyn Fn()>>>,
+    focus_changed: RefCell<Option<Box<dyn Fn(bool)>>>,
+    resized: RefCell<Option<Box<dyn Fn(Size)>>>,
+
     root: Rc<dyn Element>,
     layer: Layer,
     window: winit::window::Window,
@@ -128,7 +127,7 @@ impl WindowInner {
         );
     }
 
-    async fn set_focus(&self, element: Option<&Node>) {
+    fn set_focus(&self, element: Option<&Node>) {
         if let Some(element) = element {
             self.check_belongs_to_window(element);
             eprintln!("set_focus {}", element.name());
@@ -144,11 +143,11 @@ impl WindowInner {
         // send focus gained/lost events
         if let Some(prev) = prev {
             if let Some(prev) = prev.upgrade() {
-                self.dispatch_event(&*prev, &mut Event::FocusLost, false).await;
+                self.dispatch_event(&*prev, &mut Event::FocusLost, false);
             }
         }
         if let Some(new) = self.focus.upgrade() {
-            self.dispatch_event(&*new, &mut Event::FocusGained, false).await;
+            self.dispatch_event(&*new, &mut Event::FocusGained, false);
         }
     }
 
@@ -163,12 +162,12 @@ impl WindowInner {
     /// It will first invoke the event handler of the target visual.
     /// If the event is "bubbling", it will invoke the event handler of the parent visual,
     /// and so on until the root visual is reached.
-    async fn dispatch_event(&self, target: &dyn Element, event: &mut Event, bubbling: bool) {
+    fn dispatch_event(&self, target: &dyn Element, event: &mut Event, bubbling: bool) {
         // get dispatch chain
         let chain = target.ancestors_and_self();
         assert!(
             chain[0].is_same(&*self.root),
-            "target must be a descendant of the root visual"
+            "target must be a descendant of the root element"
         );
 
         // compute local-to-root transforms for each visual in the dispatch chain
@@ -184,28 +183,21 @@ impl WindowInner {
             // dispatch the event, bubbling from the target up the root
             for (visual, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
                 event.set_transform(transform);
-                visual.send_event(event).await;
+                visual.send_event(event);
             }
         } else {
             // dispatch the event to the target only
             event.set_transform(transforms.last().unwrap());
-            target.send_event(event).await;
+            target.send_event(event);
         }
-
-        // handle repaint
-        // NOTE: we don't need to do that anymore, because elements call `request_redraw` themselves
-        // when they are attached to a window.
-        //if self.root.needs_repaint() {
-        //    self.window.request_redraw();
-        //}
     }
 
     /// Dispatches a keyboard event in the UI tree.
     ///
     /// Currently, it just sends it to the focused element, or drops it if there's no focused element.
-    async fn dispatch_keyboard_event(&self, mut event: Event) {
+    fn dispatch_keyboard_event(&self, mut event: Event) {
         if let Some(focus) = self.focus.upgrade() {
-            self.dispatch_event(&*focus, &mut event, true).await;
+            self.dispatch_event(&*focus, &mut event, true);
         }
 
         // TODO do this only if the event was not consumed
@@ -216,13 +208,13 @@ impl WindowInner {
                 if let Some(focus) = self.focus.upgrade() {
                     // Go to next focusable element
                     if let Some(next_focus) = focus.next_focusable_element() {
-                        self.set_focus(Some(&next_focus)).await;
+                        self.set_focus(Some(&next_focus));
                     } else if let Some(next_focus) = self.root.next_focusable_element() {
                         // cycle back to the first focusable element
-                        self.set_focus(Some(&next_focus)).await;
+                        self.set_focus(Some(&next_focus));
                     } else {
                         // no focusable elements
-                        self.set_focus(None).await;
+                        self.set_focus(None);
                     }
                 }
             }
@@ -240,7 +232,7 @@ impl WindowInner {
     /// # Return value
     ///
     /// Returns true if the app logic should re-run in response of the event.
-    async fn dispatch_pointer_event(
+    fn dispatch_pointer_event(
         &self,
         mut event: Event,
         hit_position: Point,
@@ -257,7 +249,7 @@ impl WindowInner {
         let target = self.pointer_capture.upgrade().or(innermost_hit.clone().map(|v| v.0));
 
         if let Some(target) = target {
-            self.dispatch_event(&*target, &mut event, true).await;
+            self.dispatch_event(&*target, &mut event, true);
         }
 
         // release pointer capture automatically on pointer up
@@ -283,26 +275,26 @@ impl WindowInner {
         // send pointerout
         if hit_changed {
             if let Some(ref out) = input_state.last_innermost_hit {
-                self.dispatch_event(&**out, &mut Event::PointerOut(p), true).await;
+                self.dispatch_event(&**out, &mut Event::PointerOut(p), true);
             }
         }
         // send pointerleave
         let leaving = input_state.last_hits.difference(&hits_set);
         for v in leaving {
-            self.dispatch_event(&**v, &mut Event::PointerLeave(p), false).await;
+            self.dispatch_event(&**v, &mut Event::PointerLeave(p), false);
         }
 
         // send pointerover
         if hit_changed {
             if let Some(ref over) = innermost_hit {
-                self.dispatch_event(&**over, &mut Event::PointerOver(p), true).await;
+                self.dispatch_event(&**over, &mut Event::PointerOver(p), true);
             }
         }
 
         // send pointerenter
         let entering = hits_set.difference(&input_state.last_hits);
         for v in entering {
-            self.dispatch_event(&**v, &mut Event::PointerEnter(p), false).await;
+            self.dispatch_event(&**v, &mut Event::PointerEnter(p), false);
         }
 
         // update last hits
@@ -508,8 +500,7 @@ impl WindowInner {
                         request_capture: false,
                     }),
                     pos,
-                )
-                    .await;
+                );
                 // force a redraw for the debug crosshair
                 self.window.request_redraw();
             }
@@ -523,7 +514,7 @@ impl WindowInner {
                 ..
             } => {
                 let converted_event = self.convert_keyboard_input(event);
-                self.dispatch_keyboard_event(converted_event).await;
+                self.dispatch_keyboard_event(converted_event);
                 // for the debugging overlay
                 self.window.request_redraw();
             }
@@ -533,23 +524,29 @@ impl WindowInner {
                 device_id,
             } => {
                 if let Some(event) = self.convert_mouse_input(*device_id, *button, *state) {
-                    self.dispatch_pointer_event(event, self.cursor_pos.get()).await;
+                    self.dispatch_pointer_event(event, self.cursor_pos.get());
                 }
             }
             WindowEvent::CloseRequested => {
-                self.close_requested.emit(()).await;
+                if let Some(ref f) = *self.close_requested.borrow() {
+                    f();
+                }
             }
             WindowEvent::Resized(size) => {
-                self.resized.emit(*size).await;
+                let sizef = Size::new(size.width as f64, size.height as f64);
+                if let Some(ref f) = *self.resized.borrow() {
+                    f(sizef);
+                }
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
-                    let size = Size::new(size.width as f64, size.height as f64);
-                    self.layer.set_surface_size(size);
+                    self.layer.set_surface_size(sizef);
                 }
                 self.root.mark_needs_relayout();
             }
             WindowEvent::Focused(focused) => {
-                self.focus_changed.emit(*focused).await;
+                if let Some(ref f) = *self.focus_changed.borrow() {
+                    f(*focused);
+                }
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -657,9 +654,9 @@ impl WeakWindow {
         }
     }
 
-    pub async fn set_focus(&self, element: Option<&Node>) {
+    pub fn set_focus(&self, element: Option<&Node>) {
         if let Some(shared) = self.shared.upgrade() {
-            shared.set_focus(element).await;
+            shared.set_focus(element);
         }
     }
 
@@ -748,9 +745,9 @@ impl Window {
         let window_id = window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
-            close_requested: Handler::new(),
-            focus_changed: Handler::new(),
-            resized: Handler::new(),
+            close_requested: Default::default(),
+            focus_changed: Default::default(),
+            resized: Default::default(),
             root: root.rc(),
             layer,
             window,
@@ -777,8 +774,8 @@ impl Window {
         Window { shared }
     }
 
-    pub async fn set_focus(&self, element: Option<&Node>) {
-        self.shared.set_focus(element).await;
+    pub fn set_focus(&self, element: Option<&Node>) {
+        self.shared.set_focus(element);
     }
 
     pub fn as_weak(&self) -> WeakWindow {
@@ -795,19 +792,16 @@ impl Window {
         self.shared.window.window_handle().unwrap().as_raw()
     }
 
-    /// Waits for the window to be closed.
-    pub async fn close_requested(&self) {
-        self.shared.close_requested.wait().await
+    pub fn on_close_requested(&self, f: impl Fn() + 'static) {
+        self.shared.close_requested.replace(Some(Box::new(f)));
     }
 
-    /// Waits for the window to be resized.
-    pub async fn resized(&self) -> PhysicalSize<u32> {
-        self.shared.resized.wait().await
+    pub fn on_resized(&self, f: impl Fn(Size) + 'static) {
+        self.shared.resized.replace(Some(Box::new(f)));
     }
 
-    /// Waits for the window to gain or lose focus.
-    pub async fn focus_changed(&self) -> bool {
-        self.shared.focus_changed.wait().await
+    pub fn on_focus_changed(&self, f: impl Fn(bool) + 'static) {
+        self.shared.focus_changed.replace(Some(Box::new(f)));
     }
 
     /// Hides the window.

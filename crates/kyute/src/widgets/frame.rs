@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use tracing::{trace, trace_span};
 
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Node, Element, RcElement};
+use crate::element::{Element, Node, RcElement};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
@@ -223,20 +223,19 @@ impl LayoutCache {
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
     element: Node,
-    pub clicked: Handler<()>,
-    pub hovered: Handler<bool>,
-    pub active: Handler<bool>,
-    pub focused: Handler<bool>,
+    pub clicked: RefCell<Option<Box<dyn FnMut()>>>,
+    //pub hovered: Handler<bool>,
+    //pub active: Handler<bool>,
+    //pub focused: Handler<bool>,
     pub state_changed: Handler<InteractState>,
     layout: RefCell<FrameLayout>,
     layout_cache: RefCell<LayoutCache>,
     state: Cell<InteractState>,
-    style: FrameStyle,
+    style: RefCell<FrameStyle>,
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
     resolved_style: RefCell<FrameStyle>,
 }
-
 
 impl Deref for Frame {
     type Target = Node;
@@ -246,9 +245,30 @@ impl Deref for Frame {
     }
 }
 
+macro_rules! paint_style_setter {
+    ($s:ident, $setter:ident: $ty:ty) => {
+        pub fn $setter(&self, value: $ty) {
+            self.style.borrow_mut().$s = value;
+            self.style_changed.set(true);
+            self.mark_needs_repaint();
+        }
+    };
+}
+
+macro_rules! layout_style_setter {
+    ($s:ident, $p:pat, $setter:ident: $ty:ty) => {
+        pub fn $setter(&self, value: $ty) {
+            if let $p = &mut *self.layout.borrow_mut() {
+                *$s = value;
+                self.mark_needs_relayout();
+            }
+        }
+    };
+}
+
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
-    pub fn new(style: FrameStyle) -> Rc<Frame> {
+    pub fn new() -> Rc<Frame> {
         Node::new_derived(|element| Frame {
             element,
             clicked: Default::default(),
@@ -256,14 +276,57 @@ impl Frame {
             active: Default::default(),
             focused: Default::default(),
             state_changed: Default::default(),
-            layout: RefCell::new(Default::default()),
-            layout_cache: RefCell::new(Default::default()),
-            state: Cell::new(Default::default()),
-            style: style.clone(),
+            layout: Default::default(),
+            layout_cache: Default::default(),
+            state: Default::default(),
+            style: Default::default(),
             style_changed: Cell::new(true),
             state_affects_style: Cell::new(false),
-            resolved_style: RefCell::new(style.clone()),
+            resolved_style: Default::default(),
         })
+    }
+
+    pub fn set_style(&self, style: FrameStyle) {
+        self.style.replace(style);
+        self.style_changed.set(true);
+        self.mark_needs_relayout();
+    }
+
+    paint_style_setter!(border_left, set_border_left: LengthOrPercentage);
+    paint_style_setter!(border_right, set_border_right: LengthOrPercentage);
+    paint_style_setter!(border_top, set_border_top: LengthOrPercentage);
+    paint_style_setter!(border_bottom, set_border_bottom: LengthOrPercentage);
+
+    layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
+    layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: FlexSize);
+    layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: FlexSize);
+    layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: FlexSize);
+
+    pub fn set_padding(&self, value: LengthOrPercentage) {
+        self.set_padding_left(value);
+        self.set_padding_right(value);
+        self.set_padding_top(value);
+        self.set_padding_bottom(value);
+    }
+
+    pub fn set_padding_left(&self, value: LengthOrPercentage) {
+        self.set(PaddingLeft, value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_padding_right(&self, value: LengthOrPercentage) {
+        self.set(PaddingRight, value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_padding_top(&self, value: LengthOrPercentage) {
+        self.set(PaddingTop, value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_padding_bottom(&self, value: LengthOrPercentage) {
+        self.set(PaddingBottom, value);
+        self.mark_needs_relayout();
     }
 
     pub fn set_content(&self, content: RcElement) {
@@ -282,7 +345,7 @@ impl Frame {
     fn calculate_style(&self) {
         if self.style_changed.get() {
             self.resolved_style
-                .replace(self.style.apply_overrides(self.state.get()));
+                .replace(self.style.borrow().apply_overrides(self.state.get()));
             self.style_changed.set(false);
         }
     }
@@ -311,41 +374,43 @@ impl Frame {
     ) -> LayoutOutput {
         // TODO parent size
         let layout_input = LayoutInput::from_main_cross(p.axis, main, cross, None, None);
-        self.layout_cache.borrow_mut().get_or_insert_with(&layout_input, mode, |li| {
-            let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
+        self.layout_cache
+            .borrow_mut()
+            .get_or_insert_with(&layout_input, mode, |li| {
+                let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
 
-            // resolve padding
-            let padding_left = layout_input.width.resolve_length(p.padding.left);
-            let padding_right = layout_input.width.resolve_length(p.padding.right);
-            let padding_top = layout_input.height.resolve_length(p.padding.top);
-            let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
+                // resolve padding
+                let padding_left = layout_input.width.resolve_length(p.padding.left);
+                let padding_right = layout_input.width.resolve_length(p.padding.right);
+                let padding_top = layout_input.height.resolve_length(p.padding.top);
+                let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
 
-            let FrameLayout::Flex {
-                direction,
-                gap,
-                initial_gap,
-                final_gap,
-            } = self.layout.borrow().clone();
+                let FrameLayout::Flex {
+                    direction,
+                    gap,
+                    initial_gap,
+                    final_gap,
+                } = self.layout.borrow().clone();
 
-            // layout children
-            // TODO other layouts
-            let flex_params = FlexLayoutParams {
-                axis: direction,
-                width: layout_input.width.deflate(padding_left + padding_right),
-                height: layout_input.height.deflate(padding_top + padding_bottom),
-                parent_width: None,
-                parent_height: None,
-                gap,
-                initial_gap,
-                final_gap,
-            };
+                // layout children
+                // TODO other layouts
+                let flex_params = FlexLayoutParams {
+                    axis: direction,
+                    width: layout_input.width.deflate(padding_left + padding_right),
+                    height: layout_input.height.deflate(padding_top + padding_bottom),
+                    parent_width: None,
+                    parent_height: None,
+                    gap,
+                    initial_gap,
+                    final_gap,
+                };
 
-            let mut output = flex_layout(mode, &flex_params, p.children);
-            output.width += padding_left + padding_right;
-            output.height += padding_top + padding_bottom;
-            output.baseline.as_mut().map(|b| *b += padding_top);
-            output
-        })
+                let mut output = flex_layout(mode, &flex_params, p.children);
+                output.width += padding_left + padding_right;
+                output.height += padding_top + padding_bottom;
+                output.baseline.as_mut().map(|b| *b += padding_top);
+                output
+            })
     }
 
     /// Measures a box element sized according to the specified constraints.
@@ -534,13 +599,10 @@ impl Element for Frame {
         });
     }
 
-    async fn event(&self, event: &mut Event)
-    where
-        Self: Sized,
+    fn event(&self, event: &mut Event)
     {
-        async fn update_state(this: &Frame, state: InteractState) {
+        fn update_state(this: &Frame, state: InteractState) {
             this.state.set(state);
-            this.state_changed.emit(state).await;
             if this.state_affects_style.get() {
                 this.style_changed.set(true);
                 this.mark_needs_relayout();
@@ -551,25 +613,25 @@ impl Element for Frame {
         match event {
             Event::PointerDown(_) => {
                 state.set_active(true);
-                update_state(self, state).await;
-                self.active.emit(true).await;
+                update_state(self, state);
+                //self.active.emit(true).await;
             }
             Event::PointerUp(_) => {
                 if state.is_active() {
                     state.set_active(false);
-                    update_state(self, state).await;
+                    update_state(self, state);
                     self.clicked.emit(()).await;
                 }
             }
             Event::PointerEnter(_) => {
                 state.set_hovered(true);
-                update_state(self, state).await;
-                self.hovered.emit(true).await;
+                update_state(self, state);
+                //self.hovered.emit(true).await;
             }
             Event::PointerLeave(_) => {
                 state.set_hovered(false);
-                update_state(self, state).await;
-                self.hovered.emit(false).await;
+                update_state(self, state);
+                //self.hovered.emit(false).await;
             }
             _ => {}
         }

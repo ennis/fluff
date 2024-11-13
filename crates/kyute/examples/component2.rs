@@ -1,14 +1,20 @@
+use kurbo::Point;
 pub use kurbo::{self, Size};
 use kyute::handler::Handler;
-use kyute::layout::Axis;
+use kyute::layout::{Axis, LayoutInput, LayoutOutput, PaddingLeft};
+use kyute::style::{Style, StyleExt};
+use kyute::text::TextStyle;
 use kyute::widgets::button::button;
 use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
 use kyute::widgets::text::Text;
+use kyute::widgets::text_edit::{TextEdit, TextOverflow, WrapMode};
 use kyute::{
-    application, text, Color, Component, ComponentHolder, Element, Node, Window,
+    application, text, Color, ComponentHolder, Component, Node, Element, Event, PaintCtx, Window,
     WindowOptions,
 };
+pub use skia_safe as skia;
 use std::cell::Cell;
+use std::future::pending;
 use std::ops::Deref;
 use std::rc::Rc;
 use tokio::select;
@@ -45,8 +51,13 @@ struct TestComponent {
 
 impl TestComponent {
     // (PAIN) having to type `Rc<ComponentHolder<Self>>` is boilerplate and unintuitive.
-    // Unfortunately it's necessary because otherwise there would be a reference cycle with the
-    // async task.
+    // Problem: there are really two interfaces: one that the ComponentHolder sees and the task sees,
+    // and the interface that users of the component see.
+    // Users of the component see a wrapper type, which can be annoying to work with.
+    // It must also reimplement the methods, unless it derefs to the inner type.
+    //
+    // Solution: ComponentHolder<T> can be seen as a smart pointer type. Combine with Rc and rename to
+    // something shorter.
     pub fn new() -> Rc<ComponentHolder<Self>> {
 
         // (PAIN) building the element tree is verbose (albeit flexible), and most importantly
@@ -89,6 +100,7 @@ impl TestComponent {
     pub fn set_value(&self, value: i32) {
         // (PAIN) if the async task somehow needed to be notified of the value change,
         // `set_value` would need to be async.
+        // (PAIN) no access to the node here
         self.value.set(value)
     }
 }
@@ -96,14 +108,11 @@ impl TestComponent {
 
 // (PAIN) having to implement a trait, far away from the constructor.
 impl Component for TestComponent {
-    // (PAIN) Component trait boilerplate. The implementation of `node` is always the same.
-    fn node(&self) -> &Node {
-        &self.node
-    }
-
     async fn task(&self) {
-        // (PAIN) Easy to forget to add the content to the parent node.
+
+        // (PAIN) easy to forget to add the content to the node.
         self.node().add_child(self.content.clone());
+
 
         loop {
             select! {
@@ -113,7 +122,7 @@ impl Component for TestComponent {
                 _ = self.button_up.clicked() => {
                     self.value.set(self.value.get() + 1);
                     self.update_text();
-                    // PAIN: signalling an event is verbose
+                    // (PAIN) signalling an event is verbose
                     self.notifier.emit(Events::value_changed).await;
                     self.notifier.emit(Events::editing_finished).await;
                 }
@@ -180,14 +189,13 @@ fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     application::run(async {
-        let frame = Frame::new();
-
-        frame.set_style(FrameStyle {
+        let frame = Frame::new(FrameStyle {
             border_color: Color::from_hex("5f5637"),
             border_radius: 8.0.into(),
             background_color: Color::from_hex("211e13"),
             ..Default::default()
         });
+
         frame.set_layout(FrameLayout::Flex {
             direction: Axis::Vertical,
             gap: 4.0.into(),

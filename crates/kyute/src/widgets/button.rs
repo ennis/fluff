@@ -60,7 +60,8 @@ pub fn button(label: impl Into<String>) -> Rc<Frame> {
         .color(Color::from_hex("ffe580"));
     //let text = AttributedStr { str: &label, style:& text_style };
     let text = Text::new(text!( style(text_style) "{label}" ));
-    let frame = Frame::new(button_style());
+    let frame = Frame::new();
+    frame.set_style(button_style());
     frame.add_child(text.clone());
     frame
 }
