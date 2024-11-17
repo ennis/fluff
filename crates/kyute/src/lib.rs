@@ -21,7 +21,7 @@ pub mod component;
 pub use app_globals::AppGlobals;
 pub use kyute_common::Color;
 pub use element::{Node, Element};
-pub use component::{ComponentHolder, Component};
+pub use component::{Component, ComponentPtr};
 pub use event::Event;
 pub use kurbo::{self, Point, Rect, Size};
 pub use paint_ctx::PaintCtx;

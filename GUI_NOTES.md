@@ -587,7 +587,7 @@ Imperative mutation approach: build the initial tree, then mutate it when state 
 
 # Nice-to-haves
 
-## Describing widget trees: native Rust struct syntax
+## Describing widget trees: native Rust struct syntax (STRUCT-INIT-SYNTAX)
 
 Describe widget trees with simple value types, built with struct initialization syntax.
 Will be made more ergonomic with [default field values](https://github.com/rust-lang/rfcs/pull/3681).
@@ -596,7 +596,7 @@ frame, because nodes of the retained widget tree are somewhat hard to create dir
 
 Avoid builder patterns. It's pure boilerplate for the widget developer.
 
-## Direct references to elements in the UI tree
+## Direct references to elements in the UI tree (DIRECT-WIDGET-REFS)
 
 Previously elements were directly owned by their parents. It was impossible to keep a borrow to an element for long
 (the lifetimes would be intractable), so elements had a unique ID, and could be reached by ID paths from the root to the
@@ -606,7 +606,54 @@ This ended up complicating the implementation of the widget trait (widgets neede
 the proper child widget), so don't do that again. Instead, it should be possible to directly refer to a widget by a
 reference, most likely `Rc/Weak` pointers.
 
-## Context-less widget methods.
+## Reactivity (REACTIVITY)
+
+In short, reactivity means: instead of explicitly mutating the tree in response to events, track the values that the
+UI tree depends on when it is first built; then when those value changes, rebuild the tree.
+Those "values" are typically associated to a parent scope. Usage of values are tracked in the scope. Usually when a
+value changes, the scope and all its parents are re-evaluated.
+
+Reactive systems are interesting because you don't have to write separate code for initialization and update of the
+UI tree. However, they can be more difficult to implement and harder to follow (notably, dependencies between state and
+UI are largely implicit).
+
+They also tend to be coarser-grained: since dependent values are tracked at the level of
+UI elements and not individual properties, whole elements are rebuilt even if just one property actually changes.
+Frameworks tend to solve that by having a separate retained tree, onto which the rebuilt UI tree is applied by
+diffing individual property values.
+
+This adds a bit of complexity, and actually requires a whole other system for the retained tree. A lot of reactive
+systems gloss over that fact since they manipulate the DOM underneath.
+
+Reactivity is important: if you have a piece of data that changes, and several UI elements that show this data,
+users shouldn't have to keep track of all dependent UI elements and update them manually when the data changes.
+However, there are two flavors of reactivity, depending on how dependencies are specified:
+
+1. Implicitly-tracked dependencies
+   This is when the dependencies are tracked implicitly when the value is used. E.g.
+   ```VBox { Text { text: format!("{value}") } }``` will create an implicit dependency on `value`. The whole expression
+   is rebuilt when `value` changes.
+
+2. Signals
+   Something more like:
+
+```
+impl Component {
+    fn new(value: Model<u32>) {
+        let vbox = ...;
+        let text = ...;
+        
+        value.on_changed(|this, value| {
+            this.text.set_value(format!("{value}"));
+        });
+    }
+}
+```
+
+The two approaches can be considered implementation details of reactivity. "Signals" are a bit more verbose and
+explicit, the "implicit" approach is less verbose but is coarser and will require diffing to be efficient.
+
+## Context-less widget methods. (NO-CONTEXT)
 
 Methods of widgets (for instance: `TextInput::move_cursor`, `Checkbox::is_checked`, `Button::set_focus`) shouldn't need
 a `Ctx` parameter to work correctly. We should be able to call those methods directly, in any context, given
@@ -620,18 +667,18 @@ user of the library.
 A practical consequence of that is that it should be possible to obtain a shared reference to a widget from `&self`.
 (So that it's possible to use methods that store strong references to widgets).
 
-## No complicated wrapper types and non-standard receiver types.
+## No complicated wrapper types and non-standard receiver types. (NO-CUSTOM-RECEIVERS)
 
 Avoid methods with signatures like `fn method(self: &Rc<Self>)`. This is surprising, unergonomic. Prefer storing
 a cyclic weak pointer inside the object so that it can be upgraded to Rc when needed.
 
-## Minimize the need for `Rc` wrapping in user code
+## Minimize the need for `Rc` wrapping in user code (NO-USER-RC)
 
 If possible, avoid the need for wrapping in Rc for custom widgets: it should be `Widget::new() -> Widget`, not
 `Widget::new() -> Rc<Widget>`. If it's necessary, wrap with `Rc` in `add_child`.
 Why? Minimize noise when building deep UI trees.
 
-## Hot-reloading
+## Hot-reloading (HOT-RELOAD)
 
 There are several flavors of hot-reloading:
 
@@ -646,11 +693,21 @@ There are several flavors of hot-reloading:
 Hot-reloading is most likely incompatible with specifying widget trees in pure rust, unless we compile rust code at
 runtime (possibly to WASM modules).
 
-## No "virtual DOM"
+## Avoid unnecessary allocations (NO-ALLOC)
+
+For instance, a vbox with a fixed number of items shouldn't allocate. It should be generic over the subtree type
+(in static cases, a tuple).
+
+## No "virtual DOM" (NO-VDOM)
 
 Avoid virtual DOM approaches that require reconciliation. The retained tree should be directly, and efficiently mutable.
 
-## Async event handling
+## Separation of presentation and behavior (PRESENTATION-VS-BEHAVIOR)
+
+This is not required per-se, but if hot-reload is a goal it will be easier to do if presentation and behavior are
+separate.
+
+## Async event handling (ASYNC-EVENTS)
 
 Respond to events by awaiting futures. Multiple events can be awaited by `select!`ing multiple futures. In contrast
 to callbacks, it's possible to keep mutable state in the local scope of the future, instead of having to wrap it in
@@ -704,3 +761,117 @@ Proposal:
 - the arena holds the hierarchy (ID -> parent ID) and can be used to enumerate child elements
 - **elements don't hold their children**
 - however, elements can access their children at any time from the arena
+
+# Avoiding Rc?
+
+Typically, the way to avoid that is to let the container wrap the widget in Rc.
+However, this moves the widget into the container, and the caller cannot access it anymore.
+
+Rc isn't absolutely necessary. However, if not using Rc, then we need a way to address specific widgets in the tree.
+Weak pointers from Rc are an easy way to do that.
+
+## Raw pointers
+
+Raw pointers could be used if we can guarantee that the widget is still there (and hasn't moved!)
+when upgrading the raw pointer to a borrow. This is impossible if the user owns the widget (even with only a read-only
+borrow it's possible to use interior mutability to move the referenced widget out of its slot).
+
+So, when referencing a child widget somewhere, it must be owned by the framework. The user should only see a borrow
+of the widget. This means that to store it in a struct, lifetime annotations will be required.
+
+Thus, (no Rc + direct pointer to widgets) => lifetime annotations.
+
+## IDs
+
+Need a way to resolve them to references, which is less direct than raw pointers.
+It would probably take the form of a generational arena in which all elements are associated to an ID.
+No allocation benefit compared to raw pointers since widgets need to be boxed before being put in the arena.
+Borrowing from the arena is complicated if there's no borrow of the arena currently accessible.
+
+## Container-owns
+
+The druid approach. Containers directly own their children, sometimes wrapped in additional state (`WidgetPod`).
+Widgets have IDs. To send something to a widget by ID, need to traverse the tree and find the matching ID, which is
+costly. Druid has a bloom filter to accelerate the traversal, but it's not very convincing.
+
+## Hybrid Rc + index
+
+A lot of UI subtrees are static: their structure never change. Widgets in these static subtrees can be allocated
+together and referred to by a fat pointer `(Rc<Subtree>, usize)` (more like an obese pointer, since the subtree pointer
+is already fat), where the usize is the static index of the element in the subtree.
+Slint does that, I think.
+
+## Alternative: no access to the UI tree once it's built
+
+Model UI as a one-way function that looks at the state and produces a UI tree representation, then diffed against the
+retained UI tree. Like xilem, flutter, and the previous kyute incarnation.
+Retained UI nodes are never manipulated directly. Instead, the builder function is called again whenever dependent state
+is modified.
+
+It's a well-established pattern at this point.
+
+Conclusion:
+
+- if event handlers need direct access to widgets (i.e. call methods on widgets directly), then those need to be `Rc<>`
+- otherwise, in a purely reactive approach (where widget trees are rebuilt on state change), widgets are "value types"
+  that cannot be referenced.
+
+## Direct reference to parent widgets in event handlers
+
+If parent widgets own their children, it should be OK for an event handler in a child widget to borrow stuff from the
+parent, since it's guaranteed to be alive (provided the parent is pinned in memory). We do end up with a
+self-referential structure but at least it doesn't need Rc. Borrows that escape the subtree are still impossible
+however.
+
+# Conclusions
+
+- (STRUCT-INIT-SYNTAX) is most likely impractical to build a retained widget tree, because retained widgets need to
+  track additional (private) state that would show up in the initialization expression. It is more also more suited
+  for reactive systems that rebuild subtrees (coarse-grained incrementality) instead of updating the tree (fine-grained
+  incrementality).
+- (NO-ALLOC) is not a priority since it's unlikely that performance will be a significant issue given the low number of
+  widgets on the screen. It could be implemented after as an exercise.
+- (DIRECT-WIDGET-REFS) is an implementation detail of reactivity. If we target the "second kind" of reactivity (
+  fine-grained updates without diffing) then direct references are necessary.
+
+# Async handlers VS callbacks?
+
+Practical considerations:
+
+- a `Handler<bool>` is 80 bytes
+- one `Box<dyn Fn>` is 16 bytes
+
+Is it possible to implement async events via callbacks?
+I.e.
+
+```
+button.on_click(|| {
+    // would be nice if able to borrow stuff here
+    handler.emit(());
+    // it's possible to wake a component here, but no way
+    // to set a flag that the future can read, unless we allocate something
+});
+```
+
+Basically, we want events that can either:
+
+- receive callbacks
+- be awaited
+
+Scoped callbacks:
+
+```
+impl Button {
+    async fn await_on_click(&self) {
+        let clicked = Cell::new(false);
+        // scoped callback that can borrow from the scope
+        let _callback = self.on_click.scoped_watch(|| {
+            clicked.set(true);
+        });
+        while !clicked.get() {
+            yield_now().await;
+        }
+        // ISSUE: unsafe since we can mem::forget the _callback
+    }
+}
+```

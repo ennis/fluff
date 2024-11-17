@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use tracing::{trace, trace_span};
 
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, Node, RcElement};
+use crate::element::{Node, Element, RcElement};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
@@ -223,10 +223,10 @@ impl LayoutCache {
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
     element: Node,
-    pub clicked: RefCell<Option<Box<dyn FnMut()>>>,
-    //pub hovered: Handler<bool>,
-    //pub active: Handler<bool>,
-    //pub focused: Handler<bool>,
+    pub clicked: Handler<()>,
+    pub hovered: Handler<bool>,
+    pub active: Handler<bool>,
+    pub focused: Handler<bool>,
     pub state_changed: Handler<InteractState>,
     layout: RefCell<FrameLayout>,
     layout_cache: RefCell<LayoutCache>,
@@ -236,6 +236,7 @@ pub struct Frame {
     state_affects_style: Cell<bool>,
     resolved_style: RefCell<FrameStyle>,
 }
+
 
 impl Deref for Frame {
     type Target = Node;
@@ -374,43 +375,41 @@ impl Frame {
     ) -> LayoutOutput {
         // TODO parent size
         let layout_input = LayoutInput::from_main_cross(p.axis, main, cross, None, None);
-        self.layout_cache
-            .borrow_mut()
-            .get_or_insert_with(&layout_input, mode, |li| {
-                let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
+        self.layout_cache.borrow_mut().get_or_insert_with(&layout_input, mode, |li| {
+            let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
 
-                // resolve padding
-                let padding_left = layout_input.width.resolve_length(p.padding.left);
-                let padding_right = layout_input.width.resolve_length(p.padding.right);
-                let padding_top = layout_input.height.resolve_length(p.padding.top);
-                let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
+            // resolve padding
+            let padding_left = layout_input.width.resolve_length(p.padding.left);
+            let padding_right = layout_input.width.resolve_length(p.padding.right);
+            let padding_top = layout_input.height.resolve_length(p.padding.top);
+            let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
 
-                let FrameLayout::Flex {
-                    direction,
-                    gap,
-                    initial_gap,
-                    final_gap,
-                } = self.layout.borrow().clone();
+            let FrameLayout::Flex {
+                direction,
+                gap,
+                initial_gap,
+                final_gap,
+            } = self.layout.borrow().clone();
 
-                // layout children
-                // TODO other layouts
-                let flex_params = FlexLayoutParams {
-                    axis: direction,
-                    width: layout_input.width.deflate(padding_left + padding_right),
-                    height: layout_input.height.deflate(padding_top + padding_bottom),
-                    parent_width: None,
-                    parent_height: None,
-                    gap,
-                    initial_gap,
-                    final_gap,
-                };
+            // layout children
+            // TODO other layouts
+            let flex_params = FlexLayoutParams {
+                axis: direction,
+                width: layout_input.width.deflate(padding_left + padding_right),
+                height: layout_input.height.deflate(padding_top + padding_bottom),
+                parent_width: None,
+                parent_height: None,
+                gap,
+                initial_gap,
+                final_gap,
+            };
 
-                let mut output = flex_layout(mode, &flex_params, p.children);
-                output.width += padding_left + padding_right;
-                output.height += padding_top + padding_bottom;
-                output.baseline.as_mut().map(|b| *b += padding_top);
-                output
-            })
+            let mut output = flex_layout(mode, &flex_params, p.children);
+            output.width += padding_left + padding_right;
+            output.height += padding_top + padding_bottom;
+            output.baseline.as_mut().map(|b| *b += padding_top);
+            output
+        })
     }
 
     /// Measures a box element sized according to the specified constraints.
@@ -599,10 +598,13 @@ impl Element for Frame {
         });
     }
 
-    fn event(&self, event: &mut Event)
+    async fn event(&self, event: &mut Event)
+    where
+        Self: Sized,
     {
-        fn update_state(this: &Frame, state: InteractState) {
+        async fn update_state(this: &Frame, state: InteractState) {
             this.state.set(state);
+            this.state_changed.emit(state).await;
             if this.state_affects_style.get() {
                 this.style_changed.set(true);
                 this.mark_needs_relayout();
@@ -613,25 +615,25 @@ impl Element for Frame {
         match event {
             Event::PointerDown(_) => {
                 state.set_active(true);
-                update_state(self, state);
-                //self.active.emit(true).await;
+                update_state(self, state).await;
+                self.active.emit(true).await;
             }
             Event::PointerUp(_) => {
                 if state.is_active() {
                     state.set_active(false);
-                    update_state(self, state);
+                    update_state(self, state).await;
                     self.clicked.emit(()).await;
                 }
             }
             Event::PointerEnter(_) => {
                 state.set_hovered(true);
-                update_state(self, state);
-                //self.hovered.emit(true).await;
+                update_state(self, state).await;
+                self.hovered.emit(true).await;
             }
             Event::PointerLeave(_) => {
                 state.set_hovered(false);
-                update_state(self, state);
-                //self.hovered.emit(false).await;
+                update_state(self, state).await;
+                self.hovered.emit(false).await;
             }
             _ => {}
         }

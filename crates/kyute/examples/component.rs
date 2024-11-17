@@ -5,7 +5,7 @@ use kyute::widgets::button::button;
 use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
 use kyute::widgets::text::Text;
 use kyute::{
-    application, text, Color, Component, ComponentHolder, Element, Node, Window,
+    application, text, Color, Component, ComponentInner, Element, Node, Window,
     WindowOptions,
 };
 use std::cell::Cell;
@@ -47,7 +47,7 @@ impl TestComponent {
     // (PAIN) having to type `Rc<ComponentHolder<Self>>` is boilerplate and unintuitive.
     // Unfortunately it's necessary because otherwise there would be a reference cycle with the
     // async task.
-    pub fn new() -> Rc<ComponentHolder<Self>> {
+    pub fn new() -> Rc<ComponentInner<Self>> {
 
         // (PAIN) building the element tree is verbose (albeit flexible), and most importantly
         // doesn't visually reflect the tree structure of the UI at a glance.
@@ -73,7 +73,7 @@ impl TestComponent {
         content.add_child(button_down.clone());
 
         // (PAIN) ComponentHolder boilerplate.
-        ComponentHolder::new(|node| TestComponent {
+        ComponentInner::new(|node| TestComponent {
             node,
             content,
             notifier: Handler::new(),

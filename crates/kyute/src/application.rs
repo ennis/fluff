@@ -67,9 +67,24 @@ pub fn spawn(fut: impl Future<Output=()> + 'static) -> AbortHandle {
     })
 }
 
+pub trait WindowHandlerObjectSafe {
+    fn event_future<'a>(&'a self, event: &'a winit::event::WindowEvent) -> LocalBoxFuture<'a, ()>;
+}
+
 /// Handler for window events.
-pub trait WindowHandler {
-    fn event(&self, event: &winit::event::WindowEvent);
+pub trait WindowHandler: WindowHandlerObjectSafe {
+    async fn event(&self, event: &winit::event::WindowEvent)
+    where
+        Self: Sized;
+}
+
+impl<T: WindowHandler> WindowHandlerObjectSafe for T
+where
+    T: WindowHandler,
+{
+    fn event_future<'a>(&'a self, event: &'a winit::event::WindowEvent) -> LocalBoxFuture<'a, ()> {
+        self.event(event).boxed_local()
+    }
 }
 
 /// Registers a winit window with the application, and retrieves the events for the window.
@@ -116,7 +131,7 @@ pub async fn wait_for(duration: Duration) {
     wait_until(deadline).await;
 }
 
-pub fn run(setup: impl FnOnce() + 'static) -> Result<(), anyhow::Error> {
+pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::Error> {
     set_thread_name!("UI thread");
     let event_loop: EventLoop<ExtEvent> = EventLoopBuilder::with_user_event()
         .build()
@@ -139,9 +154,13 @@ pub fn run(setup: impl FnOnce() + 'static) -> Result<(), anyhow::Error> {
     };
 
     let result = APP_STATE.set(&app_state, || {
-        // Before the event loop starts, run the setup function to create the initial windows.
-        EVENT_LOOP_WINDOW_TARGET.set(&event_loop, move || {
-            setup();
+        // Before the event loop starts, spawn the root future, and poll it
+        // so that the initial windows are created.
+        // This is necessary because if no windows are created no messages will be sent and
+        // the closure passed to `run` will never be called.
+        EVENT_LOOP_WINDOW_TARGET.set(&event_loop, || {
+            spawn(root_future);
+            local_pool.run_until_stalled();
         });
 
         event_loop.run(move |event, elwt| {
@@ -179,7 +198,7 @@ pub fn run(setup: impl FnOnce() + 'static) -> Result<(), anyhow::Error> {
                             let handler = state.windows.borrow().get(&window_id).cloned();
                             if let Some(handler) = handler {
                                 if let Some(handler) = handler.upgrade() {
-                                    handler.event(&window_event)
+                                    local_pool.run_until(handler.event_future(&window_event));
                                 } else {
                                     // remove the window if the handler has been dropped
                                     state.windows.borrow_mut().remove(&window_id);

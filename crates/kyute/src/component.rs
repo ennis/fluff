@@ -1,69 +1,79 @@
 use std::cell::RefCell;
-use std::future::Future;
+use std::future::pending;
 use std::marker::PhantomPinned;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::rc::Rc;
 
-use futures_util::future::AbortHandle;
+use futures_util::future::LocalBoxFuture;
+use futures_util::FutureExt;
 use kurbo::Size;
 
-use crate::application::spawn;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::{Node, Element, Event, PaintCtx};
+use crate::{Element, Event, Node, PaintCtx};
+use crate::element::RcElement;
 
-pub struct ComponentHolder<T: Component> {
+struct ComponentInner<T> {
     _pin: PhantomPinned,
     // The future must come first so that it is dropped first, otherwise the future may observe
     // a partially deleted component.
-    future: RefCell<Option<Box<dyn Future<Output=()> + 'static>>>,
+    future: RefCell<Option<LocalBoxFuture<'static, ()>>>,
     component: T,
 }
 
-impl<T: Component + 'static> ComponentHolder<T> {
+// Issue: containers already take a `Rc`; they should take a `Pin<Rc>` instead.
+pub struct ComponentPtr<T>(Pin<Rc<ComponentInner<T>>>);
+
+impl<T> Clone for ComponentPtr<T> {
+    fn clone(&self) -> Self {
+        ComponentPtr(self.0.clone())
+    }
+}
+
+impl<T: Component + 'static> ComponentPtr<T> {
     /// Creates a new element with the specified type and constructor.
-    pub fn new(f: impl FnOnce(Node) -> T) -> Rc<ComponentHolder<T>> {
-
-
+    pub fn new(f: impl FnOnce(Node) -> T) -> ComponentPtr<T> {
         // Instantiate the component
-        let component = Node::new_derived(|element| ComponentHolder {
+        let inner = Node::new_derived(|element| ComponentInner {
             _pin: PhantomPinned,
             component: f(element),
             future: RefCell::new(None),
         });
 
+        // pin it
+        let inner = unsafe { Pin::new_unchecked(inner) };
+        let inner_ptr = &*inner as *const _;
 
-        let component_clone = component.component.clone();
-        let abort_handle = spawn(async move {
-            component_clone.task().await;
-        });
+        let future = async move {
+            // SAFETY:
+            // - the pointee is pinned, so it can't move
+            // - the future is dropped before the pointee so the future won't outlive the element
+            let inner = unsafe { &*inner_ptr };
+            inner.component.task().await;
+            pending::<()>().await;
+        }.boxed_local();
 
-        component.abort_handle.replace(Some(abort_handle));
-        component
+        // put the future in place
+        inner.future.replace(Some(future));
+        inner
     }
 }
 
-impl<T> Drop for ComponentHolder<T> {
-    fn drop(&mut self) {
-        if let Some(abort_handle) = self.abort_handle.borrow_mut().take() {
-            abort_handle.abort();
-        }
-    }
-}
 
-impl<T> Deref for ComponentHolder<T> {
+impl<T> Deref for ComponentPtr<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.component
+        &self.0.component
     }
 }
 
-impl<T: Component> Element for ComponentHolder<T> {
+impl<T: Component> Element for ComponentPtr<T> {
     fn node(&self) -> &Node {
-        &self.component.node()
+        &self.0.component.node()
     }
 
-    fn measure(&self, _children: &[Rc<dyn Element>], layout_input: &LayoutInput) -> Size {
+    fn measure(&self, _children: &[RcElement], layout_input: &LayoutInput) -> Size {
         // Defer to child element
         let children = self.component.node().children();
         if !children.is_empty() {
@@ -73,7 +83,7 @@ impl<T: Component> Element for ComponentHolder<T> {
         }
     }
 
-    fn layout(&self, _children: &[Rc<dyn Element>], size: Size) -> LayoutOutput {
+    fn layout(&self, _children: &[RcElement], size: Size) -> LayoutOutput {
         // Defer to child element
         let children = self.component.node().children();
         if !children.is_empty() {

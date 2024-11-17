@@ -9,7 +9,7 @@ use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
 use kyute::widgets::text::Text;
 use kyute::widgets::text_edit::{TextEdit, TextOverflow, WrapMode};
 use kyute::{
-    application, text, Color, ComponentHolder, Component, Node, Element, Event, PaintCtx, Window,
+    application, text, Color, ComponentInner, Component, Node, Element, Event, PaintCtx, Window,
     WindowOptions,
 };
 pub use skia_safe as skia;
@@ -58,7 +58,7 @@ impl TestComponent {
     //
     // Solution: ComponentHolder<T> can be seen as a smart pointer type. Combine with Rc and rename to
     // something shorter.
-    pub fn new() -> Rc<ComponentHolder<Self>> {
+    pub fn new() -> Rc<ComponentInner<Self>> {
 
         // (PAIN) building the element tree is verbose (albeit flexible), and most importantly
         // doesn't visually reflect the tree structure of the UI at a glance.
@@ -84,7 +84,7 @@ impl TestComponent {
         content.add_child(button_down.clone());
 
         // (PAIN) ComponentHolder boilerplate.
-        ComponentHolder::new(|node| TestComponent {
+        ComponentInner::new(|node| TestComponent {
             node,
             content,
             notifier: Handler::new(),

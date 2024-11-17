@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use paste::paste;
-use kyute::{text, Component, ComponentHolder};
+use kyute::{text, Component, ComponentInner};
 use kyute::handler::Handler;
 use kyute::layout::Axis;
 use kyute::widgets::button::button;

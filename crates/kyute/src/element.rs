@@ -446,8 +446,8 @@ impl Node {
     }*/
 
     /// Requests focus for the current element.
-    pub fn set_focus(&self) {
-        self.window.borrow().set_focus(Some(self));
+    pub async fn set_focus(&self) {
+        self.window.borrow().set_focus(Some(self)).await;
     }
 
     pub fn set_tab_focusable(&self, focusable: bool) {
@@ -679,7 +679,7 @@ pub trait ElementTree {
 
 
 /// Methods of elements in the element tree.
-pub trait Element {
+pub trait Element: EventTarget {
     fn node(&self) -> &Node;
 
     /*/// Calculates the size of the widget under the specified constraints.
@@ -714,9 +714,28 @@ pub trait Element {
     #[allow(unused_variables)]
     fn paint(&self, ctx: &mut PaintCtx) {}
 
+    // Why async? this is because the visual may transfer control to async event handlers
+    // before returning.
     #[allow(unused_variables)]
-    fn event(&self, event: &mut Event)
+    async fn event(&self, event: &mut Event)
+    where
+        Self: Sized,
     {}
+}
+
+/// Implementation detail of `ElementMethods` to get an object-safe version of `async fn event()`.
+#[doc(hidden)]
+pub trait EventTarget {
+    fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()>;
+}
+
+impl<T> EventTarget for T
+where
+    T: Element,
+{
+    fn event_future<'a>(&'a self, event: &'a mut Event) -> LocalBoxFuture<'a, ()> {
+        self.event(event).boxed_local()
+    }
 }
 
 /// An entry in the hit-test chain that leads to the visual that was hit.
@@ -780,9 +799,9 @@ impl dyn Element + '_ {
         geometry
     }
 
-    pub fn send_event(&self, event: &mut Event) {
+    pub async fn send_event(&self, event: &mut Event) {
         // issue: allocating on every event is not great
-        self.event(event);
+        self.event_future(event).await;
     }
 
     /// Hit-tests this visual and its children.
