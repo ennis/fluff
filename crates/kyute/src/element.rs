@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
 use std::mem;
 use std::ops::{Deref, Range};
+use std::pin::Pin;
 use std::ptr::addr_eq;
 use std::rc::{Rc, Weak};
 
@@ -841,4 +842,10 @@ impl dyn Element + '_ {
 
         paint_rec(self, &mut paint_ctx);
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub trait ElementTree {
+    fn child(self: Pin<&Self>, index: usize) -> Option<Pin<&dyn Element>>;
 }

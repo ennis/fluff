@@ -1,11 +1,14 @@
+use std::future::pending;
 pub use kurbo::{self, Size};
-use kyute::layout::flex::Axis;
+use kurbo::Point;
+use kyute::layout::Axis;
 use kyute::text::TextStyle;
 use kyute::widgets::button::button;
 use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
 use kyute::widgets::text::Text;
 use kyute::widgets::text_edit::{TextEdit, WrapMode};
 use kyute::{application, text, Color, Window, WindowOptions};
+use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 use tracing_tree::HierarchicalLayer;
@@ -14,9 +17,8 @@ fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    application::run(|| {
+    application::run(async {
         let main_button = button("Test"); // &str
-
         let frame = Frame::new();
 
         frame.set_style(FrameStyle {
@@ -54,16 +56,7 @@ fn main() {
         let main_window = Window::new(&window_options, &frame);
         let mut popup: Option<Window> = None;
 
-        main_window.on_resized(|size| {
-            eprintln!("Window resized to {:?}", size);
-        });
-        main_window.on_close_requested(|| {
-            eprintln!("Window closed");
-            application::quit();
-        });
-        //main_button.
-
-        /*loop {
+        loop {
             select! {
                 _ = main_button.clicked() => {
                     if let Some(_popup) = popup.take() {
@@ -107,8 +100,9 @@ fn main() {
                     eprintln!("Window resized to {:?}", size);
                 }
             }
-        }*/
+        }
 
         //application::quit();
-    }).unwrap()
+    })
+        .unwrap()
 }

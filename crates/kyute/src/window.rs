@@ -24,7 +24,7 @@ use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
 use crate::element::{Element, Node, RcElementPtrEq, WeakNullableElemPtr};
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
-use crate::{application, Color};
+use crate::{application, Callbacks, Color};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -94,9 +94,9 @@ struct InputState {
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
 
-    close_requested: RefCell<Option<Box<dyn Fn()>>>,
-    focus_changed: RefCell<Option<Box<dyn Fn(bool)>>>,
-    resized: RefCell<Option<Box<dyn Fn(Size)>>>,
+    close_requested: Callbacks<()>, //RefCell<Option<Box<dyn Fn()>>>,
+    focus_changed: Callbacks<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
+    resized: Callbacks<Size>, // RefCell<Option<Box<dyn Fn(Size)>>>,
 
     root: Rc<dyn Element>,
     layer: Layer,
@@ -468,13 +468,13 @@ impl WindowInner {
     }
 
     /// Converts & dispatches a winit window event.
-    async fn dispatch_winit_input_event(&self, event: &WindowEvent) {
+    fn dispatch_winit_input_event(&self, event: &WindowEvent) {
         // First, redirect the input event to the popup window if there is one.
         let popup = self.active_popup.borrow().clone();
         if let Some(popup) = popup {
             if let Some(popup) = popup.upgrade() {
                 if let Some(redirected_event) = self.redirect_event_to_popup(&popup, event) {
-                    Box::pin(popup.dispatch_winit_input_event(&redirected_event)).await;
+                    Box::pin(popup.dispatch_winit_input_event(&redirected_event));
                     return;
                 }
             } else {
@@ -528,15 +528,11 @@ impl WindowInner {
                 }
             }
             WindowEvent::CloseRequested => {
-                if let Some(ref f) = *self.close_requested.borrow() {
-                    f();
-                }
+                self.close_requested.invoke(());
             }
             WindowEvent::Resized(size) => {
                 let sizef = Size::new(size.width as f64, size.height as f64);
-                if let Some(ref f) = *self.resized.borrow() {
-                    f(sizef);
-                }
+                self.resized.invoke(sizef);
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
                     self.layer.set_surface_size(sizef);
@@ -544,9 +540,7 @@ impl WindowInner {
                 self.root.mark_needs_relayout();
             }
             WindowEvent::Focused(focused) => {
-                if let Some(ref f) = *self.focus_changed.borrow() {
-                    f(*focused);
-                }
+                self.focus_changed.invoke(*focused);
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -619,8 +613,8 @@ impl WindowInner {
 }
 
 impl WindowHandler for WindowInner {
-    async fn event(&self, event: &WindowEvent) {
-        self.dispatch_winit_input_event(event).await;
+    fn event(&self, event: &WindowEvent) {
+        self.dispatch_winit_input_event(event);
     }
 }
 
@@ -793,15 +787,27 @@ impl Window {
     }
 
     pub fn on_close_requested(&self, f: impl Fn() + 'static) {
-        self.shared.close_requested.replace(Some(Box::new(f)));
+        self.shared.close_requested.watch(move |_| f());
     }
 
     pub fn on_resized(&self, f: impl Fn(Size) + 'static) {
-        self.shared.resized.replace(Some(Box::new(f)));
+        self.shared.resized.watch(f);
     }
 
     pub fn on_focus_changed(&self, f: impl Fn(bool) + 'static) {
-        self.shared.focus_changed.replace(Some(Box::new(f)));
+        self.shared.focus_changed.watch(f);
+    }
+
+    pub async fn close_requested(&self) {
+        self.shared.close_requested.wait().await;
+    }
+
+    pub async fn resized(&self) -> Size {
+        self.shared.resized.wait().await
+    }
+
+    pub async fn focus_changed(&self) -> bool {
+        self.shared.focus_changed.wait().await
     }
 
     /// Hides the window.

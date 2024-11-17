@@ -704,3 +704,29 @@ Proposal:
 - the arena holds the hierarchy (ID -> parent ID) and can be used to enumerate child elements
 - **elements don't hold their children**
 - however, elements can access their children at any time from the arena
+
+# Separating behavior from presentation:
+
+Presentation:
+
+```
+// Presentation
+VBox {  // __1
+    Text {  // __2
+        value: self.text,
+    }
+    Button {    // __3
+        on_click: self.click_increment,
+    }
+    Button {    // __4
+        on_click: self.click_decrement,
+    }
+}
+```
+
+To get values from the context: `fn get(name: &str) -> &Watch<dyn Any>`
+
+# Minimizing Rcs
+
+`Node` doesn't hold children as `Rc<dyn Element>` anymore (only the pointer to the parent).
+Instead, a pointer to an element is represented as a `(Pin<Rc<dyn ElementTree>>, index)`,

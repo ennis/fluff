@@ -16,7 +16,7 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{Color, PaintCtx};
+use crate::{Callbacks, Color, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -309,7 +309,7 @@ enum Gesture {
 /// Single- or multiline text editor.
 pub struct TextEdit {
     element: Node,
-    selection_changed: Handler<Selection>,
+    selection_changed: Callbacks<Selection>,
     state: RefCell<TextEditState>,
     gesture: Cell<Option<Gesture>>,
     blink_phase: Cell<bool>,
@@ -320,7 +320,7 @@ impl TextEdit {
     pub fn new() -> Rc<TextEdit> {
         let text_edit = Node::new_derived(|element| TextEdit {
             element,
-            selection_changed: Handler::new(),
+            selection_changed: Default::default(),
             state: RefCell::new(TextEditState {
                 text: String::new(),
                 selection: Selection::empty(0),
@@ -648,9 +648,7 @@ impl Element for TextEdit {
         });
     }
 
-    async fn event(&self, event: &mut Event)
-    where
-        Self: Sized,
+    fn event(&self, event: &mut Event)
     {
         let mut selection_changed = false;
         let mut this = self.state.borrow_mut();
@@ -752,12 +750,12 @@ impl Element for TextEdit {
         drop(this);
 
         if set_focus {
-            self.set_focus().await;
+            self.set_focus();
         }
 
         if selection_changed {
             self.mark_needs_repaint();
-            self.selection_changed.emit(self.selection()).await;
+            self.selection_changed.invoke(self.selection());
         }
     }
 }

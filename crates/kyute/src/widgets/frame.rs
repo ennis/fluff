@@ -17,7 +17,7 @@ use crate::layout::{
     Axis, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft,
     PaddingRight, PaddingTop, SizeConstraint, SizeValue, Sizing,
 };
-use crate::{drawing, layout, Color, PaintCtx};
+use crate::{drawing, layout, Callbacks, Color, PaintCtx};
 
 /*
 #[derive(Clone, Default)]
@@ -223,11 +223,11 @@ impl LayoutCache {
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
     element: Node,
-    pub clicked: RefCell<Option<Box<dyn FnMut()>>>,
-    //pub hovered: Handler<bool>,
-    //pub active: Handler<bool>,
-    //pub focused: Handler<bool>,
-    pub state_changed: Handler<InteractState>,
+    pub clicked: Callbacks<()>,
+    pub hovered: Callbacks<bool>,
+    pub active: Callbacks<bool>,
+    pub focused: Callbacks<bool>,
+    pub state_changed: Callbacks<InteractState>,
     layout: RefCell<FrameLayout>,
     layout_cache: RefCell<LayoutCache>,
     state: Cell<InteractState>,
@@ -614,24 +614,24 @@ impl Element for Frame {
             Event::PointerDown(_) => {
                 state.set_active(true);
                 update_state(self, state);
-                //self.active.emit(true).await;
+                self.active.invoke(true);
             }
             Event::PointerUp(_) => {
                 if state.is_active() {
                     state.set_active(false);
                     update_state(self, state);
-                    self.clicked.emit(()).await;
+                    self.clicked.invoke(());
                 }
             }
             Event::PointerEnter(_) => {
                 state.set_hovered(true);
                 update_state(self, state);
-                //self.hovered.emit(true).await;
+                self.hovered.invoke(true);
             }
             Event::PointerLeave(_) => {
                 state.set_hovered(false);
                 update_state(self, state);
-                //self.hovered.emit(false).await;
+                self.hovered.invoke(false);
             }
             _ => {}
         }

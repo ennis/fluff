@@ -89,8 +89,6 @@ impl Element for Text {
         })
     }
 
-    async fn event(&self, _event: &mut Event)
-    where
-        Self: Sized,
+    fn event(&self, _event: &mut Event)
     {}
 }
