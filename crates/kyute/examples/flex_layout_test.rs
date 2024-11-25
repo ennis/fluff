@@ -14,10 +14,13 @@ use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
+use kyute::element::RcElement;
 use kyute::layout::{FlexFactor, FlexMargins, FlexSize, Height, PaddingBottom, PaddingLeft, PaddingRight, PaddingTop, SizeValue, Sizing, Width};
 
-fn frame(direction: Axis, text: &str, content: Vec<Rc<Frame>>, margin_before: FlexSize, margin_after: FlexSize) -> Rc<Frame> {
-    let frame = Frame::new(FrameStyle {
+fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: FlexSize, margin_after: FlexSize) -> RcElement<Frame> {
+    let frame = Frame::new();
+
+    frame.set_style(FrameStyle {
         border_color: Color::from_hex("5f5637"),
         border_radius: 8.0.into(),
         background_color: Color::from_hex("211e13"),
@@ -28,11 +31,11 @@ fn frame(direction: Axis, text: &str, content: Vec<Rc<Frame>>, margin_before: Fl
 
     if !text.is_empty() {
         let text = Text::new(text![family("Inter") size(12.0) #FFF "{text}"]);
-        frame.add_child(&text);
+        frame.add_child(text);
     }
 
     for child in content {
-        frame.add_child(&child);
+        frame.add_child(child.clone());
     }
 
     frame.set(FlexMargins, (margin_before, margin_after));
@@ -44,7 +47,7 @@ fn frame(direction: Axis, text: &str, content: Vec<Rc<Frame>>, margin_before: Fl
     frame
 }
 
-fn flex_frame(direction: Axis, flex: f64, content: Vec<Rc<Frame>>) -> Rc<Frame> {
+fn flex_frame(direction: Axis, flex: f64, content: Vec<RcElement<Frame>>) -> RcElement<Frame> {
     let f = frame(direction, "", content, FlexSize::NULL, FlexSize::NULL);
     f.set(FlexFactor, flex);
     f
@@ -100,7 +103,7 @@ fn main() {
             ..Default::default()
         };
 
-        let main_window = Window::new(&window_options, &frame_root);
+        let main_window = Window::new(&window_options, frame_root.into());
 
         loop {
             select! {

@@ -3,7 +3,7 @@ use std::cell::{Cell, Ref, RefCell, UnsafeCell};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
-use std::mem;
+use std::{mem, ptr};
 use std::ops::{Deref, Range};
 use std::pin::Pin;
 use std::ptr::addr_eq;
@@ -14,12 +14,14 @@ use bitflags::bitflags;
 use futures_util::future::LocalBoxFuture;
 use futures_util::FutureExt;
 use kurbo::{Affine, Point, Size, Vec2};
+use pin_weak::rc::PinWeak;
 use tracing::warn;
 
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::window::WeakWindow;
 use crate::PaintCtx;
+use crate::widgets::frame::Frame;
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -30,11 +32,166 @@ bitflags! {
     }
 }
 
-/// Alias for commonly-used `Rc<dyn Element>`.
-pub type RcElement = Rc<dyn Element>;
-/// Alias for commonly-used `Weak<dyn Element>`.
-pub type WeakElement = Weak<dyn Element>;
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Pinned strong pointer with reference equality semantics.
+#[repr(transparent)]
+pub struct RcElement<T: ?Sized = dyn Element>(Pin<Rc<T>>);
+
+impl<T> RcElement<T> {
+    pub fn new(element: T) -> Self {
+        RcElement(Rc::pin(element))
+    }
+
+    pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> Self {
+        unsafe {
+            RcElement(
+                Pin::new_unchecked(Rc::new_cyclic(move |weak| {
+                    let weak = WeakElement(UnsafeCell::new(Some(weak.clone())));
+                    f(weak)
+                })))
+        }
+    }
+}
+
+impl<T: ?Sized> RcElement<T> {
+    pub fn as_ptr(&self) -> *const T {
+        self.0.deref()
+    }
+
+    pub fn downgrade(rc: Self) -> WeakElement<T> {
+        WeakElement(UnsafeCell::new(Some(Rc::downgrade(unsafe { &Pin::into_inner_unchecked(rc.0) }))))
+    }
+}
+
+impl<T: ?Sized> Deref for RcElement<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl<T: ?Sized> Clone for RcElement<T> {
+    fn clone(&self) -> Self {
+        RcElement(self.0.clone())
+    }
+}
+
+impl<T: ?Sized, U: ?Sized> PartialEq<RcElement<U>> for RcElement<T> {
+    fn eq(&self, other: &RcElement<U>) -> bool {
+        ptr::addr_eq(self.0.deref(), other.0.deref())
+    }
+}
+
+impl<T: ?Sized> Eq for RcElement<T> {}
+
+impl<T: ?Sized> PartialOrd for RcElement<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: ?Sized> Ord for RcElement<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.0.deref() as *const T).cmp(&(other.0.deref() as *const T))
+    }
+}
+
+// Workaround for lack of unsized coercion
+impl<T: Element + 'static> From<RcElement<T>> for RcElement {
+    fn from(value: RcElement<T>) -> Self {
+        RcElement(value.0)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Pinned, nullable weak pointer.
+#[repr(transparent)]
+pub struct WeakElement<T: ?Sized = dyn Element>(UnsafeCell<Option<std::rc::Weak<T>>>);
+
+impl<T: ?Sized> WeakElement<T> {
+    pub fn new() -> Self {
+        WeakElement(UnsafeCell::new(None))
+    }
+
+    pub fn upgrade(&self) -> Option<RcElement<T>> {
+        unsafe {
+            (&*self.0.get()).as_ref().and_then(std::rc::Weak::upgrade).map(|ptr| unsafe { RcElement(Pin::new_unchecked(ptr)) })
+        }
+    }
+
+    pub fn set(&self, other: WeakElement<T>) {
+        unsafe {
+            mem::swap(&mut *self.0.get(), &mut *other.0.get());
+        }
+    }
+
+    pub fn replace(&self, ptr: WeakElement<T>) -> WeakElement<T> {
+        unsafe {
+            mem::swap(&mut *self.0.get(), &mut *ptr.0.get());
+            ptr
+        }
+    }
+
+    pub fn reset(&self) {
+        unsafe {
+            *self.0.get() = None;
+        }
+    }
+}
+
+impl<T: ?Sized> Default for WeakElement<T> {
+    fn default() -> Self {
+        WeakElement::new()
+    }
+}
+
+impl<T: ?Sized> Clone for WeakElement<T> {
+    fn clone(&self) -> Self {
+        WeakElement(UnsafeCell::new(unsafe { (*self.0.get()).clone() }))
+    }
+}
+
+impl<T: ?Sized> PartialEq for WeakElement<T> {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe {
+            match (&*self.0.get(), &*other.0.get()) {
+                (Some(ptr), Some(other)) => {
+                    ptr.ptr_eq(other)
+                }
+                (None, None) => true,
+                _ => false,
+            }
+        }
+    }
+}
+
+impl<T: ?Sized> PartialEq<RcElement<T>> for WeakElement<T> {
+    fn eq(&self, other: &RcElement<T>) -> bool {
+        unsafe {
+            match &*self.0.get() {
+                Some(weak) => {
+                    ptr::addr_eq(weak.as_ptr(), other.0.deref())
+                }
+                None => false,
+            }
+        }
+    }
+}
+
+impl<T: ?Sized> Eq for WeakElement<T> {}
+
+// workaround for lack of unsized coercion
+impl<T: Element + 'static> From<WeakElement<T>> for WeakElement {
+    fn from(value: WeakElement<T>) -> Self {
+        // f*ck this language
+        WeakElement(UnsafeCell::new(unsafe { (*value.0.get()).clone().map(|x| x as Weak<dyn Element>) }))
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 pub trait AttachedProperty: Any {
     type Value: Clone;
 
@@ -66,80 +223,15 @@ pub trait AttachedProperty: Any {
     }
 }
 
-/// Wrapper over Rc<dyn Element> that has reference equality semantics.
-/// This should be the default for `RcElement`
-#[derive(Clone)]
-#[repr(transparent)]
-pub struct RcElementPtrEq(pub(crate) RcElement);
-
-impl PartialOrd for RcElementPtrEq {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RcElementPtrEq {
-    fn cmp(&self, other: &Self) -> Ordering {
-        Rc::as_ptr(&self.0).cast::<()>().cmp(&Rc::as_ptr(&other.0).cast::<()>())
-    }
-}
-
-impl Eq for RcElementPtrEq {}
-
-impl From<Rc<dyn Element>> for RcElementPtrEq {
-    fn from(rc: Rc<dyn Element>) -> Self {
-        RcElementPtrEq(rc)
-    }
-}
-
-impl Deref for RcElementPtrEq {
-    type Target = dyn Element;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl PartialEq for RcElementPtrEq {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.is_same(&*other.0)
-    }
-}
-
-pub(crate) struct NullableElemPtr(UnsafeCell<Option<Rc<dyn Element>>>);
-
-impl Default for NullableElemPtr {
-    fn default() -> Self {
-        NullableElemPtr(UnsafeCell::new(None))
-    }
-}
-
-impl NullableElemPtr {
-    pub fn get(&self) -> Option<Rc<dyn Element>> {
-        unsafe { &*self.0.get() }.as_ref().cloned()
-    }
-
-    pub fn set(&self, other: Option<Rc<dyn Element>>) {
-        unsafe {
-            *self.0.get() = other;
-        }
-    }
-}
-
-impl<'a> From<&'a Node> for NullableElemPtr {
-    fn from(element: &'a Node) -> Self {
-        NullableElemPtr(UnsafeCell::new(Some(element.rc())))
-    }
-}
-
-pub(crate) struct WeakNullableElemPtr(UnsafeCell<Option<Weak<dyn Element>>>);
+/*
+pub(crate) struct WeakNullableElemPtr(UnsafeCell<Option<WeakElement>>);
 
 impl<'a> PartialEq<Option<&'a Node>> for WeakNullableElemPtr {
     fn eq(&self, other: &Option<&'a Node>) -> bool {
         let this = unsafe { &*self.0.get() }.as_ref();
         let other = other.map(|e| &e.weak_this);
         match (this, other) {
-            (Some(this), Some(other)) => Weak::ptr_eq(this, other),
+            (Some(this), Some(other)) => PinWeak::ptr_eq(this, other),
             (None, None) => true,
             _ => false,
         }
@@ -156,7 +248,7 @@ impl PartialEq<Node> for WeakNullableElemPtr {
             false
         }
     }
-}
+}*/
 
 /*
 impl PartialEq<Option<Weak<dyn Visual>>> for WeakNullableElemPtr {
@@ -165,6 +257,7 @@ impl PartialEq<Option<Weak<dyn Visual>>> for WeakNullableElemPtr {
     }
 }*/
 
+/*
 impl Default for WeakNullableElemPtr {
     fn default() -> Self {
         WeakNullableElemPtr(UnsafeCell::new(None))
@@ -172,24 +265,24 @@ impl Default for WeakNullableElemPtr {
 }
 
 impl WeakNullableElemPtr {
-    pub fn get(&self) -> Option<Weak<dyn Element>> {
+    pub fn get(&self) -> Option<WeakElement> {
         unsafe { &*self.0.get() }.clone()
     }
 
-    pub fn set(&self, other: Option<Weak<dyn Element>>) {
+    pub fn set(&self, other: Option<WeakElement>) {
         unsafe {
             *self.0.get() = other;
         }
     }
 
-    pub fn replace(&self, other: Option<Weak<dyn Element>>) -> Option<Weak<dyn Element>> {
+    pub fn replace(&self, other: Option<WeakElement>) -> Option<WeakElement> {
         unsafe { mem::replace(&mut *self.0.get(), other) }
     }
 
-    pub fn upgrade(&self) -> Option<Rc<dyn Element>> {
-        self.get().as_ref().and_then(Weak::upgrade)
+    pub fn upgrade(&self) -> Option<RcElement> {
+        self.get().as_ref().and_then(PinWeak::upgrade)
     }
-}
+}*/
 
 /*
 pub struct SiblingIter {
@@ -209,11 +302,11 @@ impl Iterator for SiblingIter {
 
 /// Depth-first traversal of the visual tree.
 pub struct Cursor {
-    next: Option<Rc<dyn Element>>,
+    next: Option<RcElement>,
 }
 
 impl Iterator for Cursor {
-    type Item = Rc<dyn Element>;
+    type Item = RcElement;
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some(next) = self.next.clone() else {
@@ -247,12 +340,9 @@ impl Iterator for Cursor {
 ///
 /// Concrete elements hold a field of this type, and implement the corresponding `Element` trait.
 pub struct Node {
-    // TODO remove, this is a relic of a previous implementation
     _pin: PhantomPinned,
-
     //weak_this: WeakElementRef,
-
-    parent: WeakNullableElemPtr,
+    parent: WeakElement,
     // Weak pointer to this element.
     weak_this: WeakElement,
     children: RefCell<Vec<RcElement>>,
@@ -280,7 +370,7 @@ impl Node {
     pub(crate) fn new(weak_this: WeakElement) -> Node {
         Node {
             _pin: PhantomPinned,
-            weak_this: weak_this.clone(),
+            weak_this,
             children: Default::default(),
             index_in_parent: Default::default(),
             window: Default::default(),
@@ -288,19 +378,19 @@ impl Node {
             transform: Cell::new(Affine::default()),
             geometry: Cell::new(Size::default()),
             change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
-            name: RefCell::new(format!("{:p}", weak_this.as_ptr())),
+            name: RefCell::new(String::new()),
             focusable: Cell::new(false),
             attached_properties: Default::default(),
         }
     }
 
     /// Creates a new element with the specified type and constructor.
-    pub fn new_derived<'a, T: Element + 'static>(f: impl FnOnce(Node) -> T) -> Rc<T> {
-        Rc::new_cyclic(move |weak: &Weak<T>| {
-            let weak: Weak<dyn Element> = weak.clone();
-            let element = Node::new(weak.clone());
-            let visual = f(element);
-            visual
+    pub fn new_derived<'a, T: Element + 'static>(f: impl FnOnce(Node) -> T) -> RcElement<T> {
+        RcElement::new_cyclic(move |weak: WeakElement<T>| {
+            let weak: WeakElement = weak.into();
+            let node = Node::new(weak);
+            let element = f(node);
+            element
         })
     }
 
@@ -318,12 +408,12 @@ impl Node {
             parent.mark_needs_relayout();
         }
 
-        self.parent.set(None);
+        self.parent.reset();
     }
 
-    pub fn insert_child_at(&self, at: usize, to_insert: RcElement) {
+    fn insert_child_at(&self, at: usize, to_insert: RcElement) {
         to_insert.detach();
-        to_insert.parent.set(Some(self.weak()));
+        to_insert.parent.set(self.weak());
         //to_insert.set_parent_window(self.window.clone());
         // SAFETY: no other references may exist to the children vector at this point,
         // provided the safety contracts of other unsafe methods are upheld.
@@ -336,25 +426,25 @@ impl Node {
         self.mark_needs_relayout();
     }
 
+    /*pub fn insert_child_at<T: Element>(&self, at: usize, to_insert: T) -> Pin<Rc<T>> {
+        let pinned = Rc::pin(to_insert);
+        self.insert_pinned_child_at(at, pinned.clone());
+        pinned
+    }*/
+
     /// Inserts the specified element after this element.
     pub fn insert_after(&self, to_insert: RcElement) {
         if let Some(parent) = self.parent.upgrade() {
-            parent.insert_child_at(self.index_in_parent.get() + 1, to_insert);
+            parent.insert_child_at(self.index_in_parent.get() + 1, to_insert)
         } else {
-            warn!("tried to insert after an element with no parent");
+            panic!("tried to insert after an element with no parent");
         }
     }
 
     /// Inserts the specified element at the end of the children of this element.
-    pub fn add_child(&self, child: RcElement) {
-        child.detach();
-        // SAFETY: no other references may exist to the children vector at this point,
-        // provided the safety contracts of other unsafe methods are upheld.
-        let mut children = self.children.borrow_mut();
-        child.parent.set(Some(self.weak()));
-        child.index_in_parent.set(children.len());
-        children.push(child.rc());
-        self.mark_needs_relayout();
+    pub fn add_child(&self, child: impl Into<RcElement>) {
+        let len = self.children.borrow().len();
+        self.insert_child_at(len, child.into());
     }
 
     pub fn next(&self) -> Option<RcElement> {
@@ -448,7 +538,7 @@ impl Node {
 
     /// Requests focus for the current element.
     pub fn set_focus(&self) {
-        self.window.borrow().set_focus(Some(self));
+        self.window.borrow().set_focus(self.weak());
     }
 
     pub fn set_tab_focusable(&self, focusable: bool) {
@@ -456,7 +546,7 @@ impl Node {
     }
 
     pub fn set_pointer_capture(&self) {
-        self.window.borrow().set_pointer_capture(self);
+        self.window.borrow().set_pointer_capture(self.weak());
     }
 
     /*pub fn children(&self) -> Ref<[AnyVisual]> {
@@ -483,7 +573,7 @@ impl Node {
             // detach from window
             c.window.replace(WeakWindow::default());
             // detach from parent
-            c.parent.set(None);
+            c.parent.reset();
         }
     }
 
@@ -507,6 +597,10 @@ impl Node {
     /// This should be called by `Visual::layout()` so this doesn't set the layout dirty flag.
     pub fn set_offset(&self, offset: Vec2) {
         self.set_transform(Affine::translate(offset));
+    }
+
+    pub fn add_offset(&self, offset: Vec2) {
+        self.set_transform(self.transform.get() * Affine::translate(offset));
     }
 
     /// Returns the transform from this visual's coordinate space to the coordinate space of the parent window.
@@ -538,11 +632,11 @@ impl Node {
     }
 
     /// Returns this visual as a reference-counted pointer.
-    pub fn rc(&self) -> Rc<dyn Element + 'static> {
+    pub fn rc(&self) -> RcElement {
         self.weak_this.upgrade().unwrap()
     }
 
-    pub fn weak(&self) -> Weak<dyn Element + 'static> {
+    pub fn weak(&self) -> WeakElement {
         self.weak_this.clone()
     }
 
@@ -681,6 +775,14 @@ pub trait ElementTree {
 
 /// Methods of elements in the element tree.
 pub trait Element {
+    fn rc(&self) -> RcElement {
+        self.node().rc()
+    }
+
+    fn weak(&self) -> WeakElement {
+        self.node().weak()
+    }
+
     fn node(&self) -> &Node;
 
     /*/// Calculates the size of the widget under the specified constraints.
@@ -787,7 +889,7 @@ impl dyn Element + '_ {
     }
 
     /// Hit-tests this visual and its children.
-    pub(crate) fn do_hit_test(&self, point: Point) -> Vec<RcElementPtrEq> {
+    pub(crate) fn do_hit_test(&self, point: Point) -> Vec<RcElement> {
         // Helper function to recursively hit-test the children of a visual.
         // point: point in the local coordinate space of the visual
         // transform: accumulated transform from the local coord space of `visual` to the root coord space
@@ -795,7 +897,7 @@ impl dyn Element + '_ {
             visual: &dyn Element,
             point: Point,
             transform: Affine,
-            result: &mut Vec<RcElementPtrEq>,
+            result: &mut Vec<RcElement>,
         ) -> bool {
             let mut hit = false;
             // hit-test ourselves
@@ -890,6 +992,7 @@ where
     }
 }*/
 
+/*
 macro_rules! impl_tuple_element_tree {
 
     (@one $($t:ident)+) => {
@@ -976,4 +1079,4 @@ where
 impl<S> Element for Frame<S>
 where
     S: ElementTree,
-{}
+{}*/

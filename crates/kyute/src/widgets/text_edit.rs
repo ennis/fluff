@@ -11,7 +11,7 @@ use unicode_segmentation::GraphemeCursor;
 
 use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{Node, Element};
+use crate::element::{Node, Element, RcElement};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
@@ -308,7 +308,7 @@ enum Gesture {
 
 /// Single- or multiline text editor.
 pub struct TextEdit {
-    element: Node,
+    node: Node,
     selection_changed: Callbacks<Selection>,
     state: RefCell<TextEditState>,
     gesture: Cell<Option<Gesture>>,
@@ -317,9 +317,9 @@ pub struct TextEdit {
 }
 
 impl TextEdit {
-    pub fn new() -> Rc<TextEdit> {
-        let text_edit = Node::new_derived(|element| TextEdit {
-            element,
+    pub fn new() -> RcElement<TextEdit> {
+        let text_edit = Node::new_derived(|node| TextEdit {
+            node,
             selection_changed: Default::default(),
             state: RefCell::new(TextEditState {
                 text: String::new(),
@@ -345,7 +345,7 @@ impl TextEdit {
         text_edit.set_tab_focusable(true);
 
         // spawn the caret blinker task
-        let this_weak = Rc::downgrade(&text_edit);
+        let this_weak = RcElement::downgrade(text_edit.clone());
         spawn(async move {
             'task: loop {
                 // Initial delay before blinking
@@ -566,7 +566,7 @@ impl Deref for TextEdit {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
-        &self.element
+        &self.node
     }
 }
 
@@ -582,10 +582,10 @@ impl Deref for TextEdit {
 
 impl Element for TextEdit {
     fn node(&self) -> &Node {
-        &self.element
+        &self.node
     }
 
-    fn measure(&self, _children: &[Rc<dyn Element>], layout_input: &LayoutInput) -> Size {
+    fn measure(&self, _children: &[RcElement], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("TextEdit::measure",).entered();
 
         let this = &mut *self.state.borrow_mut();
@@ -594,7 +594,7 @@ impl Element for TextEdit {
         Size::new(this.paragraph.longest_line() as f64, this.paragraph.height() as f64)
     }
 
-    fn layout(&self, _children: &[Rc<dyn Element>], size: Size) -> LayoutOutput {
+    fn layout(&self, _children: &[RcElement], size: Size) -> LayoutOutput {
         let this = &mut *self.state.borrow_mut();
         this.paragraph.layout(size.width as f32);
         let output = LayoutOutput {

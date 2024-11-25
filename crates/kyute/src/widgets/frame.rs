@@ -1,10 +1,11 @@
 //! Frame containers
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use bitflags::bitflags;
-use kurbo::{Insets, RoundedRect, Size};
+use kurbo::{Insets, RoundedRect, Size, Vec2};
 use smallvec::SmallVec;
 use tracing::{trace, trace_span};
 
@@ -222,7 +223,7 @@ impl LayoutCache {
 
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
-    element: Node,
+    node: Node,
     pub clicked: Callbacks<()>,
     pub hovered: Callbacks<bool>,
     pub active: Callbacks<bool>,
@@ -241,7 +242,7 @@ impl Deref for Frame {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
-        &self.element
+        &self.node
     }
 }
 
@@ -268,22 +269,24 @@ macro_rules! layout_style_setter {
 
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
-    pub fn new() -> Rc<Frame> {
-        Node::new_derived(|element| Frame {
-            element,
-            clicked: Default::default(),
-            hovered: Default::default(),
-            active: Default::default(),
-            focused: Default::default(),
-            state_changed: Default::default(),
-            layout: Default::default(),
-            layout_cache: Default::default(),
-            state: Default::default(),
-            style: Default::default(),
-            style_changed: Cell::new(true),
-            state_affects_style: Cell::new(false),
-            resolved_style: Default::default(),
-        })
+    pub fn new() -> RcElement<Frame> {
+        Node::new_derived(
+            |node| Frame {
+                node,
+                clicked: Default::default(),
+                hovered: Default::default(),
+                active: Default::default(),
+                focused: Default::default(),
+                state_changed: Default::default(),
+                layout: Default::default(),
+                layout_cache: Default::default(),
+                state: Default::default(),
+                style: Default::default(),
+                style_changed: Cell::new(true),
+                state_affects_style: Cell::new(false),
+                resolved_style: Default::default(),
+            },
+        )
     }
 
     pub fn set_style(&self, style: FrameStyle) {
@@ -329,8 +332,9 @@ impl Frame {
         self.mark_needs_relayout();
     }
 
-    pub fn set_content(&self, content: RcElement) {
-        (self as &dyn Element).add_child(content);
+    pub fn set_content(&self, content: impl Into<RcElement>) {
+        self.clear_children();
+        (self as &dyn Element).add_child(content)
     }
 
     pub fn set_layout(&self, layout: FrameLayout) {
@@ -361,7 +365,7 @@ struct Padding {
 struct BoxSizingParams<'a> {
     axis: Axis,
     padding: Padding,
-    children: &'a [Rc<dyn Element>],
+    children: &'a [RcElement],
 }
 
 impl Frame {
@@ -406,9 +410,20 @@ impl Frame {
                 };
 
                 let mut output = flex_layout(mode, &flex_params, p.children);
+
+                // don't forget to apply box padding
+                // on the main axis it's redundant with `initial_gap` but we keep it for consistency
+                // with other layout modes
+                if mode == LayoutMode::Place {
+                    for child in p.children {
+                        child.add_offset(Vec2::new(padding_left, padding_top));
+                    }
+                }
+
                 output.width += padding_left + padding_right;
                 output.height += padding_top + padding_bottom;
                 output.baseline.as_mut().map(|b| *b += padding_top);
+
                 output
             })
     }
@@ -426,6 +441,7 @@ impl Frame {
         let _span = trace_span!("Frame::layout_inner", ?mode, ?p.axis).entered();
         let cross_axis = p.axis.cross();
 
+        // Helper function to convert a user-provided sizing constraint to
         fn sizing_to_constraint(parent: SizeConstraint, sizing: SizeValue) -> SizeConstraint {
             match sizing {
                 SizeValue::Auto => parent,
@@ -476,6 +492,9 @@ impl Frame {
             }
         };
 
+        // TODO: why do we need to clamp to the maximum size here?
+        // can't we apply the max size before sizing the content, by clamping the available size?
+
         let main_min = eval_size(main_sz.min, p.axis, parent_main_sc, parent_cross_sc, 0.0);
         let main_max = eval_size(main_sz.max, p.axis, parent_main_sc, parent_cross_sc, f64::INFINITY);
         let cross_min = eval_size(cross_sz.min, cross_axis, parent_cross_sc, parent_main_sc, 0.0);
@@ -488,6 +507,7 @@ impl Frame {
         if clamped_main != main {
             // re-layout cross axis under new main axis constraints
             layout = self.layout_content(p, mode, SizeConstraint::Available(clamped_main), parent_cross_sc);
+            layout.set_axis(p.axis, clamped_main);
         }
 
         // clamp cross axis size
@@ -512,10 +532,10 @@ impl Frame {
 
 impl Element for Frame {
     fn node(&self) -> &Node {
-        &self.element
+        &self.node
     }
 
-    fn measure(&self, children: &[Rc<dyn Element>], layout_input: &LayoutInput) -> Size {
+    fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let (main_constraint, cross_constraint) = layout_input.main_cross(Axis::Horizontal);
@@ -535,7 +555,7 @@ impl Element for Frame {
         Size::new(output.width, output.height)
     }
 
-    fn layout(&self, children: &[Rc<dyn Element>], size: Size) -> LayoutOutput {
+    fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
         // TODO vertical direction layout
         let p = BoxSizingParams {
@@ -556,7 +576,9 @@ impl Element for Frame {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let size = self.element.size();
+        self.calculate_style();
+
+        let size = self.node.size();
         let rect = size.to_rect();
         let s = self.resolved_style.borrow();
         let insets = Insets::new(

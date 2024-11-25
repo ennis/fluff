@@ -3,7 +3,7 @@ use std::rc::Rc;
 use kurbo::{Point, Rect, Size, Vec2};
 use tracing::trace;
 
-use crate::element::{AttachedProperty, Element};
+use crate::element::{AttachedProperty, Element, RcElement};
 use crate::layout;
 use crate::layout::{
     Alignment, Axis, AxisSizeHelper, BoxMeasurements, FlexMargins, FlexSize, LayoutInput, LayoutMode, LayoutOutput,
@@ -54,7 +54,7 @@ pub struct FlexLayoutParams {
     pub final_gap: FlexSize,
 }
 
-pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[Rc<dyn Element>]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement]) -> LayoutOutput {
     let main_axis = p.axis;
     let cross_axis = main_axis.cross();
     let child_count = children.len();

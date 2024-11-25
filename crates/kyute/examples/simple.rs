@@ -53,7 +53,7 @@ fn main() {
             ..Default::default()
         };
 
-        let main_window = Window::new(&window_options, &frame);
+        let main_window = Window::new(&window_options, frame.clone().into());
         let mut popup: Option<Window> = None;
 
         loop {
@@ -74,7 +74,7 @@ fn main() {
                             ..Default::default()
                         };
                         let button = button("Close me");
-                        let p = Window::new(&popup_options, &button);
+                        let p = Window::new(&popup_options, button.clone().into());
                         main_window.set_popup(&p);
                         popup = Some(p);
                     }

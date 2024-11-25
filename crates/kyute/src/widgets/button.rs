@@ -1,25 +1,25 @@
-use std::rc::Rc;
-
 use kurbo::Vec2;
 use smallvec::smallvec;
 
 use crate::drawing::BoxShadow;
+use crate::element::RcElement;
 use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
-use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride, InteractState};
+use crate::widgets::frame::{Frame, FrameLayout, FrameStyle, FrameStyleOverride, InteractState};
 use crate::widgets::text::Text;
 use crate::{text, Color};
+use crate::layout::{Axis, FlexSize, SizeValue, Sizing, Width};
 
 fn button_style() -> FrameStyle {
     thread_local! {
         pub static BUTTON_STYLE: FrameStyle =
         FrameStyle {
-            border_left: Default::default(),
-            border_right: Default::default(),
-            border_top: Default::default(),
-            border_bottom: Default::default(),
+            border_left: 1.0.into(),
+            border_right: 1.0.into(),
+            border_top: 1.0.into(),
+            border_bottom: 1.0.into(),
             border_color: Color::from_hex("4c3e0a"),
-            border_radius: 8.0.into(),
+            border_radius: 5.0.into(),
             background_color: Color::from_hex("211e13"),
             shadows: smallvec![
                     BoxShadow {
@@ -51,17 +51,19 @@ fn button_style() -> FrameStyle {
     BUTTON_STYLE.with(|s| s.clone())
 }
 
-pub fn button(label: impl Into<String>) -> Rc<Frame> {
+pub fn button(label: impl Into<String>) -> RcElement<Frame> {
     let label = label.into();
     let theme = &DARK_THEME;
     let text_style = TextStyle::new()
         .font_size(theme.font_size as f32)
         .font_family(theme.font_family)
         .color(Color::from_hex("ffe580"));
-    //let text = AttributedStr { str: &label, style:& text_style };
-    let text = Text::new(text!( style(text_style) "{label}" ));
+
     let frame = Frame::new();
     frame.set_style(button_style());
-    frame.add_child(text.clone());
+    frame.set_padding(4.0.into());
+    frame.set_layout(FrameLayout::Flex { direction: Axis::Horizontal, initial_gap: FlexSize { size: 0.0, flex: 1.0 }, final_gap: FlexSize { size: 0.0, flex: 1.0 }, gap: 0.0.into() });
+    frame.set(Width, Sizing { preferred: SizeValue::MaxContent, min: SizeValue::Fixed(80.0), max: SizeValue::Auto });
+    frame.add_child(Text::new(text!( style(text_style) "{label}" )));
     frame
 }

@@ -7,14 +7,14 @@ use skia_safe::textlayout;
 use tracing::{trace, trace_span};
 
 use crate::drawing::ToSkia;
-use crate::element::{Node, Element};
+use crate::element::{Node, Element, RcElement};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{TextLayout, TextRun};
 use crate::PaintCtx;
 
 pub struct Text {
-    element: Node,
+    node: Node,
     relayout: Cell<bool>,
     intrinsic_size: Cell<Option<Size>>,
     paragraph: RefCell<textlayout::Paragraph>,
@@ -24,15 +24,15 @@ impl Deref for Text {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
-        &self.element
+        &self.node
     }
 }
 
 impl Text {
-    pub fn new(text: &[TextRun]) -> Rc<Text> {
+    pub fn new(text: &[TextRun]) -> RcElement<Text> {
         let paragraph = TextLayout::new(text).inner;
-        Node::new_derived(|element| Text {
-            element,
+        Node::new_derived(|node| Text {
+            node,
             relayout: Cell::new(true),
             intrinsic_size: Cell::new(None),
             paragraph: RefCell::new(paragraph),
@@ -55,10 +55,10 @@ impl Text {
 
 impl Element for Text {
     fn node(&self) -> &Node {
-        &self.element
+        &self.node
     }
 
-    fn measure(&self, _children: &[Rc<dyn Element>], layout_input: &LayoutInput) -> Size {
+    fn measure(&self, _children: &[RcElement], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("TextEdit::measure",).entered();
 
         let p = &mut *self.paragraph.borrow_mut();
@@ -67,7 +67,7 @@ impl Element for Text {
         Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&self, _children: &[Rc<dyn Element>], size: Size) -> LayoutOutput {
+    fn layout(&self, _children: &[RcElement], size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
         let p = &mut *self.paragraph.borrow_mut();
         p.layout(size.width as f32);

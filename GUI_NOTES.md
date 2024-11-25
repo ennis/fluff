@@ -919,3 +919,70 @@ impl Button {
     }
 }
 ```
+
+Things we need from references:
+
+- comparable and sortable
+- downgrade to weak
+- **create from borrow**: given `&T` where `T: Element`, upgrade to `Rc<T>`
+- pinned guarantees
+
+# Issues
+
+## `set_focus` reentrancy and panics
+
+During event dispatch it's possible to call `set_focus` on a widget, which immediately sends another event.
+This can lead to panics if the `event` method borrows a RefCell mutably in the function scope, and the `event` handler
+is called reentrantly.
+
+Maybe these methods should take a `&mut self` instead? It would mean wrapping all widgets in `RefCell`, and doesn't
+actually prevent reentrancy panics.
+
+Q: Are direct references to widgets necessary?
+A: Without direct references, no async syntax is possible.
+Everything must be done via callbacks, in a reactive fashion, or via intermediate objects watched by GUI widgets
+(NOTE: this is most likely the "ViewModels" of the MVVM pattern).
+In fact, it could be said that a characteristic difference between reactive and imperative GUI frameworks is the ability
+to refer to GUI elements by reference and invoke methods on them.
+
+Q: Is that really a problem? The DOM specifies that "Additional events should be handled in a synchronous manner and may
+cause reentrancy into the event model".
+In our case, it might panic with interior mutability, but at least the issue will be obvious when it happens.
+
+## Too many layout size types
+
+* FlexSize
+* SizeConstraint
+* Sizing
+* SizeValue
+* LengthOrPercentage
+
+# A simpler layout system
+
+Main use cases:
+
+* center one element within another
+* being able to size a box to its contents, but with a minimum size constraint
+* layout items in a flex container
+
+Unnecessary for now:
+
+* min-content sizing
+
+Something like morphorm would work.
+
+Sizes are specified on individual items, each size has a min/max/preferred constraint.
+
+```
+
+pub enum Size {
+    Percentage,
+    Auto,
+}
+
+pub struct SizeConstraints {
+    preferred: Size,
+    min: Size,
+    max: Size,
+}
+```
