@@ -974,10 +974,15 @@ Something like morphorm would work.
 Sizes are specified on individual items, each size has a min/max/preferred constraint.
 
 ```
-
 pub enum Size {
+    /// Percentage of parent size
     Percentage,
+    /// Size to contents
     Auto,
+    /// Fixed size in pixels
+    Fixed(f64),
+    /// Amount of remaining space
+    Flex(f64)
 }
 
 pub struct SizeConstraints {
@@ -986,3 +991,59 @@ pub struct SizeConstraints {
     max: Size,
 }
 ```
+
+Issue: what does a "flexible minimum size" means?
+In morphorm: returns default value.
+
+Modification to `measure`: now returns a size **and** a stretch factor?
+No => should return a concrete size.
+
+In what measure should the child be responsible for measuring itself?
+If it has a fixed size, then it makes sense that it's the child, but with flex factors / percentages, the information
+to compute the size is held by the parent.
+
+## Specification
+
+The size of a node is determined by its `measure` method.
+
+For frames, which is a generic container for other elements and a basic visual primitive, the size is determined by
+its `width` and `height`, `min_width`, `min_height`, `max_width` and `max_height` properties.
+Those values are of the type `Size`, and can represent one of those:
+
+- a fixed size
+- a percentage of the parent container size
+- a special value that specifies the size of the contents of the frame
+- a special value including a flex factor that specifies a proportion of the parent container size once all non-flex
+  elements have been laid out
+
+The `measure` method takes as input:
+
+- the available size for layout, in both directions
+
+## Layout: measure model
+
+Currently the measure function returns a size given a proposal. However, this is not suited for things like flex items
+which take a proportion of the remaining space.
+It is not suited because the flex child can only return one size in `measure`, and cannot specify that it can grow.
+
+Idea: adding flex growth as a return value of `measure`?
+A: yes, but not sufficient: the child might have a max-width constraint. The return value of `measure` doesn't specify
+that, thus the parent container may end up allocating a size for that child that exceeds its max width constraint.
+
+Idea: `measure` returns a range of possible values: minimum size, maximum size, with a growth factor that specifies
+how the flex item should grow in the remaining available space.
+
+Alternatively: call `measure` multiple times with different "available space" proposals to get the min/max/preferred
+sizes.
+For flex children, the parent container will read the attached property to determine the flex growth factor from
+min to max.
+
+Example with text:
+
+* `Text.measure(0., 0.)`: returns the minimum size (width = width of the longest word, height = height of paragraph
+  given width)
+* `Text.measure(+inf,+inf)`: returns the maximum size (width = width of the longest line)
+
+Example with a frame that has a min-size
+
+* `Frame.measure`

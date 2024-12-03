@@ -53,6 +53,22 @@ fn flex_frame(direction: Axis, flex: f64, content: Vec<RcElement<Frame>>) -> RcE
     f
 }
 
+fn min_flex_frame(direction: Axis, color: Color, min: f64, flex: f64) -> RcElement<Frame> {
+    let frame = Frame::new();
+
+    frame.set_style(FrameStyle {
+        border_color: Color::default(),
+        background_color: color,
+        ..Default::default()
+    });
+
+    frame.set_layout(FrameLayout::Flex { direction, gap: Default::default(), initial_gap: Default::default(), final_gap: Default::default() });
+    frame.set(Width, Sizing { preferred: SizeValue::Fixed(100.0), min: SizeValue::Auto, max: SizeValue::Auto });
+    frame.set(Height, Sizing { preferred: SizeValue::Percentage(1.0), min: SizeValue::Fixed(min), max: SizeValue::Auto });
+    frame.set(FlexFactor, flex);
+    frame
+}
+
 fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(4)).with(EnvFilter::from_default_env());
     tracing::subscriber::set_global_default(subscriber).unwrap();
@@ -91,6 +107,13 @@ fn main() {
                 frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
                 frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
                 frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
+            ]),
+            flex_frame(Axis::Vertical, 1.0, vec![
+                // boxes of color with various flex heights
+                min_flex_frame(Axis::Horizontal, Color::from_hex("f0f"), 100.0, 2.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("ff0"), 0.0, 1.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("f00"), 0.0, 1.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("0f0"), 0.0, 1.0),
             ]),
         ], no_margin, no_margin);
 

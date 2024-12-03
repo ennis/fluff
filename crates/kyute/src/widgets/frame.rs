@@ -458,9 +458,12 @@ impl Frame {
         // Note that if main_sz and cross_sz are both fixed or percentage, the size is already
         // fully determined, and we don't need to measure it.
         let mut layout = match (main_sz.preferred, cross_sz.preferred) {
-            (SizeValue::Fixed(_) | SizeValue::Percentage(_), SizeValue::Fixed(_) | SizeValue::Percentage(_))
-            if mode == LayoutMode::Measure =>
+            (SizeValue::Fixed(_) | SizeValue::Percentage(_), SizeValue::Fixed(_) | SizeValue::Percentage(_)) =>
                 {
+                    // must call layout_content to place things
+                    if mode == LayoutMode::Place {
+                        self.layout_content(p, mode, content_main_sc, content_cross_sc);
+                    }
                     LayoutOutput::from_main_cross_sizes(
                         p.axis,
                         content_main_sc.available().unwrap(),
