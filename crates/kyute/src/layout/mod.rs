@@ -8,6 +8,7 @@ use tracing::trace;
 
 use crate::element::AttachedProperty;
 use crate::Element;
+use crate::style::MaxHeight;
 
 pub mod flex;
 //pub mod grid;
@@ -63,6 +64,17 @@ impl From<f64> for LengthOrPercentage {
 // Axis
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Logical axis of a layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LogicalAxis {
+    /// Axis parallel to the text direction.
+    Inline,
+    /// Axis perpendicular to the text direction.
+    #[default]
+    Block,
+}
+
+/// Physical axis of a layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Axis {
     #[default]
@@ -179,6 +191,21 @@ pub enum SizeValue {
 }
 
 impl SizeValue {
+    /// Tries to resolve a size value to a concrete size, given a parent size.
+    ///
+    /// # Returns
+    /// A concrete size if the size is `Fixed`, or a `Percentage` of the parent size.
+    /// Otherwise, returns `None` as the size depends on the content or the remaining space.
+    pub fn resolve(&self, parent_size: f64) -> Option<f64> {
+        match self {
+            SizeValue::Auto => Some(parent_size),
+            SizeValue::Fixed(value) => Some(*value),
+            SizeValue::Percentage(p) => Some(parent_size * p),
+            SizeValue::MinContent => None,
+            SizeValue::MaxContent => None,
+        }
+    }
+
     pub fn to_constraint(self, parent_constraint: SizeConstraint) -> SizeConstraint {
         match self {
             SizeValue::Auto => parent_constraint,
@@ -198,9 +225,19 @@ impl SizeValue {
 pub struct Sizing {
     /// The preferred size of the item.
     pub preferred: SizeValue,
-    /// Minimum size.
+
+    /// Minimum size constraint.
+    ///
+    /// # Note
+    ///
+    /// For minimum constraints,  `Stretch` is ignored and treated as `Auto` (no constraints).
     pub min: SizeValue,
-    /// Maximum size.
+
+    /// Maximum size constraint.
+    ///
+    /// # Note
+    ///
+    /// For maximum constraints, `Stretch` is ignored and treated as `Auto` (no constraints).
     pub max: SizeValue,
 }
 
@@ -319,6 +356,13 @@ impl From<f64> for SizeConstraint {
     }
 }
 
+/// Element measurements returned by `Element::measure`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Measurements {
+    /// The size of the element.
+    pub size: Size,
+}
+
 /// Which axis should be measured.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum RequestedAxis {
@@ -339,14 +383,16 @@ impl From<Axis> for RequestedAxis {
     }
 }
 
+/// Input parameters passed to the `measure` method of an element.
 #[derive(Copy, Clone, PartialEq)]
 pub struct LayoutInput {
     /// The sizing constraint in the horizontal axis.
     pub width: SizeConstraint,
     /// The sizing constraint in the vertical axis.
     pub height: SizeConstraint,
-
+    /// The size of the parent container in the horizontal axis, if known.
     pub parent_width: Option<f64>,
+    /// The size of the parent container in the vertical axis, if known.
     pub parent_height: Option<f64>,
 }
 
@@ -358,7 +404,7 @@ impl fmt::Debug for LayoutInput {
 
 
 impl LayoutInput {
-    pub fn from_main_cross(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint, parent_main: Option<f64>, parent_cross: Option<f64>) -> Self {
+    pub fn from_logical(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint, parent_main: Option<f64>, parent_cross: Option<f64>) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
                 width: main,
@@ -483,22 +529,6 @@ impl Default for LayoutOutput {
     }
 }
 
-/// Attached property that controls the width of items inside containers.
-#[derive(Copy, Clone, Debug)]
-pub struct Width;
-
-impl AttachedProperty for Width {
-    type Value = Sizing;
-}
-
-/// Attached property that controls the height of items inside containers.
-#[derive(Copy, Clone, Debug)]
-pub struct Height;
-
-impl AttachedProperty for Height {
-    type Value = Sizing;
-}
-
 
 /// Flex factor of an item inside a flex container.
 #[derive(Copy, Clone, Debug)]
@@ -530,34 +560,6 @@ pub struct VerticalAlignment;
 
 impl AttachedProperty for VerticalAlignment {
     type Value = Alignment;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct PaddingLeft;
-
-impl AttachedProperty for PaddingLeft {
-    type Value = LengthOrPercentage;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct PaddingRight;
-
-impl AttachedProperty for PaddingRight {
-    type Value = LengthOrPercentage;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct PaddingTop;
-
-impl AttachedProperty for PaddingTop {
-    type Value = LengthOrPercentage;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct PaddingBottom;
-
-impl AttachedProperty for PaddingBottom {
-    type Value = LengthOrPercentage;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

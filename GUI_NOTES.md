@@ -1047,3 +1047,41 @@ Example with text:
 Example with a frame that has a min-size
 
 * `Frame.measure`
+
+Issue: flex factors, again. It's possible to specify a `Stretch` size on both axes, but it doesn't make sense
+on the cross axis (it's ignored), or if the frame isn't in a flexible container at all.
+
+=> `Stretch` should make sense all the time, not only contextually.
+
+The same is true in the layout protocol: `Measurements::flex` is ignored when the parent isn't a flex container.
+Plus, it makes the API more difficult: custom container widgets now need to think about how to handle flex widgets.
+
+### Alternative proposal
+
+Don't expose flex in returned measurements. Instead, call measure multiple times to determine the min & max sizes
+of the widget. Flex layout becomes:
+
+First, determine whether the child element is flexible. This is done by measuring it with unbounded (+inf) constraints
+on the main axis.
+
+For each child,
+call measure with unbounded constraints.
+If the returned size is infinite, consider it flexible.
+Otherwise, measure it immediately
+
+### Alternative (2) proposal
+
+Issue: the container should know which proportion of the available space should be allocated to the child **before**
+calling `measure`.
+
+`measure` returns size with constraints applied, _and_ flex factors for both dimensions.
+E.g.
+
+- `400x200, (*1,*0)`: 200x200 base size, flexible at 1x in the horizontal direction
+    - but the `400` means nothing here if it's flexible!
+    - then `*1 x 200`
+        - this doesn't take into account any minimum/maximum constraint on the size of the element
+
+Measure cannot return a range of sizes. If it could, returned measures should be able to fully model the sizing behavior
+of the child item, and the available space passed to `measure` would be useless.
+

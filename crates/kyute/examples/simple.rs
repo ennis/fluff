@@ -40,7 +40,7 @@ fn main() {
         text_edit2.set_wrap_mode(WrapMode::NoWrap);
 
         let value = 450;
-        frame.add_child(Text::new(text!( size(12.0) family("Inter") #EEE { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" )));
+        frame.add_child(Text::new(text!( size(12.0) family("Inter") #EEE { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word aaaaaaaaaaaaaaaaa\n" "Value=" i "{value}" )));
 
         //frame.add_child(&Text::new(text![ size(40.0) family("Inter") { "طوال اليوم." } i {"الفبای فارسی"}  ]));
         //frame.add_child(&Text::new(text![ size(40.0) family("Inter")  "Sample\nSample\nSample\nSample\nSample\nSample\nSample"  ]));

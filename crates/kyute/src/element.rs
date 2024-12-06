@@ -18,7 +18,7 @@ use pin_weak::rc::PinWeak;
 use tracing::warn;
 
 use crate::event::Event;
-use crate::layout::{LayoutInput, LayoutOutput};
+use crate::layout::{LayoutInput, LayoutOutput, Measurements};
 use crate::window::WeakWindow;
 use crate::PaintCtx;
 use crate::widgets::frame::Frame;
@@ -794,11 +794,16 @@ pub trait Element {
         }
     }*/
 
-    /// Asks the widget to measure itself under the specified constraints, but without actually laying
+    /// Asks the element to measure itself under the specified constraints, but without actually laying
     /// out the children.
     fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size;
 
-    /// Lays out the children of this widget under the specified constraints.
+    /// Specifies the size of the element, and to lays out its children.
+    ///
+    /// # Arguments
+    /// * `children` - the children of the element.
+    /// * `size` - the exact size of the element. Typically, this is one of the sizes returned by a
+    /// previous call to `measure`.
     fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
         // The default implementation just returns the union of the geometry of the children.
         let mut output = LayoutOutput::default();

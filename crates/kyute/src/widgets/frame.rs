@@ -15,8 +15,7 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
 use crate::layout::{
-    Axis, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, PaddingBottom, PaddingLeft,
-    PaddingRight, PaddingTop, SizeConstraint, SizeValue, Sizing,
+    Axis, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, Measurements, SizeConstraint, SizeValue, Sizing,
 };
 use crate::{drawing, layout, Callbacks, Color, PaintCtx};
 
@@ -231,11 +230,24 @@ pub struct Frame {
     pub state_changed: Callbacks<InteractState>,
     layout: RefCell<FrameLayout>,
     layout_cache: RefCell<LayoutCache>,
+
+    width: Cell<SizeValue>,
+    height: Cell<SizeValue>,
+    min_width: Cell<SizeValue>,
+    min_height: Cell<SizeValue>,
+    max_width: Cell<SizeValue>,
+    max_height: Cell<SizeValue>,
+    padding_left: Cell<f64>,
+    padding_right: Cell<f64>,
+    padding_top: Cell<f64>,
+    padding_bottom: Cell<f64>,
+
     state: Cell<InteractState>,
     style: RefCell<FrameStyle>,
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
     resolved_style: RefCell<FrameStyle>,
+
 }
 
 impl Deref for Frame {
@@ -270,23 +282,31 @@ macro_rules! layout_style_setter {
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
     pub fn new() -> RcElement<Frame> {
-        Node::new_derived(
-            |node| Frame {
-                node,
-                clicked: Default::default(),
-                hovered: Default::default(),
-                active: Default::default(),
-                focused: Default::default(),
-                state_changed: Default::default(),
-                layout: Default::default(),
-                layout_cache: Default::default(),
-                state: Default::default(),
-                style: Default::default(),
-                style_changed: Cell::new(true),
-                state_affects_style: Cell::new(false),
-                resolved_style: Default::default(),
-            },
-        )
+        Node::new_derived(|node| Frame {
+            node,
+            clicked: Default::default(),
+            hovered: Default::default(),
+            active: Default::default(),
+            focused: Default::default(),
+            state_changed: Default::default(),
+            layout: Default::default(),
+            layout_cache: Default::default(),
+            width: Cell::new(Default::default()),
+            height: Cell::new(Default::default()),
+            min_width: Cell::new(Default::default()),
+            min_height: Cell::new(Default::default()),
+            max_width: Cell::new(Default::default()),
+            max_height: Cell::new(Default::default()),
+            padding_left: Cell::new(0.0),
+            padding_right: Cell::new(0.0),
+            padding_top: Cell::new(0.0),
+            padding_bottom: Cell::new(0.0),
+            state: Default::default(),
+            style: Default::default(),
+            style_changed: Cell::new(true),
+            state_affects_style: Cell::new(false),
+            resolved_style: Default::default(),
+        })
     }
 
     pub fn set_style(&self, style: FrameStyle) {
@@ -305,30 +325,30 @@ impl Frame {
     layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: FlexSize);
     layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: FlexSize);
 
-    pub fn set_padding(&self, value: LengthOrPercentage) {
+    pub fn set_padding(&self, value: f64) {
         self.set_padding_left(value);
         self.set_padding_right(value);
         self.set_padding_top(value);
         self.set_padding_bottom(value);
     }
 
-    pub fn set_padding_left(&self, value: LengthOrPercentage) {
-        self.set(PaddingLeft, value);
+    pub fn set_padding_left(&self, value: f64) {
+        self.padding_left.set(value);
         self.mark_needs_relayout();
     }
 
-    pub fn set_padding_right(&self, value: LengthOrPercentage) {
-        self.set(PaddingRight, value);
+    pub fn set_padding_right(&self, value: f64) {
+        self.padding_right.set(value);
         self.mark_needs_relayout();
     }
 
-    pub fn set_padding_top(&self, value: LengthOrPercentage) {
-        self.set(PaddingTop, value);
+    pub fn set_padding_top(&self, value: f64) {
+        self.padding_top.set(value);
         self.mark_needs_relayout();
     }
 
-    pub fn set_padding_bottom(&self, value: LengthOrPercentage) {
-        self.set(PaddingBottom, value);
+    pub fn set_padding_bottom(&self, value: f64) {
+        self.padding_bottom.set(value);
         self.mark_needs_relayout();
     }
 
@@ -339,6 +359,36 @@ impl Frame {
 
     pub fn set_layout(&self, layout: FrameLayout) {
         *self.layout.borrow_mut() = layout;
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_width(&self, value: SizeValue) {
+        self.width.set(value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_height(&self, value: SizeValue) {
+        self.height.set(value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_min_width(&self, value: SizeValue) {
+        self.min_width.set(value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_min_height(&self, value: SizeValue) {
+        self.min_height.set(value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_max_width(&self, value: SizeValue) {
+        self.max_width.set(value);
+        self.mark_needs_relayout();
+    }
+
+    pub fn set_max_height(&self, value: SizeValue) {
+        self.max_height.set(value);
         self.mark_needs_relayout();
     }
 
@@ -355,181 +405,138 @@ impl Frame {
     }
 }
 
-struct Padding {
-    left: LengthOrPercentage,
-    right: LengthOrPercentage,
-    top: LengthOrPercentage,
-    bottom: LengthOrPercentage,
-}
-
 struct BoxSizingParams<'a> {
+    /// Main axis direction (direction of the text). For now, it's always horizontal.
     axis: Axis,
-    padding: Padding,
     children: &'a [RcElement],
 }
 
 impl Frame {
-    fn layout_content(
+    /// Measures the contents of the frame under the specified constraints.
+    ///
+    /// The measurement includes padding.
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - box sizing parameters (axis, padding, children)
+    /// * `parent_main_sz` - parent main axis size, if known
+    /// * `parent_cross_sz` - parent cross axis size, if known
+    /// * `main` - main axis size constraint (available space)
+    /// * `cross` - cross axis size constraint (available space)
+    fn measure_content(
         &self,
         p: &BoxSizingParams,
-        mode: LayoutMode,
-        main: SizeConstraint,
-        cross: SizeConstraint,
-    ) -> LayoutOutput {
-        // TODO parent size
-        let layout_input = LayoutInput::from_main_cross(p.axis, main, cross, None, None);
-        self.layout_cache
-            .borrow_mut()
-            .get_or_insert_with(&layout_input, mode, |li| {
-                let _span = trace_span!("Frame::layout_content", ?mode, ?layout_input).entered();
+        parent_width: Option<f64>,
+        parent_height: Option<f64>,
+        width_constraint: SizeConstraint,
+        height_constraint: SizeConstraint,
+    ) -> Size {
+        let _span = trace_span!("Frame::measure_content", ?width_constraint, ?height_constraint, ?parent_width, ?parent_height).entered();
 
-                // resolve padding
-                let padding_left = layout_input.width.resolve_length(p.padding.left);
-                let padding_right = layout_input.width.resolve_length(p.padding.right);
-                let padding_top = layout_input.height.resolve_length(p.padding.top);
-                let padding_bottom = layout_input.height.resolve_length(p.padding.bottom);
+        let width = width_constraint.deflate(self.padding_left.get() + self.padding_right.get());
+        let height = height_constraint.deflate(self.padding_top.get() + self.padding_bottom.get());
 
-                let FrameLayout::Flex {
-                    direction,
-                    gap,
-                    initial_gap,
-                    final_gap,
-                } = self.layout.borrow().clone();
+        // Measure the children by performing the measure steps of flex layout.
+        let FrameLayout::Flex {
+            direction,
+            gap,
+            initial_gap,
+            final_gap,
+        } = self.layout.borrow().clone();
+        let mut output = flex_layout(
+            LayoutMode::Measure,
+            &FlexLayoutParams {
+                direction,
+                width_constraint: width,
+                height_constraint: height,
+                parent_width,
+                parent_height,
+                gap,
+                initial_gap,
+                final_gap,
+            },
+            p.children,
+        );
 
-                // layout children
-                // TODO other layouts
-                let flex_params = FlexLayoutParams {
-                    axis: direction,
-                    width: layout_input.width.deflate(padding_left + padding_right),
-                    height: layout_input.height.deflate(padding_top + padding_bottom),
-                    parent_width: None,
-                    parent_height: None,
-                    gap,
-                    initial_gap,
-                    final_gap,
-                };
-
-                let mut output = flex_layout(mode, &flex_params, p.children);
-
-                // don't forget to apply box padding
-                // on the main axis it's redundant with `initial_gap` but we keep it for consistency
-                // with other layout modes
-                if mode == LayoutMode::Place {
-                    for child in p.children {
-                        child.add_offset(Vec2::new(padding_left, padding_top));
-                    }
-                }
-
-                output.width += padding_left + padding_right;
-                output.height += padding_top + padding_bottom;
-                output.baseline.as_mut().map(|b| *b += padding_top);
-
-                output
-            })
+        Size {
+            width: output.width + self.padding_left.get() + self.padding_right.get(),
+            height: output.height + self.padding_top.get() + self.padding_bottom.get(),
+        }
     }
 
     /// Measures a box element sized according to the specified constraints.
-    fn layout_inner(
+    fn measure_inner(
         &self,
         p: &BoxSizingParams,
-        mode: LayoutMode,
-        main_sz: Sizing,
-        cross_sz: Sizing,
-        parent_main_sc: SizeConstraint,
-        parent_cross_sc: SizeConstraint,
-    ) -> LayoutOutput {
-        let _span = trace_span!("Frame::layout_inner", ?mode, ?p.axis).entered();
-        let cross_axis = p.axis.cross();
+        parent_width: Option<f64>,
+        parent_height: Option<f64>,
+        width_constraint: SizeConstraint,
+        height_constraint: SizeConstraint,
+    ) -> Size {
+        let _span = trace_span!("Frame::measure_inner", ?width_constraint, ?height_constraint, ?parent_width, ?parent_height).entered();
 
-        // Helper function to convert a user-provided sizing constraint to
-        fn sizing_to_constraint(parent: SizeConstraint, sizing: SizeValue) -> SizeConstraint {
-            match sizing {
-                SizeValue::Auto => parent,
-                SizeValue::Fixed(value) => SizeConstraint::Available(value),
-                SizeValue::Percentage(p) => SizeConstraint::Available(parent.available().map(|s| p * s).unwrap_or(0.0)),
-                SizeValue::MinContent => SizeConstraint::MIN,
-                SizeValue::MaxContent => SizeConstraint::MAX,
-            }
-        }
-
-        let content_main_sc = sizing_to_constraint(parent_main_sc, main_sz.preferred);
-        let content_cross_sc = sizing_to_constraint(parent_cross_sc, cross_sz.preferred);
-
-        // Note that if main_sz and cross_sz are both fixed or percentage, the size is already
-        // fully determined, and we don't need to measure it.
-        let mut layout = match (main_sz.preferred, cross_sz.preferred) {
-            (SizeValue::Fixed(_) | SizeValue::Percentage(_), SizeValue::Fixed(_) | SizeValue::Percentage(_)) =>
-                {
-                    // must call layout_content to place things
-                    if mode == LayoutMode::Place {
-                        self.layout_content(p, mode, content_main_sc, content_cross_sc);
-                    }
-                    LayoutOutput::from_main_cross_sizes(
-                        p.axis,
-                        content_main_sc.available().unwrap(),
-                        content_cross_sc.available().unwrap(),
-                        None,
-                    )
-                }
-            _ => self.layout_content(p, mode, content_main_sc, content_cross_sc),
-        };
-
-        // layout now holds the content box size
-        // it now needs to be constrained; do it one axis at a time, starting from the main axis
-        let eval_size = |size: SizeValue,
-                         axis: Axis,
-                         parent_main_sc: SizeConstraint,
-                         parent_cross_sc: SizeConstraint,
-                         default: f64|
-                         -> f64 {
+        //
+        let eval_width = |size: SizeValue| -> Option<f64> {
             match size {
-                SizeValue::Auto => default,
-                SizeValue::Fixed(s) => s,
-                SizeValue::Percentage(percent) => parent_main_sc.available().map(|s| percent * s).unwrap_or(default),
-                SizeValue::MinContent => self
-                    .layout_content(p, LayoutMode::Measure, SizeConstraint::MIN, parent_cross_sc)
-                    .size(axis),
-                SizeValue::MaxContent => self
-                    .layout_content(p, LayoutMode::Measure, SizeConstraint::MAX, parent_cross_sc)
-                    .size(axis),
+                // Fixed size: use the specified size
+                SizeValue::Fixed(s) => Some(s),
+                // Percentage size: use the parent size
+                SizeValue::Percentage(percent) => Some(parent_width? * percent),
+                // MinContent or MaxContent: measure the content using a MIN or MAX constraint on the
+                // specified axis
+                SizeValue::MinContent | SizeValue::MaxContent => {
+                    let cstr = match size {
+                        SizeValue::MinContent => SizeConstraint::MIN,
+                        SizeValue::MaxContent => SizeConstraint::MAX,
+                        _ => unreachable!(),
+                    };
+                    Some(self.measure_content(p, parent_width, parent_height, cstr, height_constraint).width)
+                }
+                _ => None,
             }
         };
 
-        // TODO: why do we need to clamp to the maximum size here?
-        // can't we apply the max size before sizing the content, by clamping the available size?
+        //
 
-        let main_min = eval_size(main_sz.min, p.axis, parent_main_sc, parent_cross_sc, 0.0);
-        let main_max = eval_size(main_sz.max, p.axis, parent_main_sc, parent_cross_sc, f64::INFINITY);
-        let cross_min = eval_size(cross_sz.min, cross_axis, parent_cross_sc, parent_main_sc, 0.0);
-        let cross_max = eval_size(cross_sz.max, cross_axis, parent_cross_sc, parent_main_sc, f64::INFINITY);
+        let mut width = eval_width(self.width.get()).unwrap_or_else(|| {
+            // If the width is not specified, it is calculated from the contents, by propagating
+            // the width constraint from above to the children.
+            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint).width
+        });
+        let min_width = eval_width(self.min_width.get()).unwrap_or(0.0);
+        let max_width = eval_width(self.max_width.get()).unwrap_or(f64::INFINITY);
 
-        // clamp main axis size first
-        let main = layout.size(p.axis);
-        let clamped_main = main.clamp(main_min, main_max);
+        // Clamp the width to the specified min and max values.
+        width = width.clamp(min_width, max_width);
 
-        if clamped_main != main {
-            // re-layout cross axis under new main axis constraints
-            layout = self.layout_content(p, mode, SizeConstraint::Available(clamped_main), parent_cross_sc);
-            layout.set_axis(p.axis, clamped_main);
-        }
+        // updated width constraint due to clamping min/max width
+        let updated_width_constraint = SizeConstraint::Available(width);
 
-        // clamp cross axis size
-        // we don't ask for a re-measure, because this might in turn affect the main axis size,
-        // and we don't want to loop indefinitely, this isn't a fixed-point solver
-        let clamped_cross = layout.size(cross_axis).clamp(cross_min, cross_max);
-        layout.set_axis(cross_axis, clamped_cross);
+        let eval_height = |size: SizeValue| -> Option<f64> {
+            match size {
+                SizeValue::Fixed(s) => Some(s),
+                SizeValue::Percentage(percent) => Some(parent_height? * percent),
+                SizeValue::MinContent | SizeValue::MaxContent => {
+                    let cstr = match size {
+                        SizeValue::MinContent => SizeConstraint::MIN,
+                        SizeValue::MaxContent => SizeConstraint::MAX,
+                        _ => unreachable!(),
+                    };
+                    Some(self.measure_content(p, parent_width, parent_height, updated_width_constraint, cstr).height)
+                }
+                _ => None,
+            }
+        };
 
-        trace!("Measured element: size={:?}", layout);
-        layout
-    }
+        let mut height = eval_height(self.height.get()).unwrap_or_else(|| {
+            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint).height
+        });
+        let min_height = eval_height(self.min_height.get()).unwrap_or(0.0);
+        let max_height = eval_height(self.max_height.get()).unwrap_or(f64::INFINITY);
 
-    fn get_padding(&self) -> Padding {
-        Padding {
-            left: self.get(PaddingLeft).unwrap_or_default(),
-            right: self.get(PaddingRight).unwrap_or_default(),
-            top: self.get(PaddingTop).unwrap_or_default(),
-            bottom: self.get(PaddingBottom).unwrap_or_default(),
-        }
+        height = height.clamp(min_height, max_height);
+
+        Size { width, height }
     }
 }
 
@@ -540,41 +547,61 @@ impl Element for Frame {
 
     fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
+
         // TODO vertical direction layout
-        let (main_constraint, cross_constraint) = layout_input.main_cross(Axis::Horizontal);
         let p = BoxSizingParams {
             axis: Axis::Horizontal,
-            padding: self.get_padding(),
             children,
         };
-        let output = self.layout_inner(
+        let output = self.measure_inner(
             &p,
-            LayoutMode::Measure,
-            self.get(layout::Width).unwrap_or_default(),
-            self.get(layout::Height).unwrap_or_default(),
-            main_constraint,
-            cross_constraint,
+            layout_input.parent_width,
+            layout_input.parent_height,
+            layout_input.width,
+            layout_input.height,
         );
-        Size::new(output.width, output.height)
+        output
     }
 
     fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
-        // TODO vertical direction layout
-        let p = BoxSizingParams {
-            axis: Axis::Horizontal,
-            padding: self.get_padding(),
-            children,
-        };
-        // defer to measure for now
-        let output = self.layout_inner(
-            &p,
+
+        let hpad = self.padding_left.get() + self.padding_right.get();
+        let vpad = self.padding_top.get() + self.padding_bottom.get();
+
+        let content_area_width = size.width - hpad;
+        let content_area_height = size.height - vpad;
+
+        let FrameLayout::Flex {
+            direction,
+            gap,
+            initial_gap,
+            final_gap,
+        } = self.layout.borrow().clone();
+
+        let mut output = flex_layout(
             LayoutMode::Place,
-            self.get(layout::Width).unwrap_or_default(),
-            self.get(layout::Height).unwrap_or_default(),
-            size.width.into(),
-            size.height.into(),
+            &FlexLayoutParams {
+                direction,
+                width_constraint: SizeConstraint::Available(content_area_width),
+                height_constraint: SizeConstraint::Available(content_area_height),
+                // TODO parent width is unknown, so we can't use it for percentage calculations
+                parent_width: None,
+                parent_height: None,
+                gap,
+                initial_gap,
+                final_gap,
+            },
+            children,
         );
+
+        output.width += hpad;
+        output.height += vpad;
+
+        let offset = Vec2::new(self.padding_left.get(), self.padding_top.get());
+        for child in children.iter() {
+            child.add_offset(offset);
+        }
         output
     }
 
@@ -624,8 +651,7 @@ impl Element for Frame {
         });
     }
 
-    fn event(&self, event: &mut Event)
-    {
+    fn event(&self, event: &mut Event) {
         fn update_state(this: &Frame, state: InteractState) {
             this.state.set(state);
             if this.state_affects_style.get() {

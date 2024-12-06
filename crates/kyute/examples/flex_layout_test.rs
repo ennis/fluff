@@ -15,7 +15,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 use kyute::element::RcElement;
-use kyute::layout::{FlexFactor, FlexMargins, FlexSize, Height, PaddingBottom, PaddingLeft, PaddingRight, PaddingTop, SizeValue, Sizing, Width};
+use kyute::layout::{FlexFactor, FlexMargins, FlexSize, SizeValue, Sizing};
 
 fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: FlexSize, margin_after: FlexSize) -> RcElement<Frame> {
     let frame = Frame::new();
@@ -39,11 +39,7 @@ fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_bef
     }
 
     frame.set(FlexMargins, (margin_before, margin_after));
-
-    frame.set(PaddingLeft, 4.0.into());
-    frame.set(PaddingRight, 4.0.into());
-    frame.set(PaddingBottom, 4.0.into());
-    frame.set(PaddingTop, 4.0.into());
+    frame.set_padding(4.);
     frame
 }
 
@@ -63,8 +59,9 @@ fn min_flex_frame(direction: Axis, color: Color, min: f64, flex: f64) -> RcEleme
     });
 
     frame.set_layout(FrameLayout::Flex { direction, gap: Default::default(), initial_gap: Default::default(), final_gap: Default::default() });
-    frame.set(Width, Sizing { preferred: SizeValue::Fixed(100.0), min: SizeValue::Auto, max: SizeValue::Auto });
-    frame.set(Height, Sizing { preferred: SizeValue::Percentage(1.0), min: SizeValue::Fixed(min), max: SizeValue::Auto });
+    frame.set_width(SizeValue::Fixed(100.0));
+    frame.set_height(SizeValue::Percentage(1.0));
+    frame.set_min_height(SizeValue::Fixed(min));
     frame.set(FlexFactor, flex);
     frame
 }

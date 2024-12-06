@@ -25,6 +25,7 @@ use crate::drawing::ToSkia;
 use crate::element::{Element, Node, RcElement, WeakElement};
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
 use crate::{application, Callbacks, Color};
+use crate::layout::{LayoutInput, SizeConstraint};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -567,6 +568,12 @@ impl WindowInner {
         }
 
         if self.root.needs_relayout() {
+            let size = self.root.do_measure(&LayoutInput {
+                parent_width: Some(size.width),
+                parent_height: Some(size.height),
+                width: SizeConstraint::Available(size.width),
+                height: SizeConstraint::Available(size.height),
+            });
             let _geom = self.root.do_layout(size);
         }
 

@@ -5,10 +5,7 @@ use tracing::trace;
 
 use crate::element::{AttachedProperty, Element, RcElement};
 use crate::layout;
-use crate::layout::{
-    Alignment, Axis, AxisSizeHelper, BoxMeasurements, FlexMargins, FlexSize, LayoutInput, LayoutMode, LayoutOutput,
-    RequestedAxis, SizeConstraint,
-};
+use crate::layout::{Alignment, Axis, AxisSizeHelper, BoxMeasurements, FlexMargins, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LogicalAxis, RequestedAxis, SizeConstraint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum MainAxisAlignment {
@@ -38,12 +35,10 @@ impl AttachedProperty for FlexFactor {
 }
 
 pub struct FlexLayoutParams {
-    /// The direction of the flex
-    pub axis: Axis,
-    /// Sizing constraint in the horizontal direction.
-    pub width: SizeConstraint,
-    /// Sizing constraint in the vertical direction.
-    pub height: SizeConstraint,
+    /// The direction of the main axis of the flex container (vertical or horizontal).
+    pub direction: Axis,
+    pub width_constraint: SizeConstraint,
+    pub height_constraint: SizeConstraint,
     pub parent_width: Option<f64>,
     pub parent_height: Option<f64>,
     /// Default gap between children.
@@ -55,14 +50,29 @@ pub struct FlexLayoutParams {
 }
 
 pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement]) -> LayoutOutput {
-    let main_axis = p.axis;
+    let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
 
-    let (main_axis_sizing, cross_axis_sizing, parent_main, parent_cross) = match main_axis {
-        Axis::Horizontal => (p.width, p.height, p.parent_width, p.parent_height),
-        Axis::Vertical => (p.height, p.width, p.parent_height, p.parent_width),
-    };
+    let (main_size_constraint, cross_size_constraint, parent_main, parent_cross) =
+        match p.direction {
+            Axis::Horizontal => {
+                (
+                    p.width_constraint,
+                    p.height_constraint,
+                    p.parent_width,
+                    p.parent_height,
+                )
+            }
+            Axis::Vertical => {
+                (
+                    p.height_constraint,
+                    p.width_constraint,
+                    p.parent_height,
+                    p.parent_width,
+                )
+            }
+        };
 
     // ======
     // ====== Calculate the available space on the main axis ======
@@ -70,7 +80,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
     // If the parent provided an exact size, or available space, use that as the maximum size,
     // otherwise we can consider the maximum size to be infinite.
     // MinContent/MaxContent has meaning only for the sizing of children with content.
-    let main_max = main_axis_sizing.available().unwrap_or(f64::INFINITY);
+    let main_max = main_size_constraint.available().unwrap_or(f64::INFINITY);
 
     // ======
     // ====== Measure children & margins along the main axis and calculate the sum of flex factors ======
@@ -100,10 +110,10 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
         let flex = child.get(layout::FlexFactor).unwrap_or_default();
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
-            .do_measure(&LayoutInput::from_main_cross(
+            .do_measure(&LayoutInput::from_logical(
                 main_axis,
-                main_axis_sizing,
-                cross_axis_sizing,
+                main_size_constraint,
+                cross_size_constraint,
                 parent_main,
                 parent_cross,
             ))
@@ -111,10 +121,10 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
         // if flex != 0, also measure the max width so that we know how much it can grow
         let max_item_main = if flex != 0.0 {
             child
-                .do_measure(&LayoutInput::from_main_cross(
+                .do_measure(&LayoutInput::from_logical(
                     main_axis,
                     SizeConstraint::MAX,
-                    cross_axis_sizing,
+                    cross_size_constraint,
                     parent_main,
                     parent_cross,
                 ))
@@ -212,7 +222,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
     // ======
 
     // Same as main_axis_max
-    let cross_max = cross_axis_sizing.available().unwrap_or(f64::INFINITY);
+    let cross_max = cross_size_constraint.available().unwrap_or(f64::INFINITY);
 
     let mut max_child_cross_size: f64 = 0.0; // maximum cross size among children
     let mut max_baseline: f64 = 0.0; // max baseline position among children with baseline positioning
@@ -227,10 +237,10 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
             // even if the provided main size has grown, it may return the same main size.
             // Concrete example: text elements
             measures[i].cross = child
-                .do_measure(&LayoutInput::from_main_cross(
+                .do_measure(&LayoutInput::from_logical(
                     main_axis,
                     measures[i].main.into(),
-                    cross_axis_sizing,
+                    cross_size_constraint,
                     parent_main,
                     parent_cross,
                 ))
@@ -274,7 +284,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
     for (i, child) in children.iter().enumerate() {
         // TODO don't layout again if we already have the layout (the child may be already laid out
         // due to baseline alignment)
-        child_layouts[i] = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, cross_size));
+        child_layouts[i] = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
     }
 
     trace!(
