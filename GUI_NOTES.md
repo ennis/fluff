@@ -1085,3 +1085,15 @@ E.g.
 Measure cannot return a range of sizes. If it could, returned measures should be able to fully model the sizing behavior
 of the child item, and the available space passed to `measure` would be useless.
 
+Idea: maybe, alongside the measure, the widget could return a "priority" value that tells the container how to resolve
+conflicts with other widgets if it leads to overflow.
+
+# Hot reload
+
+Proc-macro that watches the original source files for changes.
+The proc-macro produces the AST of the UI tree, which is then interpreted to:
+
+- create the UI hierarchy
+- set the value of properties
+
+The proc-macro also generates code to bind widgets to local variables.

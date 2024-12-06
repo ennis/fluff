@@ -108,9 +108,9 @@ fn main() {
             flex_frame(Axis::Vertical, 1.0, vec![
                 // boxes of color with various flex heights
                 min_flex_frame(Axis::Horizontal, Color::from_hex("f0f"), 100.0, 2.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("ff0"), 0.0, 1.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("f00"), 0.0, 1.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("0f0"), 0.0, 1.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("ff0"), 100.0, 1.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("f00"), 100.0, 1.0),
+                min_flex_frame(Axis::Horizontal, Color::from_hex("0f0"), 100.0, 1.0),
             ]),
         ], no_margin, no_margin);
 

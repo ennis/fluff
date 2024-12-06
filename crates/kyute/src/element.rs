@@ -882,10 +882,10 @@ impl dyn Element + '_ {
 
     pub fn do_layout(&self, size: Size) -> LayoutOutput {
         let children = self.children();
-        let geometry = self.layout(&*children, size);
-        self.geometry.set(Size::new(geometry.width, geometry.height));
+        self.geometry.set(size);
+        let output = self.layout(&*children, size);
         self.mark_layout_done();
-        geometry
+        output
     }
 
     pub fn send_event(&self, event: &mut Event) {

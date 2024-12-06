@@ -247,7 +247,6 @@ pub struct Frame {
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
     resolved_style: RefCell<FrameStyle>,
-
 }
 
 impl Deref for Frame {
@@ -595,8 +594,9 @@ impl Element for Frame {
             children,
         );
 
-        output.width += hpad;
-        output.height += vpad;
+        output.width = size.width;
+        output.height = size.height;
+        output.baseline = output.baseline.map(|b| b + self.padding_top.get());
 
         let offset = Vec2::new(self.padding_left.get(), self.padding_top.get());
         for child in children.iter() {
