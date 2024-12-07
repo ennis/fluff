@@ -20,7 +20,7 @@ impl<T: 'static> Callbacks<T> {
     }
 
     pub fn unwatch(&self, id: usize) {
-        self.cb.borrow_mut().remove(id);
+        let _ = self.cb.borrow_mut().remove(id);
     }
 
     pub async fn wait(&self) -> T {

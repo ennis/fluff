@@ -37,7 +37,9 @@ slab = "0.4.9"
 scopeguard = "1.2.0"
 paste = "1.0.15"
 kyute-common = { workspace = true }
+kyute-dsl = { workspace = true }
 pin-weak = "1.1.0"
+inventory = "0.3.15"
 
 # Windows dependencies
 [target.'cfg(target_os="windows")'.dependencies]

@@ -1,14 +1,12 @@
 //! Types and functions used for layouting widgets.
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Range, RangeBounds};
-
-use kurbo::{Insets, Rect, Size, Vec2};
-use tracing::trace;
+use std::ops::RangeBounds;
 
 use crate::element::AttachedProperty;
 use crate::Element;
-use crate::style::MaxHeight;
+use kurbo::{Size, Vec2};
+use kyute_dsl::PropertyExpr;
 
 pub mod flex;
 //pub mod grid;
@@ -188,101 +186,48 @@ pub enum SizeValue {
     /// The element should size itself to its maximum content size: the largest size it can be
     /// that still tightly wraps its content.
     MaxContent,
+    Stretch,
 }
 
 impl SizeValue {
-    /// Tries to resolve a size value to a concrete size, given a parent size.
-    ///
-    /// # Returns
-    /// A concrete size if the size is `Fixed`, or a `Percentage` of the parent size.
-    /// Otherwise, returns `None` as the size depends on the content or the remaining space.
-    pub fn resolve(&self, parent_size: f64) -> Option<f64> {
+    pub fn resolve(self) -> Option<f64> {
         match self {
-            SizeValue::Auto => Some(parent_size),
-            SizeValue::Fixed(value) => Some(*value),
-            SizeValue::Percentage(p) => Some(parent_size * p),
-            SizeValue::MinContent => None,
-            SizeValue::MaxContent => None,
+            SizeValue::Fixed(size) => Some(size),
+            _ => None,
         }
     }
 
-    pub fn to_constraint(self, parent_constraint: SizeConstraint) -> SizeConstraint {
-        match self {
-            SizeValue::Auto => parent_constraint,
-            SizeValue::Fixed(value) => SizeConstraint::Available(value),
-            SizeValue::Percentage(p) => match parent_constraint {
-                SizeConstraint::Available(size) => SizeConstraint::Available(p * size),
-                SizeConstraint::Unspecified => SizeConstraint::Unspecified,
-            },
-            SizeValue::MinContent => SizeConstraint::MIN,
-            SizeValue::MaxContent => SizeConstraint::MAX,
-        }
+    pub fn is_stretch(self) -> bool {
+        matches!(self, SizeValue::Stretch)
     }
 }
 
-/// Specifies the size of a visual element in one dimension.
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub struct Sizing {
-    /// The preferred size of the item.
-    pub preferred: SizeValue,
 
-    /// Minimum size constraint.
-    ///
-    /// # Note
-    ///
-    /// For minimum constraints,  `Stretch` is ignored and treated as `Auto` (no constraints).
-    pub min: SizeValue,
-
-    /// Maximum size constraint.
-    ///
-    /// # Note
-    ///
-    /// For maximum constraints, `Stretch` is ignored and treated as `Auto` (no constraints).
-    pub max: SizeValue,
-}
-
-impl Sizing {
-    pub const NULL: Sizing = Sizing {
-        preferred: SizeValue::Fixed(0.0),
-        min: SizeValue::Fixed(0.0),
-        max: SizeValue::Fixed(0.0),
-    };
-}
-
-/// Size value with a flex growth factor.
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub struct FlexSize {
-    /// Minimum space.
-    pub size: f64,
-    /// Flex factor (0.0 means no stretching).
-    pub flex: f64,
-}
-
-impl FlexSize {
-    pub const NULL: FlexSize = FlexSize { size: 0.0, flex: 0.0 };
-
-    /// Combines two flex sizes, e.g. two margins that collapse.
-    pub fn combine(self, other: FlexSize) -> FlexSize {
-        FlexSize {
-            size: self.size.max(other.size),
-            flex: self.flex.max(other.flex),
-        }
-    }
-
-    pub fn grow(self, available: f64) -> f64 {
-        if self.flex != 0.0 && available.is_finite() {
-            self.size.max(available)
-        } else {
-            self.size
-        }
-    }
-}
-
-impl From<f64> for FlexSize {
+impl From<f64> for SizeValue {
     fn from(size: f64) -> Self {
-        FlexSize { size, flex: 0.0 }
+        SizeValue::Fixed(size)
     }
 }
+
+/// Conversion of SizeValue from DSL expressions.
+impl TryFrom<PropertyExpr> for SizeValue {
+    type Error = &'static str;
+
+    fn try_from(value: PropertyExpr) -> Result<Self, Self::Error> {
+        match value {
+            PropertyExpr::String(s) => match s.as_str() {
+                "auto" => Ok(SizeValue::Auto),
+                "min-content" => Ok(SizeValue::MinContent),
+                "max-content" => Ok(SizeValue::MaxContent),
+                _ => Err("invalid size value"),
+            },
+            PropertyExpr::Px(px) => Ok(SizeValue::Fixed(px as f64)),
+            PropertyExpr::Fr(_fr) => Ok(SizeValue::Stretch),    // TODO fractional units
+            _ => Err("invalid size value"),
+        }
+    }
+}
+
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LayoutMode {
@@ -529,63 +474,36 @@ impl Default for LayoutOutput {
     }
 }
 
+macro_rules! attached_properties {
+    (
+        $(
+            $(#[$meta:meta])*
+            $name:ident: $ty:ty;
+        )*
+    ) => {
+        $(
+            $(#[$meta])*
+            #[derive(Copy, Clone, Debug)]
+            pub struct $name;
 
-/// Flex factor of an item inside a flex container.
-#[derive(Copy, Clone, Debug)]
-pub struct FlexFactor;
-
-impl AttachedProperty for FlexFactor {
-    type Value = f64;
-}
-
-/// Attached property that controls start/end margins on flex items.
-#[derive(Copy, Clone, Debug)]
-pub struct FlexMargins;
-
-impl AttachedProperty for FlexMargins {
-    type Value = (FlexSize, FlexSize);
-}
-
-/// Attached property that controls horizontal positioning of items inside a container.
-#[derive(Copy, Clone, Debug)]
-pub struct HorizontalAlignment;
-
-impl AttachedProperty for HorizontalAlignment {
-    type Value = Alignment;
-}
-
-/// Attached property that controls vertical positioning of items inside a container.
-#[derive(Copy, Clone, Debug)]
-pub struct VerticalAlignment;
-
-impl AttachedProperty for VerticalAlignment {
-    type Value = Alignment;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Box measurements
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Resolved box size values.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct BoxMeasurements {
-    /// Preferred size.
-    pub size: f64,
-    /// Minimum size.
-    pub min: f64,
-    /// Maximum size.
-    pub max: f64,
-    /// Flex factor. Zero means that the box doesn't grow.
-    pub flex: f64,
-}
-
-impl BoxMeasurements {
-    pub const NULL: BoxMeasurements = BoxMeasurements {
-        size: 0.0,
-        min: 0.0,
-        max: 0.0,
-        flex: 0.0,
+            impl AttachedProperty for $name {
+                type Value = $ty;
+            }
+        )*
     };
+}
+
+attached_properties! {
+    /// Spacing before the element in a sequential layout.
+    SpacingBefore: SizeValue;
+    /// Spacing after the element in a sequential layout.
+    SpacingAfter: SizeValue;
+    /// Minimum spacing before the element in a sequential layout.
+    MinSpacingBefore: SizeValue;
+    /// Minimum spacing after the element in a sequential layout.
+    MinSpacingAfter: SizeValue;
+    HorizontalAlignment: Alignment;
+    VerticalAlignment: Alignment;
 }
 
 

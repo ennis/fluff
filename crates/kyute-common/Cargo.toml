@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 palette = "0.7"
 kurbo = "0.11"
+euclid = "0.22.11"

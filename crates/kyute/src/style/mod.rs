@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use crate::Color;
 use crate::drawing::BoxShadow;
-use crate::layout::{Alignment, Axis, LengthOrPercentage, Sizing};
+use crate::layout::{Alignment, Axis, LengthOrPercentage};
 
 
 pub trait IntoStyleValue {
@@ -45,7 +45,6 @@ impl_style_values!(
     bool, Bool;
     String, String;
     Style, Style;
-    Sizing, Sizing;
     Vec<BoxShadow>, BoxShadows;
 );
 
@@ -91,8 +90,6 @@ style_properties! {
     HorizontalAlign: Alignment;
     VerticalAlign: Alignment;
     Baseline: LengthOrPercentage;
-    Width: Sizing;
-    Height: Sizing;
     Direction: Axis;
     CrossAxisAlignment: crate::layout::flex::CrossAxisAlignment;
     MainAxisAlignment: crate::layout::flex::MainAxisAlignment;

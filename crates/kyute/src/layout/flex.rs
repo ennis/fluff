@@ -5,7 +5,7 @@ use tracing::trace;
 
 use crate::element::{AttachedProperty, Element, RcElement};
 use crate::layout;
-use crate::layout::{Alignment, Axis, AxisSizeHelper, BoxMeasurements, FlexMargins, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LogicalAxis, RequestedAxis, SizeConstraint};
+use crate::layout::{Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, LogicalAxis, RequestedAxis, SizeConstraint, SizeValue, SpacingAfter, SpacingBefore};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum MainAxisAlignment {
@@ -34,6 +34,53 @@ impl AttachedProperty for FlexFactor {
     type Value = f64;
 }
 
+/// Size value with a flex growth factor.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+struct FlexSize {
+    /// Minimum space.
+    size: f64,
+    /// Flex factor (0.0 means no stretching).
+    flex: f64,
+}
+
+
+impl FlexSize {
+    const NULL: FlexSize = FlexSize { size: 0.0, flex: 0.0 };
+
+    /// Combines two flex sizes, e.g. two margins that collapse.
+    fn combine(self, other: FlexSize) -> FlexSize {
+        FlexSize {
+            size: self.size.max(other.size),
+            flex: self.flex.max(other.flex),
+        }
+    }
+
+    fn grow(self, available: f64) -> f64 {
+        if self.flex != 0.0 && available.is_finite() {
+            self.size.max(available)
+        } else {
+            self.size
+        }
+    }
+}
+
+impl From<f64> for FlexSize {
+    fn from(size: f64) -> Self {
+        FlexSize { size, flex: 0.0 }
+    }
+}
+
+impl From<SizeValue> for FlexSize {
+    fn from(size: SizeValue) -> Self {
+        match size {
+            SizeValue::Fixed(size) => FlexSize { size, flex: 0.0 },
+            SizeValue::Stretch => FlexSize { size: 0.0, flex: 1.0 },
+            _ => FlexSize::NULL,
+        }
+    }
+}
+
+
 pub struct FlexLayoutParams {
     /// The direction of the main axis of the flex container (vertical or horizontal).
     pub direction: Axis,
@@ -42,11 +89,11 @@ pub struct FlexLayoutParams {
     pub parent_width: Option<f64>,
     pub parent_height: Option<f64>,
     /// Default gap between children.
-    pub gap: FlexSize,
+    pub gap: SizeValue,
     /// Initial gap before the first child (padding).
-    pub initial_gap: FlexSize,
+    pub initial_gap: SizeValue,
     /// Final gap after the last child (padding).
-    pub final_gap: FlexSize,
+    pub final_gap: SizeValue,
 }
 
 pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement]) -> LayoutOutput {
@@ -101,13 +148,13 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
     let mut margins = vec![FlexSize::NULL; child_count + 1]; // margins between children
 
     // Set the initial and final gaps
-    margins[0] = p.initial_gap;
-    margins[child_count] = p.final_gap;
+    margins[0] = p.initial_gap.into();
+    margins[child_count] = p.final_gap.into();
 
     // Measure each child along the main axis (flex factor, ideal and maximum sizes), including fixed spacing.
     for (i, child) in children.iter().enumerate() {
         // get child flex factor
-        let flex = child.get(layout::FlexFactor).unwrap_or_default();
+        //let flex = child.get(layout::FlexFactor).unwrap_or_default();
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
             .do_measure(&LayoutInput::from_logical(
@@ -118,33 +165,36 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
                 parent_cross,
             ))
             .main_cross(main_axis);
-        // if flex != 0, also measure the max width so that we know how much it can grow
-        let max_item_main = if flex != 0.0 {
-            child
-                .do_measure(&LayoutInput::from_logical(
-                    main_axis,
-                    SizeConstraint::MAX,
-                    cross_size_constraint,
-                    parent_main,
-                    parent_cross,
-                ))
-                .axis(main_axis)
-        } else {
-            0.0
-        };
+        // also measure the max width so that we know how much it can grow
+        let max_item_main = child
+            .do_measure(&LayoutInput::from_logical(
+                main_axis,
+                SizeConstraint::MAX,
+                cross_size_constraint,
+                parent_main,
+                parent_cross,
+            ))
+            .axis(main_axis);
 
         non_flex_main_total += item_main;
-        flex_sum += flex;
+        flex_sum += /*flex*/ 0.0;   // TODO
 
         measures[i] = ItemMeasure {
             main: item_main,
             cross: item_cross,
             max: max_item_main,
-            flex,
+            flex: 0.0,
         };
 
         // add margin contributions
-        let (margin_before, margin_after) = child.get(FlexMargins).unwrap_or_default();
+        let margin_before = child.get(SpacingBefore).unwrap_or_default();
+        let margin_after = child.get(SpacingAfter).unwrap_or_default();
+        //let min_margin_before = child.get(SpacingAfter).unwrap_or_default();
+        //let min_margin_after = child.get(SpacingAfter).unwrap_or_default();
+
+        let margin_before = margin_before.into();
+        let margin_after = margin_after.into();
+
         margins[i] = margins[i].combine(margin_before);
         margins[i + 1] = margins[i + 1].combine(margin_after);
         non_flex_main_total += margins[i].size;
@@ -186,7 +236,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
 
             // grow children with flex factors
             //let size = child_layouts[i].size(main_axis);
-            if measures[i].flex != 0.0 {
+            if measures[i].flex > 0.0 {
                 let growth = (main_max - main_size) * measures[i].flex / flex_sum;
                 if growth > 0.0 {
                     measures[i].main += growth;
@@ -266,7 +316,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
         }
     }
 
-    let mut non_flex_cross_size = max_child_cross_size.max(max_baseline + max_below_baseline);
+    let non_flex_cross_size = max_child_cross_size.max(max_baseline + max_below_baseline);
     // clamp it to max cross size
     let cross_size = non_flex_cross_size.min(cross_max);
     //let cross_slack = cross_axis_max - cross_size;

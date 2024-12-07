@@ -17,6 +17,7 @@ pub mod widgets;
 pub mod window;
 //pub mod component;
 pub mod callbacks;
+mod template;
 
 // reexports
 pub use app_globals::AppGlobals;
@@ -32,3 +33,6 @@ pub use style::Style;
 pub use window::{Window, WindowOptions};
 
 pub use tokio::select;
+
+#[doc(hidden)]
+pub use inventory;

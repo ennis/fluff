@@ -4,7 +4,7 @@ use quote::{ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Token, TypePath};
 
-//--------------------------------------------------------------------------------------------------
+/*//--------------------------------------------------------------------------------------------------
 struct CrateName;
 
 const C: CrateName = CrateName;
@@ -13,7 +13,7 @@ impl ToTokens for CrateName {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append(syn::Ident::new("kyute", Span::call_site()))
     }
-}
+}*/
 
 //--------------------------------------------------------------------------------------------------
 
@@ -45,7 +45,12 @@ impl Parse for PropertyExpr {
         if input.peek(syn::LitStr) {
             Ok(PropertyExpr::String(input.parse::<syn::LitStr>()?.value()))
         } else if input.peek(syn::LitInt) {
-            Ok(PropertyExpr::Int(input.parse::<syn::LitInt>()?.base10_parse()?))
+            let lit: syn::LitInt = input.parse()?;
+            match lit.suffix() {
+                "px" => return Ok(PropertyExpr::Px(lit.base10_parse()?)),
+                "fr" => return Ok(PropertyExpr::Fr(lit.base10_parse()?)),
+                _ => Ok(PropertyExpr::Int(lit.base10_parse()?))
+            }
         } else if input.peek(Token![#]) {
             let _: Token![#] = input.parse()?;
             let lit: Literal = input.parse()?;
@@ -93,7 +98,7 @@ impl Parse for ElementItem {
 
 impl Element {
     /// Parse the rest of an element declaration, after attributes and the optional name.
-    fn parse_rest(attrs: Vec<Attribute>, name: Option<Ident>, input: ParseStream) -> syn::Result<Self> {
+    fn parse_rest(_attrs: Vec<Attribute>, name: Option<Ident>, input: ParseStream) -> syn::Result<Self> {
         let _: Token![<] = input.parse()?;
         let path = input.parse::<TypePath>()?;
         let _: Token![>] = input.parse()?;

@@ -8,7 +8,7 @@ use crate::theme::DARK_THEME;
 use crate::widgets::frame::{Frame, FrameLayout, FrameStyle, FrameStyleOverride, InteractState};
 use crate::widgets::text::Text;
 use crate::{text, Color};
-use crate::layout::{Axis, FlexSize, SizeValue, Sizing};
+use crate::layout::{Axis, SizeValue};
 
 fn button_style() -> FrameStyle {
     thread_local! {
@@ -62,7 +62,9 @@ pub fn button(label: impl Into<String>) -> RcElement<Frame> {
     let frame = Frame::new();
     frame.set_style(button_style());
     frame.set_padding(4.0.into());
-    frame.set_layout(FrameLayout::Flex { direction: Axis::Horizontal, initial_gap: FlexSize { size: 0.0, flex: 1.0 }, final_gap: FlexSize { size: 0.0, flex: 1.0 }, gap: 0.0.into() });
+    frame.set_direction(Axis::Horizontal);
+    frame.set_initial_gap(SizeValue::Stretch);
+    frame.set_final_gap(SizeValue::Stretch);
     frame.set_width(SizeValue::MaxContent);
     frame.set_min_width(SizeValue::Fixed(80.0));
     frame.add_child(Text::new(text!( style(text_style) "{label}" )));

@@ -1,4 +1,6 @@
 //! Frame containers
+
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 use std::pin::Pin;
@@ -15,9 +17,9 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
 use crate::layout::{
-    Axis, FlexSize, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, Measurements, SizeConstraint, SizeValue, Sizing,
+    Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, Measurements, SizeConstraint, SizeValue,
 };
-use crate::{drawing, layout, Callbacks, Color, PaintCtx};
+use crate::{drawing, layout, register_template, Callbacks, Color, PaintCtx};
 
 /*
 #[derive(Clone, Default)]
@@ -76,11 +78,11 @@ pub enum FrameLayout {
     Flex {
         direction: Axis,
         /// Default gap between children.
-        gap: FlexSize,
+        gap: SizeValue,
         /// Initial gap before the first child (padding).
-        initial_gap: FlexSize,
+        initial_gap: SizeValue,
         /// Final gap after the last child (padding).
-        final_gap: FlexSize,
+        final_gap: SizeValue,
     },
 }
 
@@ -88,9 +90,9 @@ impl Default for FrameLayout {
     fn default() -> Self {
         FrameLayout::Flex {
             direction: Axis::Vertical,
-            gap: FlexSize::NULL,
-            initial_gap: FlexSize::NULL,
-            final_gap: FlexSize::NULL,
+            gap: SizeValue::default(),
+            initial_gap: SizeValue::default(),
+            final_gap: SizeValue::default(),
         }
     }
 }
@@ -277,6 +279,14 @@ macro_rules! layout_style_setter {
         }
     };
 }
+/*
+register_template!(Frame);
+
+impl Default for Frame {
+    fn default() -> Self {
+        Frame::new()
+    }
+}*/
 
 impl Frame {
     /// Creates a new `Frame` with the given decoration.
@@ -320,9 +330,9 @@ impl Frame {
     paint_style_setter!(border_bottom, set_border_bottom: LengthOrPercentage);
 
     layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
-    layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: FlexSize);
-    layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: FlexSize);
-    layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: FlexSize);
+    layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: SizeValue);
+    layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: SizeValue);
+    layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: SizeValue);
 
     pub fn set_padding(&self, value: f64) {
         self.set_padding_left(value);
@@ -360,6 +370,13 @@ impl Frame {
         *self.layout.borrow_mut() = layout;
         self.mark_needs_relayout();
     }
+
+    /*pub fn set_direction(&self, direction: Axis) {
+        if let FrameLayout::Flex { direction: ref mut d, .. } = *self.layout.borrow_mut() {
+            *d = direction;
+            self.mark_needs_relayout();
+        }
+    }*/
 
     pub fn set_width(&self, value: SizeValue) {
         self.width.set(value);
@@ -542,6 +559,29 @@ impl Frame {
 impl Element for Frame {
     fn node(&self) -> &Node {
         &self.node
+    }
+
+    //fn property(&self, name: &str) -> Option<&dyn Any> {}
+
+    fn set_property(&self, name: &str, value: &kyute_dsl::PropertyExpr) {
+        /*match name {
+            "width" => value.cast().map(|v| self.set_width(SizeValue::Fixed(v))),
+            "height" => value.cast().map(|v| self.set_height(SizeValue::Fixed(v))),
+            "min_width" => value.cast().map(|v| self.set_min_width(SizeValue::Fixed(v))),
+            "min_height" => value.cast().map(|v| self.set_min_height(SizeValue::Fixed(v))),
+            "max_width" => value.cast().map(|v| self.set_max_width(SizeValue::Fixed(v))),
+            "max_height" => value.cast().map(|v| self.set_max_height(SizeValue::Fixed(v))),
+            "padding" => value.cast().map(|v| self.set_padding(v)),
+            "padding_left" => value.cast().map(|v| self.set_padding_left(v)),
+            "padding_right" => value.cast().map(|v| self.set_padding_right(v)),
+            "padding_top" => value.cast().map(|v| self.set_padding_top(v)),
+            "padding_bottom" => value.cast().map(|v| self.set_padding_bottom(v)),
+            "border_left" => value.cast().map(|v| self.set_border_left(LengthOrPercentage::Px(v))),
+            "border_right" => value.cast().map(|v| self.set_border_right(LengthOrPercentage::Px(v))),
+            "border_top" => value.cast().map(|v| self.set_border_top(LengthOrPercentage::Px(v))),
+            "border_bottom" => value.cast().map(|v| self.set_border_bottom(LengthOrPercentage::Px(v))),
+            "gap" => value.cast().map(|v| self.set_gap(FlexSize { size: v, flex: 1.0 })),
+        };*/
     }
 
     fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size {

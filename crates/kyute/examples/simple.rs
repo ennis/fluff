@@ -4,7 +4,7 @@ use kurbo::Point;
 use kyute::layout::Axis;
 use kyute::text::TextStyle;
 use kyute::widgets::button::button;
-use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
+use kyute::widgets::frame::{Frame, FrameStyle};
 use kyute::widgets::text::Text;
 use kyute::widgets::text_edit::{TextEdit, WrapMode};
 use kyute::{application, text, Color, Window, WindowOptions};
@@ -28,7 +28,11 @@ fn main() {
             ..Default::default()
         });
 
-        frame.set_layout(FrameLayout::Flex { direction: Axis::Vertical, gap: 4.0.into(), initial_gap: 4.0.into(), final_gap: 4.0.into() });
+
+        frame.set_direction(Axis::Vertical);
+        frame.set_gap(4.0.into());
+        frame.set_initial_gap(4.0.into());
+        frame.set_final_gap(4.0.into());
 
         let text_edit = TextEdit::new();
         text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));

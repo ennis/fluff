@@ -3,25 +3,21 @@ use std::cell::{Cell, Ref, RefCell, UnsafeCell};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
-use std::{mem, ptr};
-use std::ops::{Deref, Range};
+use std::ops::Deref;
 use std::pin::Pin;
 use std::ptr::addr_eq;
 use std::rc::{Rc, Weak};
+use std::{mem, ptr};
 
 use crate::compositor::DrawableSurface;
 use bitflags::bitflags;
-use futures_util::future::LocalBoxFuture;
 use futures_util::FutureExt;
 use kurbo::{Affine, Point, Size, Vec2};
-use pin_weak::rc::PinWeak;
-use tracing::warn;
 
 use crate::event::Event;
-use crate::layout::{LayoutInput, LayoutOutput, Measurements};
+use crate::layout::{LayoutInput, LayoutOutput};
 use crate::window::WeakWindow;
 use crate::PaintCtx;
-use crate::widgets::frame::Frame;
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -94,7 +90,7 @@ impl<T: ?Sized> PartialOrd for RcElement<T> {
 
 impl<T: ?Sized> Ord for RcElement<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.0.deref() as *const T).cmp(&(other.0.deref() as *const T))
+        (self.0.deref() as *const T).cast::<()>().cmp(&(other.0.deref() as *const T).cast::<()>())
     }
 }
 
@@ -783,16 +779,16 @@ pub trait Element {
         self.node().weak()
     }
 
-    fn node(&self) -> &Node;
+    ///// Returns the value of a named property.
+    //fn property(&self, name: &str) -> Option<&dyn Any> {
+    //    None
+    //}
 
-    /*/// Calculates the size of the widget under the specified constraints.
-    fn measure(&self) -> IntrinsicSizes {
-        // TODO
-        IntrinsicSizes {
-            min: Default::default(),
-            max: Default::default(),
-        }
-    }*/
+    /// Sets the value of a named property.
+    #[allow(unused_variables)]
+    fn set_property(&self, name: &str, value: &kyute_dsl::PropertyExpr) {}
+
+    fn node(&self) -> &Node;
 
     /// Asks the element to measure itself under the specified constraints, but without actually laying
     /// out the children.
