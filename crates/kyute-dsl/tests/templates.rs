@@ -20,9 +20,10 @@ fn test_simple_template() {
         <Frame> {
             direction: "horizontal";
             padding: 4px;
-
             width: max(100px, min_content);
             height: max(40px, min_content);
+            initial_gap: 1fr;
+            final_gap: 1fr;
 
             text = <Text> {}
         }

@@ -771,6 +771,8 @@ pub trait ElementTree {
 
 /// Methods of elements in the element tree.
 pub trait Element {
+    fn node(&self) -> &Node;
+
     fn rc(&self) -> RcElement {
         self.node().rc()
     }
@@ -788,7 +790,6 @@ pub trait Element {
     #[allow(unused_variables)]
     fn set_property(&self, name: &str, value: &kyute_dsl::PropertyExpr) {}
 
-    fn node(&self) -> &Node;
 
     /// Asks the element to measure itself under the specified constraints, but without actually laying
     /// out the children.

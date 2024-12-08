@@ -4,8 +4,6 @@ use anyhow::Context;
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
 use futures::task::{LocalSpawnExt};
-use futures_util::future::LocalBoxFuture;
-use futures_util::{FutureExt};
 use scoped_tls::scoped_thread_local;
 use smallvec::SmallVec;
 use std::cell::RefCell;

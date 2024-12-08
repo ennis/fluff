@@ -9,7 +9,7 @@ pub use selection::Selection;
 pub use style::{FontStretch, FontStyle, FontWeight, TextStyle};
 pub use text_run::TextRun;
 
-use crate::drawing::{FromSkia, ToSkia};
+use crate::drawing::{ToSkia};
 
 mod selection;
 mod skia;

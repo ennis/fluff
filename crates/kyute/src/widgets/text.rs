@@ -1,6 +1,5 @@
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
-use std::rc::Rc;
 
 use kurbo::{Point, Size};
 use skia_safe::textlayout;
@@ -9,7 +8,7 @@ use tracing::{trace, trace_span};
 use crate::drawing::ToSkia;
 use crate::element::{Node, Element, RcElement};
 use crate::event::Event;
-use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
+use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun};
 use crate::PaintCtx;
 
@@ -37,11 +36,6 @@ impl Text {
             intrinsic_size: Cell::new(None),
             paragraph: RefCell::new(paragraph),
         })
-    }
-
-    fn calculate_intrinsic_size(&self) -> Size {
-        // FIXME intrinsic height
-        Size::new(self.paragraph.borrow().max_intrinsic_width() as f64, 16.0)
     }
 
     pub fn set_text(&self, text: &[TextRun]) {

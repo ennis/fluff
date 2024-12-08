@@ -1,15 +1,14 @@
 //! Types and functions used for layouting widgets.
 use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::RangeBounds;
-
 use crate::element::AttachedProperty;
-use crate::Element;
 use kurbo::{Size, Vec2};
 use kyute_dsl::PropertyExpr;
 
 pub mod flex;
+mod cache;
 //pub mod grid;
+
+pub use cache::{LayoutCacheEntry, LayoutCache};
 
 #[derive(Copy, Clone, PartialEq)]
 //#[cfg_attr(feature = "serializing", derive(serde::Deserialize))]
@@ -61,16 +60,6 @@ impl From<f64> for LengthOrPercentage {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Axis
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Logical axis of a layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum LogicalAxis {
-    /// Axis parallel to the text direction.
-    Inline,
-    /// Axis perpendicular to the text direction.
-    #[default]
-    Block,
-}
 
 /// Physical axis of a layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -301,33 +290,6 @@ impl From<f64> for SizeConstraint {
     }
 }
 
-/// Element measurements returned by `Element::measure`.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Measurements {
-    /// The size of the element.
-    pub size: Size,
-}
-
-/// Which axis should be measured.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum RequestedAxis {
-    /// Compute the layout in the horizontal axis only (i.e. the width).
-    Horizontal,
-    /// Compute the layout in the vertical axis only (i.e. the height).
-    Vertical,
-    /// Compute the layout in both axes.
-    Both,
-}
-
-impl From<Axis> for RequestedAxis {
-    fn from(axis: Axis) -> Self {
-        match axis {
-            Axis::Horizontal => RequestedAxis::Horizontal,
-            Axis::Vertical => RequestedAxis::Vertical,
-        }
-    }
-}
-
 /// Input parameters passed to the `measure` method of an element.
 #[derive(Copy, Clone, PartialEq)]
 pub struct LayoutInput {
@@ -346,7 +308,6 @@ impl fmt::Debug for LayoutInput {
         write!(f, "{:?}×{:?}", self.width, self.height)
     }
 }
-
 
 impl LayoutInput {
     pub fn from_logical(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint, parent_main: Option<f64>, parent_cross: Option<f64>) -> Self {

@@ -24,7 +24,7 @@ use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
 use crate::element::{Element, Node, RcElement, WeakElement};
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
-use crate::{application, Callbacks, Color};
+use crate::{application, Notifier, Color};
 use crate::layout::{LayoutInput, SizeConstraint};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
@@ -95,9 +95,9 @@ struct InputState {
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
 
-    close_requested: Callbacks<()>, //RefCell<Option<Box<dyn Fn()>>>,
-    focus_changed: Callbacks<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
-    resized: Callbacks<Size>, // RefCell<Option<Box<dyn Fn(Size)>>>,
+    close_requested: Notifier<()>, //RefCell<Option<Box<dyn Fn()>>>,
+    focus_changed: Notifier<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
+    resized: Notifier<Size>, // RefCell<Option<Box<dyn Fn(Size)>>>,
 
     root: RcElement,
     layer: Layer,

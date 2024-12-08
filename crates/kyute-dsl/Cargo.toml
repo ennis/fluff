@@ -1,0 +1,14 @@
+[package]
+name = "kyute-dsl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+serde = { version = "1", features = ["derive"] }
+kyute-common = { path = "../kyute-common" }
+
+[dev-dependencies]
+serde_json = "1.0.133"

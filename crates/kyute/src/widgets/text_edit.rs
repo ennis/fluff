@@ -16,7 +16,7 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{Callbacks, Color, PaintCtx};
+use crate::{Notifier, Color, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -309,7 +309,7 @@ enum Gesture {
 /// Single- or multiline text editor.
 pub struct TextEdit {
     node: Node,
-    selection_changed: Callbacks<Selection>,
+    selection_changed: Notifier<Selection>,
     state: RefCell<TextEditState>,
     gesture: Cell<Option<Gesture>>,
     blink_phase: Cell<bool>,

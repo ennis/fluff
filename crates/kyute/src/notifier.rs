@@ -3,26 +3,36 @@ use std::cell::{RefCell, UnsafeCell};
 use std::future::poll_fn;
 use std::task::{Poll, Waker};
 
+/// Holds a list of callbacks, taking a value of type `T`, that can be invoked or waited on.
 #[derive(Default)]
-pub struct Callbacks<T> {
+pub struct Notifier<T> {
     cb: RefCell<Slab<Box<dyn Fn(T)>>>,
 }
 
-impl<T: 'static> Callbacks<T> {
+impl<T: 'static> Notifier<T> {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             cb: RefCell::new(Slab::new()),
         }
     }
 
+    /// Adds a callback to the list.
+    ///
+    /// Returns an ID that can be used to remove the callback.
     pub fn watch(&self, cb: impl Fn(T) + 'static) -> usize {
         self.cb.borrow_mut().insert(Box::new(cb))
     }
 
+    /// Removes a callback from the list.
+    ///
+    /// # Arguments
+    /// * `id` - The ID of the callback to remove, that was returned by a corresponding call to `watch`.
     pub fn unwatch(&self, id: usize) {
         let _ = self.cb.borrow_mut().remove(id);
     }
 
+    /// Asynchronously waits for the event to be notified.
     pub async fn wait(&self) -> T {
         let mut result = UnsafeCell::new(None);
         let mut waker = UnsafeCell::new(None);
@@ -58,7 +68,8 @@ impl<T: 'static> Callbacks<T> {
     }
 }
 
-impl<T: Clone + 'static> Callbacks<T> {
+impl<T: Clone + 'static> Notifier<T> {
+    /// Invokes all callbacks with the specified value.
     pub fn invoke(&self, t: T) {
         // FIXME: can't add callbacks while iterating
         for (_, cb) in self.cb.borrow().iter() {

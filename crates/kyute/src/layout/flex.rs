@@ -1,12 +1,11 @@
-use std::rc::Rc;
-
-use kurbo::{Point, Rect, Size, Vec2};
+use kurbo::{Size, Vec2};
 use tracing::trace;
 
-use crate::element::{AttachedProperty, Element, RcElement};
+use crate::element::{AttachedProperty, RcElement};
 use crate::layout;
-use crate::layout::{Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, LogicalAxis, RequestedAxis, SizeConstraint, SizeValue, SpacingAfter, SpacingBefore};
+use crate::layout::{Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue, SpacingAfter, SpacingBefore};
 
+/*
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum MainAxisAlignment {
     #[default]
@@ -16,7 +15,7 @@ pub enum MainAxisAlignment {
     SpaceBetween,
     SpaceAround,
     SpaceEvenly,
-}
+}*/
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum CrossAxisAlignment {
@@ -145,9 +144,12 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
         flex: f64,
     }
     let mut measures = vec![ItemMeasure::default(); child_count]; // box measurements of children along the main axis
-    let mut margins = vec![FlexSize::NULL; child_count + 1]; // margins between children
+    let mut margins = vec![FlexSize::NULL; child_count + 1]; // margins between children and start/end margins
 
-    // Set the initial and final gaps
+    // Set the default gaps
+    for i in 1..child_count {
+        margins[i] = p.gap.into();
+    }
     margins[0] = p.initial_gap.into();
     margins[child_count] = p.final_gap.into();
 

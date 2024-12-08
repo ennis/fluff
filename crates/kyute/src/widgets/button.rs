@@ -5,7 +5,8 @@ use crate::drawing::BoxShadow;
 use crate::element::RcElement;
 use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
-use crate::widgets::frame::{Frame, FrameLayout, FrameStyle, FrameStyleOverride, InteractState};
+use crate::ElementState;
+use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
 use crate::widgets::text::Text;
 use crate::{text, Color};
 use crate::layout::{Axis, SizeValue};
@@ -31,17 +32,17 @@ fn button_style() -> FrameStyle {
                     },
                 ],
             overrides: smallvec![FrameStyleOverride {
-                state: InteractState::ACTIVE,
+                state: ElementState::ACTIVE,
                 background_color: Some(Color::from_hex("4c3e0a")),
                 ..Default::default()
             },
                 FrameStyleOverride {
-                state: InteractState::FOCUSED,
+                state: ElementState::FOCUSED,
                 border_color: Some(DARK_THEME.accent_color),
                 ..Default::default()
                 },
                 FrameStyleOverride {
-                state: InteractState::HOVERED,
+                state: ElementState::HOVERED,
                     background_color: Some(Color::from_hex("474029")),
                 ..Default::default()
                 },

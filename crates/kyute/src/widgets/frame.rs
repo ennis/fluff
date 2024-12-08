@@ -1,72 +1,24 @@
 //! Frame containers
-
-use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
-use std::pin::Pin;
-use std::rc::Rc;
 
-use bitflags::bitflags;
 use kurbo::{Insets, RoundedRect, Size, Vec2};
 use smallvec::SmallVec;
 use tracing::{trace, trace_span};
-
+use crate::ElementState;
 use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{Element, Node, RcElement};
 use crate::event::Event;
-use crate::handler::Handler;
-use crate::layout::flex::{flex_layout, CrossAxisAlignment, FlexLayoutParams, MainAxisAlignment};
+use crate::layout::flex::{flex_layout, FlexLayoutParams};
 use crate::layout::{
-    Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, Measurements, SizeConstraint, SizeValue,
+    Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue,
 };
-use crate::{drawing, layout, register_template, Callbacks, Color, PaintCtx};
+use crate::{drawing, layout, register_template, Notifier, Color, PaintCtx};
 
-/*
-#[derive(Clone, Default)]
-pub struct ResolvedFrameStyle {
-    baseline: Option<LengthOrPercentage>,
-    border_color: Color,
-    background_color: Color,
-    shadows: Vec<BoxShadow>,
-}*/
-
-bitflags! {
-    #[derive(Copy, Clone, Debug, Default)]
-    pub struct InteractState: u8 {
-        const ACTIVE = 0b0001;
-        const HOVERED = 0b0010;
-        const FOCUSED = 0b0100;
-    }
-}
-
-impl InteractState {
-    pub fn set_active(&mut self, active: bool) {
-        self.set(InteractState::ACTIVE, active);
-    }
-
-    pub fn set_hovered(&mut self, hovered: bool) {
-        self.set(InteractState::HOVERED, hovered);
-    }
-
-    pub fn set_focused(&mut self, focused: bool) {
-        self.set(InteractState::FOCUSED, focused);
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.contains(InteractState::ACTIVE)
-    }
-
-    pub fn is_hovered(&self) -> bool {
-        self.contains(InteractState::HOVERED)
-    }
-    pub fn is_focused(&self) -> bool {
-        self.contains(InteractState::FOCUSED)
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct FrameStyleOverride {
-    pub state: InteractState,
+    pub state: ElementState,
     pub border_color: Option<Color>,
     pub border_radius: Option<LengthOrPercentage>,
     pub background_color: Option<Color>,
@@ -74,7 +26,7 @@ pub struct FrameStyleOverride {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum FrameLayout {
+enum FrameLayout {
     Flex {
         direction: Axis,
         /// Default gap between children.
@@ -118,7 +70,7 @@ impl FrameStyle {
         self.shadows = over.shadows.unwrap_or(self.shadows.clone());
     }
 
-    fn apply_overrides(&self, state: InteractState) -> FrameStyle {
+    fn apply_overrides(&self, state: ElementState) -> FrameStyle {
         let mut result = self.clone();
         for over in &self.overrides {
             if state.contains(over.state) {
@@ -133,105 +85,16 @@ impl FrameStyle {
     }
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum LayoutCacheEntry {
-    // Width and height specified and finite
-    FullySpecified = 0,
-    // Width=inf, height whatever
-    WidthInfinite,
-    Count,
-}
-
-/// Layout cache.
-#[derive(Default)]
-struct LayoutCache {
-    entries: [Option<(LayoutInput, LayoutOutput)>; LayoutCacheEntry::Count as usize],
-}
-
-impl LayoutCache {
-    fn get_cached(&self, entry: LayoutCacheEntry, input: &LayoutInput) -> Option<LayoutOutput> {
-        let Some((cached_input, cached_output)) = self.entries[entry as usize] else {
-            // no entry in cache
-            return None;
-        };
-
-        if cached_input == *input {
-            // exact match
-            return Some(cached_output);
-        }
-
-        let (
-            SizeConstraint::Available(w),
-            SizeConstraint::Available(h),
-            SizeConstraint::Available(cached_w),
-            SizeConstraint::Available(cached_h),
-        ) = (input.width, input.height, cached_input.width, cached_input.height)
-        else {
-            return None;
-        };
-
-        // if we returned a box of size w x h for request W1 x H1, and now we're asked for W2 x H2,
-        // with w < W2 < W1  and h < H2 < H1, we can still use the cached layout
-        // (the new box is smaller but the previous result still fits inside)
-        // We can't do that if the new request is larger than the previous one, because given a larger
-        // request the element might choose to layout itself differently.
-
-        if cached_output.width <= w && w <= cached_w && cached_output.height <= h && h <= cached_h {
-            return Some(cached_output);
-        }
-
-        // No match
-        return None;
-    }
-
-    fn get_or_insert_with(
-        &mut self,
-        layout_input: &LayoutInput,
-        mode: LayoutMode,
-        f: impl FnOnce(&LayoutInput) -> LayoutOutput,
-    ) -> LayoutOutput {
-        if mode == LayoutMode::Place {
-            return f(layout_input);
-        }
-
-        let entry_index = match layout_input {
-            LayoutInput {
-                width: SizeConstraint::Available(w),
-                height: SizeConstraint::Available(h),
-                ..
-            } if w.is_finite() && h.is_finite() => LayoutCacheEntry::FullySpecified,
-            LayoutInput {
-                width: SizeConstraint::Available(w),
-                ..
-            } if *w == f64::INFINITY => LayoutCacheEntry::WidthInfinite,
-            _ => LayoutCacheEntry::Count,
-        };
-
-        if entry_index < LayoutCacheEntry::Count {
-            if let Some(layout) = self.get_cached(entry_index, layout_input) {
-                trace!("using cached layout for entry {entry_index:?}: {layout:?}");
-                return layout;
-            }
-            let output = f(layout_input);
-            self.entries[entry_index as usize] = Some((*layout_input, output));
-            output
-        } else {
-            f(layout_input)
-        }
-    }
-}
 
 /// A container with a fixed width and height, into which a unique widget is placed.
 pub struct Frame {
     node: Node,
-    pub clicked: Callbacks<()>,
-    pub hovered: Callbacks<bool>,
-    pub active: Callbacks<bool>,
-    pub focused: Callbacks<bool>,
-    pub state_changed: Callbacks<InteractState>,
+    pub clicked: Notifier<()>,
+    pub hovered: Notifier<bool>,
+    pub active: Notifier<bool>,
+    pub focused: Notifier<bool>,
+    pub state_changed: Notifier<ElementState>,
     layout: RefCell<FrameLayout>,
-    layout_cache: RefCell<LayoutCache>,
 
     width: Cell<SizeValue>,
     height: Cell<SizeValue>,
@@ -239,12 +102,10 @@ pub struct Frame {
     min_height: Cell<SizeValue>,
     max_width: Cell<SizeValue>,
     max_height: Cell<SizeValue>,
-    padding_left: Cell<f64>,
-    padding_right: Cell<f64>,
-    padding_top: Cell<f64>,
-    padding_bottom: Cell<f64>,
 
-    state: Cell<InteractState>,
+    padding: Cell<Insets>,
+
+    state: Cell<ElementState>,
     style: RefCell<FrameStyle>,
     style_changed: Cell<bool>,
     state_affects_style: Cell<bool>,
@@ -272,13 +133,13 @@ macro_rules! paint_style_setter {
 macro_rules! layout_style_setter {
     ($s:ident, $p:pat, $setter:ident: $ty:ty) => {
         pub fn $setter(&self, value: $ty) {
-            if let $p = &mut *self.layout.borrow_mut() {
-                *$s = value;
-                self.mark_needs_relayout();
-            }
+            let $p = &mut *self.layout.borrow_mut();
+            *$s = value;
+            self.mark_needs_relayout();
         }
     };
 }
+
 /*
 register_template!(Frame);
 
@@ -299,17 +160,13 @@ impl Frame {
             focused: Default::default(),
             state_changed: Default::default(),
             layout: Default::default(),
-            layout_cache: Default::default(),
-            width: Cell::new(Default::default()),
-            height: Cell::new(Default::default()),
-            min_width: Cell::new(Default::default()),
-            min_height: Cell::new(Default::default()),
-            max_width: Cell::new(Default::default()),
-            max_height: Cell::new(Default::default()),
-            padding_left: Cell::new(0.0),
-            padding_right: Cell::new(0.0),
-            padding_top: Cell::new(0.0),
-            padding_bottom: Cell::new(0.0),
+            width: Default::default(),
+            height: Default::default(),
+            min_width: Default::default(),
+            min_height: Default::default(),
+            max_width: Default::default(),
+            max_height: Default::default(),
+            padding: Default::default(),
             state: Default::default(),
             style: Default::default(),
             style_changed: Cell::new(true),
@@ -335,40 +192,41 @@ impl Frame {
     layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: SizeValue);
 
     pub fn set_padding(&self, value: f64) {
-        self.set_padding_left(value);
-        self.set_padding_right(value);
-        self.set_padding_top(value);
-        self.set_padding_bottom(value);
+        self.padding.set(Insets::uniform(value));
+        self.mark_needs_relayout();
     }
 
     pub fn set_padding_left(&self, value: f64) {
-        self.padding_left.set(value);
+        let mut padding = self.padding.get();
+        padding.x0 = value;
+        self.padding.set(padding);
         self.mark_needs_relayout();
     }
 
     pub fn set_padding_right(&self, value: f64) {
-        self.padding_right.set(value);
+        let mut padding = self.padding.get();
+        padding.x1 = value;
+        self.padding.set(padding);
         self.mark_needs_relayout();
     }
 
     pub fn set_padding_top(&self, value: f64) {
-        self.padding_top.set(value);
+        let mut padding = self.padding.get();
+        padding.y0 = value;
+        self.padding.set(padding);
         self.mark_needs_relayout();
     }
 
     pub fn set_padding_bottom(&self, value: f64) {
-        self.padding_bottom.set(value);
+        let mut padding = self.padding.get();
+        padding.y1 = value;
+        self.padding.set(padding);
         self.mark_needs_relayout();
     }
 
     pub fn set_content(&self, content: impl Into<RcElement>) {
         self.clear_children();
         (self as &dyn Element).add_child(content)
-    }
-
-    pub fn set_layout(&self, layout: FrameLayout) {
-        *self.layout.borrow_mut() = layout;
-        self.mark_needs_relayout();
     }
 
     /*pub fn set_direction(&self, direction: Axis) {
@@ -449,8 +307,9 @@ impl Frame {
     ) -> Size {
         let _span = trace_span!("Frame::measure_content", ?width_constraint, ?height_constraint, ?parent_width, ?parent_height).entered();
 
-        let width = width_constraint.deflate(self.padding_left.get() + self.padding_right.get());
-        let height = height_constraint.deflate(self.padding_top.get() + self.padding_bottom.get());
+        let padding = self.padding.get();
+        let width = width_constraint.deflate(padding.x_value());
+        let height = height_constraint.deflate(padding.y_value());
 
         // Measure the children by performing the measure steps of flex layout.
         let FrameLayout::Flex {
@@ -459,7 +318,8 @@ impl Frame {
             initial_gap,
             final_gap,
         } = self.layout.borrow().clone();
-        let mut output = flex_layout(
+
+        let output = flex_layout(
             LayoutMode::Measure,
             &FlexLayoutParams {
                 direction,
@@ -475,8 +335,8 @@ impl Frame {
         );
 
         Size {
-            width: output.width + self.padding_left.get() + self.padding_right.get(),
-            height: output.height + self.padding_top.get() + self.padding_bottom.get(),
+            width: output.width + padding.x_value(),
+            height: output.height + padding.y_value(),
         }
     }
 
@@ -605,11 +465,9 @@ impl Element for Frame {
     fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
 
-        let hpad = self.padding_left.get() + self.padding_right.get();
-        let vpad = self.padding_top.get() + self.padding_bottom.get();
-
-        let content_area_width = size.width - hpad;
-        let content_area_height = size.height - vpad;
+        let padding = self.padding.get();
+        let content_area_width = size.width - padding.x_value();
+        let content_area_height = size.height - padding.y_value();
 
         let FrameLayout::Flex {
             direction,
@@ -636,9 +494,9 @@ impl Element for Frame {
 
         output.width = size.width;
         output.height = size.height;
-        output.baseline = output.baseline.map(|b| b + self.padding_top.get());
+        output.baseline = output.baseline.map(|b| b + padding.y0);
 
-        let offset = Vec2::new(self.padding_left.get(), self.padding_top.get());
+        let offset = Vec2::new(padding.x0, padding.y0);
         for child in children.iter() {
             child.add_offset(offset);
         }
@@ -692,7 +550,7 @@ impl Element for Frame {
     }
 
     fn event(&self, event: &mut Event) {
-        fn update_state(this: &Frame, state: InteractState) {
+        fn update_state(this: &Frame, state: ElementState) {
             this.state.set(state);
             if this.state_affects_style.get() {
                 this.style_changed.set(true);

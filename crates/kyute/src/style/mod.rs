@@ -36,7 +36,6 @@ macro_rules! impl_style_values {
 impl_style_values!(
     LengthOrPercentage, LengthOrPercentage;
     Alignment, Alignment;
-    crate::layout::flex::MainAxisAlignment, MainAxisAlignment;
     crate::layout::flex::CrossAxisAlignment, CrossAxisAlignment;
     Axis, Axis;
     Color, Color;
@@ -92,7 +91,6 @@ style_properties! {
     Baseline: LengthOrPercentage;
     Direction: Axis;
     CrossAxisAlignment: crate::layout::flex::CrossAxisAlignment;
-    MainAxisAlignment: crate::layout::flex::MainAxisAlignment;
     FlexFactor: f64;
     BorderLeft: LengthOrPercentage;
     BorderRight: LengthOrPercentage;

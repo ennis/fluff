@@ -1,33 +1,31 @@
-use kurbo::Point;
 pub use kurbo::{self, Size};
-use kyute::layout::Axis;
-use kyute::text::{TextRun, TextStyle};
-use kyute::widgets::button::button;
-use kyute::widgets::frame::{Frame, FrameLayout, FrameStyle};
+use kyute::element::RcElement;
+use kyute::layout::{Axis, SpacingAfter, SpacingBefore};
+use kyute::layout::SizeValue;
+use kyute::widgets::frame::{Frame, FrameStyle};
 use kyute::widgets::text::Text;
-use kyute::widgets::text_edit::{TextEdit, TextOverflow, WrapMode};
 use kyute::{application, text, Color, Window, WindowOptions};
-pub use skia_safe as skia;
-use std::future::pending;
-use std::rc::Rc;
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
-use kyute::element::RcElement;
-use kyute::layout::{FlexFactor, FlexMargins, FlexSize, SizeValue, Sizing};
 
-fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: FlexSize, margin_after: FlexSize) -> RcElement<Frame> {
+fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: SizeValue, margin_after: SizeValue) -> RcElement<Frame> {
     let frame = Frame::new();
 
     frame.set_style(FrameStyle {
         border_color: Color::from_hex("5f5637"),
+        border_bottom: 1.0.into(),
+        border_left: 1.0.into(),
+        border_right: 1.0.into(),
+        border_top: 1.0.into(),
         border_radius: 8.0.into(),
         background_color: Color::from_hex("211e13"),
         ..Default::default()
     });
 
-    frame.set_layout(FrameLayout::Flex { direction, gap: Default::default(), initial_gap: Default::default(), final_gap: Default::default() });
+    frame.set_direction(direction);
+    frame.set_gap(4.0.into());
 
     if !text.is_empty() {
         let text = Text::new(text![family("Inter") size(12.0) #FFF "{text}"]);
@@ -38,14 +36,15 @@ fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_bef
         frame.add_child(child.clone());
     }
 
-    frame.set(FlexMargins, (margin_before, margin_after));
+    frame.set(SpacingBefore, margin_before);
+    frame.set(SpacingAfter, margin_after);
     frame.set_padding(4.);
     frame
 }
 
 fn flex_frame(direction: Axis, flex: f64, content: Vec<RcElement<Frame>>) -> RcElement<Frame> {
-    let f = frame(direction, "", content, FlexSize::NULL, FlexSize::NULL);
-    f.set(FlexFactor, flex);
+    let f = frame(direction, "", content, SizeValue::Auto, SizeValue::Auto);
+    f.set_width(SizeValue::Stretch);
     f
 }
 
@@ -58,11 +57,10 @@ fn min_flex_frame(direction: Axis, color: Color, min: f64, flex: f64) -> RcEleme
         ..Default::default()
     });
 
-    frame.set_layout(FrameLayout::Flex { direction, gap: Default::default(), initial_gap: Default::default(), final_gap: Default::default() });
-    frame.set_width(SizeValue::Fixed(100.0));
+    frame.set_direction(direction);
+    frame.set_width(SizeValue::Stretch);
     frame.set_height(SizeValue::Percentage(1.0));
     frame.set_min_height(SizeValue::Fixed(min));
-    frame.set(FlexFactor, flex);
     frame
 }
 
@@ -71,8 +69,8 @@ fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     application::run(async {
-        let no_margin = FlexSize::NULL;
-        let flex_expand = FlexSize { size: 0.0, flex: 1.0 };
+        let no_margin = SizeValue::Fixed(0.0);
+        let flex_expand = SizeValue::Stretch;
 
         let frame_root = frame(Axis::Horizontal, "", vec![
             flex_frame(Axis::Vertical, 1.0, vec![
