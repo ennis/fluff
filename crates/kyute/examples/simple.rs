@@ -1,6 +1,5 @@
-use std::future::pending;
-pub use kurbo::{self, Size};
 use kurbo::Point;
+pub use kurbo::{self, Size};
 use kyute::layout::Axis;
 use kyute::text::TextStyle;
 use kyute::widgets::button::button;
@@ -8,6 +7,7 @@ use kyute::widgets::frame::{Frame, FrameStyle};
 use kyute::widgets::text::Text;
 use kyute::widgets::text_edit::{TextEdit, WrapMode};
 use kyute::{application, text, Color, Window, WindowOptions};
+use std::future::pending;
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
@@ -21,14 +21,9 @@ fn main() {
         let main_button = button("Test"); // &str
         let frame = Frame::new();
 
-        frame.set_style(FrameStyle {
-            border_color: Color::from_hex("5f5637"),
-            border_radius: 8.0.into(),
-            background_color: Color::from_hex("211e13"),
-            ..Default::default()
-        });
-
-
+        frame.set_border_color(Color::from_hex("5f5637"));
+        frame.set_border_radius(8.0);
+        frame.set_background_color(Color::from_hex("211e13"));
         frame.set_direction(Axis::Vertical);
         frame.set_gap(4.0.into());
         frame.set_initial_gap(4.0.into());
@@ -45,9 +40,8 @@ fn main() {
 
         let value = 450;
         frame.add_child(Text::new(text!( size(12.0) family("Inter") #44AE12 { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word aaaaaaaaaaaaaaaaa\n" "Value=" i "{value}" )));
-
-        //frame.add_child(&Text::new(text![ size(40.0) family("Inter") { "طوال اليوم." } i {"الفبای فارسی"}  ]));
-        //frame.add_child(&Text::new(text![ size(40.0) family("Inter")  "Sample\nSample\nSample\nSample\nSample\nSample\nSample"  ]));
+        frame.add_child(text_edit.clone());
+        frame.add_child(text_edit2.clone());
         frame.add_child(main_button.clone());
 
         let window_options = WindowOptions {

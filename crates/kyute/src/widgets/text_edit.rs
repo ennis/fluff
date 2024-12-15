@@ -602,7 +602,7 @@ impl Element for TextEdit {
             height: this.paragraph.height() as f64,
             baseline: Some(this.paragraph.alphabetic_baseline() as f64),
         };
-        self.state.borrow_mut().size = Size::new(output.width, output.height);
+        this.size = size;
         output
     }
 

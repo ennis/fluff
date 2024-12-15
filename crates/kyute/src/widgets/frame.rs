@@ -20,9 +20,9 @@ use crate::{drawing, layout, register_template, Notifier, Color, PaintCtx};
 pub struct FrameStyleOverride {
     pub state: ElementState,
     pub border_color: Option<Color>,
-    pub border_radius: Option<LengthOrPercentage>,
+    pub border_radius: Option<f64>,
     pub background_color: Option<Color>,
-    pub shadows: Option<SmallVec<BoxShadow, 2>>,
+    pub shadows: Option<Vec<BoxShadow>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -51,15 +51,12 @@ impl Default for FrameLayout {
 
 #[derive(Clone, Default)]
 pub struct FrameStyle {
-    pub border_left: LengthOrPercentage,
-    pub border_right: LengthOrPercentage,
-    pub border_top: LengthOrPercentage,
-    pub border_bottom: LengthOrPercentage,
+    pub border_size: Insets,
     pub border_color: Color,
-    pub border_radius: LengthOrPercentage,
+    pub border_radius: f64,
     pub background_color: Color,
-    pub shadows: SmallVec<BoxShadow, 2>,
-    pub overrides: SmallVec<FrameStyleOverride, 2>,
+    pub shadows: Vec<BoxShadow>,
+    pub overrides: Vec<FrameStyleOverride>,
 }
 
 impl FrameStyle {
@@ -181,10 +178,32 @@ impl Frame {
         self.mark_needs_relayout();
     }
 
-    paint_style_setter!(border_left, set_border_left: LengthOrPercentage);
-    paint_style_setter!(border_right, set_border_right: LengthOrPercentage);
-    paint_style_setter!(border_top, set_border_top: LengthOrPercentage);
-    paint_style_setter!(border_bottom, set_border_bottom: LengthOrPercentage);
+    pub fn set_border(&self, value: f64) {
+        self.style.borrow_mut().border_size.x0 = value;
+        self.style.borrow_mut().border_size.x1 = value;
+        self.style.borrow_mut().border_size.y0 = value;
+        self.style.borrow_mut().border_size.y1 = value;
+        self.style_changed.set(true);
+        self.mark_needs_repaint();
+    }
+
+    pub fn set_border_color(&self, value: Color) {
+        self.style.borrow_mut().border_color = value;
+        self.style_changed.set(true);
+        self.mark_needs_repaint();
+    }
+
+    pub fn set_border_radius(&self, value: f64) {
+        self.style.borrow_mut().border_radius = value;
+        self.style_changed.set(true);
+        self.mark_needs_repaint();
+    }
+
+    pub fn set_background_color(&self, value: Color) {
+        self.style.borrow_mut().background_color = value;
+        self.style_changed.set(true);
+        self.mark_needs_repaint();
+    }
 
     layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
     layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: SizeValue);
@@ -509,15 +528,10 @@ impl Element for Frame {
         let size = self.node.size();
         let rect = size.to_rect();
         let s = self.resolved_style.borrow();
-        let insets = Insets::new(
-            s.border_left.resolve(size.width),
-            s.border_top.resolve(size.height),
-            s.border_right.resolve(size.width),
-            s.border_bottom.resolve(size.height),
-        );
-        let border_radius = s.border_radius.resolve(size.width);
+
+        let border_radius = s.border_radius;
         // border shape
-        let inner_shape = RoundedRect::from_rect(rect - insets, border_radius - 0.5 * insets.x_value());
+        let inner_shape = RoundedRect::from_rect(rect - s.border_size, border_radius - 0.5 * s.border_size.x_value());
         let outer_shape = RoundedRect::from_rect(rect, border_radius);
 
         ctx.with_canvas(|canvas| {
@@ -541,7 +555,7 @@ impl Element for Frame {
             }
 
             // paint border
-            if s.border_color.alpha() != 0.0 {
+            if s.border_color.alpha() != 0.0 && s.border_size != Insets::ZERO {
                 let mut paint = Paint::Color(s.border_color).to_sk_paint(rect);
                 paint.set_style(skia_safe::paint::Style::Fill);
                 canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
@@ -552,6 +566,7 @@ impl Element for Frame {
     fn event(&self, event: &mut Event) {
         fn update_state(this: &Frame, state: ElementState) {
             this.state.set(state);
+            this.state_changed.invoke(state);
             if this.state_affects_style.get() {
                 this.style_changed.set(true);
                 this.mark_needs_relayout();

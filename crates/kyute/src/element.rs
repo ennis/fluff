@@ -725,50 +725,6 @@ impl Node {
     }
 }
 
-/*
-/// A strong reference to an element in the element tree.
-#[derive(Clone)]
-pub struct ElementRef {
-    tree: Rc<dyn ElementTree>,
-    index: u32,
-    // ptr: *const T,   // guarantee that the element address is stable
-}
-
-pub struct WeakElementRef {
-    tree: Weak<dyn ElementTree>,
-    index: u32,
-}*/
-/*
-pub enum ElementTreeNode<'a> {
-    /// Static subtree within this tree.
-    Static {
-        parent: u32,
-        child_range: Range<u32>,
-    },
-    /// Dynamic subtree
-    Dynamic {
-        parent: u32,
-        subtree: Rc<dyn ElementTree>,
-    },
-}*/
-
-/*
-/// A subtree of elements.
-pub trait ElementTree {
-    /// Returns the root element of the tree.
-    fn root(&self) -> &dyn Element;
-
-    /// Returns the nth descendant element of the tree. 0th element is the root node.
-    fn descendant(&self, index: usize) -> Option<&dyn Element>;
-
-    /// Returns the subtree node at the specified index.
-    fn subtree(&self, index: usize) -> Option<ElementTreeNode>;
-}*/
-
-// Can't implement for `Vec<T: Element>` because the elements may move around.
-// However, possible to implement for `Vec<Rc<dyn Element>>`
-
-
 /// Methods of elements in the element tree.
 pub trait Element {
     fn node(&self) -> &Node;

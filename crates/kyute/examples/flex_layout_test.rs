@@ -13,19 +13,15 @@ use tracing_tree::HierarchicalLayer;
 fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: SizeValue, margin_after: SizeValue) -> RcElement<Frame> {
     let frame = Frame::new();
 
-    frame.set_style(FrameStyle {
-        border_color: Color::from_hex("5f5637"),
-        border_bottom: 1.0.into(),
-        border_left: 1.0.into(),
-        border_right: 1.0.into(),
-        border_top: 1.0.into(),
-        border_radius: 8.0.into(),
-        background_color: Color::from_hex("211e13"),
-        ..Default::default()
-    });
-
+    frame.set_border(1.0);
+    frame.set_border_radius(8.0);
+    frame.set_background_color(Color::from_hex("211e13"));
+    frame.set_border_color(Color::from_hex("5f5637"));
     frame.set_direction(direction);
     frame.set_gap(4.0.into());
+    frame.set(SpacingBefore, margin_before);
+    frame.set(SpacingAfter, margin_after);
+    frame.set_padding(4.);
 
     if !text.is_empty() {
         let text = Text::new(text![family("Inter") size(12.0) #FFF "{text}"]);
@@ -36,9 +32,6 @@ fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_bef
         frame.add_child(child.clone());
     }
 
-    frame.set(SpacingBefore, margin_before);
-    frame.set(SpacingAfter, margin_after);
-    frame.set_padding(4.);
     frame
 }
 
@@ -51,12 +44,7 @@ fn flex_frame(direction: Axis, flex: f64, content: Vec<RcElement<Frame>>) -> RcE
 fn min_flex_frame(direction: Axis, color: Color, min: f64, flex: f64) -> RcElement<Frame> {
     let frame = Frame::new();
 
-    frame.set_style(FrameStyle {
-        border_color: Color::default(),
-        background_color: color,
-        ..Default::default()
-    });
-
+    frame.set_background_color(color);
     frame.set_direction(direction);
     frame.set_width(SizeValue::Stretch);
     frame.set_height(SizeValue::Percentage(1.0));

@@ -1097,3 +1097,87 @@ The proc-macro produces the AST of the UI tree, which is then interpreted to:
 - set the value of properties
 
 The proc-macro also generates code to bind widgets to local variables.
+
+# Style overrides that depend on the element state
+
+Option A: they aren't necessary, instead set-up event handlers that change the style when the element state changes.
+
+- Less complexity in elements
+- Less concepts
+- More code necessary when using elements
+- Harder to specify declaratively
+    - Need a scripting language in expressions and reactive dependencies
+
+Option B: pseudo-classes like CSS
+
+- More complexity in elements
+- More concepts
+- Can be specified declaratively
+
+# Template language
+
+A template language would be one possible solution to two problems:
+
+1. hot-reload
+2. the rust syntax/API to build UI trees being very imperative and not super readable (like Qt widgets, basically)
+
+Hot-reload being the most important.
+
+Problem #2 is because we're not adopting a "reactive" approach to UI: instead of generating new UI trees on model
+change, we patch elements in the tree instead. This means that we directly reference items in the trees.
+
+Support simple reactive expressions. Necessary for stuff like changing styles on hover, etc. Support **hot-reload** as
+well.
+
+How to?
+
+Option A: custom expression language + interpreter
+
+- dangers: scope creep, documentation, maintenance of a programming language, no autocompletion
+
+Option B: rust syntax in a proc-macro, but compiled to WASM
+
+- It's basically a macro that generates rust code, and compiles it to WASM on the fly
+- Still no autocompletion (because code will be inside a macro)
+
+Option C: javascript runtime
+
+# Reactive stuff?
+
+```
+
+let increment = ...;
+let decrement = ...;
+
+emit(Frame {
+    Button {
+        on_click: increment,
+        ..
+    },
+    Text {
+        text: text!("{counter}")
+    }
+    ..
+});
+
+increment.await;
+
+```
+
+Issue: elements like `Text` or `TextEdit` cannot be bound to reactive variables.
+
+There must be a layer on top that takes care of registering the callbacks on the model to update the state. But
+this should not be in the implementation of the widget.
+Something that turns a declarative description like `Text(text: value)`
+into imperative code:
+
+```
+let __elem = Text::new();
+__elem.set_text(value.get());
+value.on_change(__elem, |e, value| e.set_text(value));
+```
+
+This can be done with macros, or via a declarative layer on top of the element tree.
+For instance, UI functions could return a view tree, that is then "applied" on top of a corresponding retained
+element tree, recursively. Hot reload would be complicated.
+This is very much like xilem.

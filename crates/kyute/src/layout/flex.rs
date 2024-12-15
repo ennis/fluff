@@ -248,7 +248,6 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
                 flex_sum -= measures[i].flex;
                 main_size += growth;
                 //child_layouts[i] = layout;
-                // TODO respect max_width in the measure
             }
         }
 
