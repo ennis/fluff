@@ -1181,3 +1181,41 @@ This can be done with macros, or via a declarative layer on top of the element t
 For instance, UI functions could return a view tree, that is then "applied" on top of a corresponding retained
 element tree, recursively. Hot reload would be complicated.
 This is very much like xilem.
+
+# Container-owns tree
+
+Issues:
+
+- (STRUCTURE) flat VS container owns VS component owns
+- (DISPATCH) dispatching closures to children
+- (IDS) identifying nodes
+- (DIRTY) dirty flag propagation: when a widget needs to relayout/repaint, propagate this information to the parent
+- (NAV) navigate to the previous/next element in the tree
+
+Structure:
+
+- flat: elements are stored in a flat generational table; elements can be referred by indexing in the table
+- ~~container-owns~~: no table, containers own their child elements; elements are referred by ID, but containers must
+  implement methods to find child IDs
+    - containers have mutable access to their child elements
+        - not sure if that's interesting in practice
+    - implementors must worry about finding child IDs => more code for the authors, avoid
+- component owns: within a component, elements are stored as fields in a struct, regardless of their parenting
+  relationships
+    - component has mutable access to all elements, even those several layers deep in the hierarchy
+    - hierarchy is encoded separately
+    - components themselves are stored in a table
+    - no allocation needed for static nodes
+
+For (DIRTY):
+
+- flat: can't access parent directly, use a separate context
+- container-owns: same, use a context
+- component-owns: same
+
+For (IDS): use a randomly generated ID, or just use a slotmap generational ID.
+
+Decision: switch to a flat map. Xilem/masonry does the same. "component-owns" approach isn't worth the added complexity
+(even if it is mostly hidden from the user).
+Widget manipulation methods should take a special receiver with traversal context, like masonry.
+However, unlike masonry, containers don't hold the list of their children.

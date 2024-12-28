@@ -19,6 +19,8 @@ pub mod window;
 pub mod notifier;
 mod template;
 mod element_state;
+pub mod tree;
+
 
 // reexports
 pub use app_globals::AppGlobals;
@@ -33,6 +35,7 @@ pub use skia_safe;
 pub use style::Style;
 pub use window::{Window, WindowOptions};
 pub use element_state::ElementState;
+//pub use tree::ElementTree;
 
 pub use tokio::select;
 

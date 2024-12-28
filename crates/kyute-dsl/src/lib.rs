@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 mod parse;
+mod gen;
 
 pub use proc_macro2::Span;
 use kyute_common::Color;
@@ -137,8 +138,12 @@ pub struct Element {
     pub ty: String,
     /// Properties to initialize on the element.
     pub properties: Vec<PropertyBinding>,
-    /// Child element indices.
+    /// Static child element indices.
     pub children: Vec<Element>,
+    /// Parent element index.
+    pub parent: Option<usize>,
+    /// This element's index.
+    pub index: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

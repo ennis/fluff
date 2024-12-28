@@ -1,6 +1,6 @@
 use crate::{ColorSpec, Element, PropertyBinding, PropertyExpr, SourceLocation, Template};
-use proc_macro2::{Literal, Span, TokenStream};
-use quote::{ToTokens, TokenStreamExt};
+use proc_macro2::{Literal, Span};
+use quote::{ToTokens};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Token, TypePath};
 
@@ -124,7 +124,18 @@ impl Element {
             children,
             properties,
             ty: path.to_token_stream().to_string(),
+            parent: None,
+            index: 0,
         })
+    }
+
+    fn assign_index(&mut self, parent: Option<usize>, current: &mut usize) {
+        self.parent = parent;
+        self.index = *current;
+        *current += 1;
+        for child in &mut self.children {
+            child.assign_index(Some(self.index), current);
+        }
     }
 }
 
@@ -146,7 +157,10 @@ impl Parse for Template {
         let span = start.join(end).unwrap_or(start);
 
         let root = match item {
-            ElementItem::Element(elem) => elem,
+            ElementItem::Element(mut elem) => {
+                elem.assign_index(None, &mut 0);
+                elem
+            }
             ElementItem::PropertyInit(_) => {
                 return Err(syn::Error::new(span, "expected element declaration"))
             }
