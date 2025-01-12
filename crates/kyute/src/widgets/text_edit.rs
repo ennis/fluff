@@ -11,7 +11,7 @@ use unicode_segmentation::GraphemeCursor;
 
 use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{Node, Element, RcElement};
+use crate::element::{Element, ElementAny};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
@@ -562,13 +562,6 @@ impl TextEdit {
     }
 }
 
-impl Deref for TextEdit {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
-    }
-}
 
 // Text view layout options:
 // - alignment
@@ -581,11 +574,7 @@ impl Deref for TextEdit {
 // - become scrollable
 
 impl Element for TextEdit {
-    fn node(&self) -> &Node {
-        &self.node
-    }
-
-    fn measure(&self, _children: &[RcElement], layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _children: &[ElementAny], layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("TextEdit::measure",).entered();
 
         let this = &mut *self.state.borrow_mut();
@@ -594,7 +583,7 @@ impl Element for TextEdit {
         Size::new(this.paragraph.longest_line() as f64, this.paragraph.height() as f64)
     }
 
-    fn layout(&self, _children: &[RcElement], size: Size) -> LayoutOutput {
+    fn layout(&mut self, _children: &[ElementAny], size: Size) -> LayoutOutput {
         let this = &mut *self.state.borrow_mut();
         this.paragraph.layout(size.width as f32);
         let output = LayoutOutput {
@@ -606,7 +595,7 @@ impl Element for TextEdit {
         output
     }
 
-    fn paint(&self, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         let this = &mut *self.state.borrow_mut();
         let bounds = self.size();
 
@@ -648,7 +637,7 @@ impl Element for TextEdit {
         });
     }
 
-    fn event(&self, event: &mut Event)
+    fn event(&mut self, ctx: &mut EventCtx, event: &mut Event)
     {
         let mut selection_changed = false;
         let mut this = self.state.borrow_mut();

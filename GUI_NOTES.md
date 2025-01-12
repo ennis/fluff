@@ -1219,3 +1219,13 @@ Decision: switch to a flat map. Xilem/masonry does the same. "component-owns" ap
 (even if it is mostly hidden from the user).
 Widget manipulation methods should take a special receiver with traversal context, like masonry.
 However, unlike masonry, containers don't hold the list of their children.
+
+# Limit what a widget can do in a `&mut self` method
+
+- Can enumerate its children
+- Cannot remove itself from the tree
+
+# ViewModels
+
+It makes no sense to have separate model objects for some elements (e.g. a TextEditState for a TextEdit) if they
+can only be used by one element. Might as well control the 

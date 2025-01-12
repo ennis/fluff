@@ -1,14 +1,13 @@
 use kurbo::{Insets, Vec2};
-use smallvec::smallvec;
 
 use crate::drawing::BoxShadow;
-use crate::element::{RcElement, WeakElement};
 use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
 use crate::ElementState;
 use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
 use crate::widgets::text::Text;
 use crate::{text, Color};
+use crate::element::IntoElementAny;
 use crate::layout::{Axis, SizeValue};
 
 fn button_style() -> FrameStyle {
@@ -49,7 +48,7 @@ fn button_style() -> FrameStyle {
     BUTTON_STYLE.with(|s| s.clone())
 }
 
-pub fn button(label: impl Into<String>) -> RcElement<Frame> {
+pub fn button(label: impl Into<String>) -> impl IntoElementAny {
     let label = label.into();
     let theme = &DARK_THEME;
     let text_style = TextStyle::new()
@@ -57,17 +56,17 @@ pub fn button(label: impl Into<String>) -> RcElement<Frame> {
         .font_family(theme.font_family)
         .color(Color::from_hex("ffe580"));
 
-    let frame = Frame::new();
-    frame.set_style(button_style());
-    frame.set_padding(4.0.into());
-    frame.set_direction(Axis::Horizontal);
-    frame.set_initial_gap(SizeValue::Stretch);
-    frame.set_final_gap(SizeValue::Stretch);
-    frame.set_width(SizeValue::MaxContent);
-    frame.set_min_width(SizeValue::Fixed(80.0));
-    frame.add_child(Text::new(text!( style(text_style) "{label}" )));
+    Frame::new()
+        .style(button_style())
+        .padding(4.0)
+        .direction(Axis::Horizontal)
+        .initial_gap(SizeValue::Stretch)
+        .final_gap(SizeValue::Stretch)
+        .width(SizeValue::MaxContent)
+        .min_width(SizeValue::Fixed(80.0))
+        .child(text!( style(text_style) "{label}" ))
 
-    let frame_weak = RcElement::downgrade(frame.clone());
+    /*let frame_weak = RcElement::downgrade(frame.clone());
     frame.state_changed.watch(move |state| {
         if let Some(frame) = frame_weak.upgrade() {
             if state.is_hovered() {
@@ -83,7 +82,5 @@ pub fn button(label: impl Into<String>) -> RcElement<Frame> {
                 frame.set_border_color(Color::from_hex("4c3e0a"));
             }
         }
-    });
-
-    frame
+    });*/
 }

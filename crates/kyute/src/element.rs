@@ -3,21 +3,23 @@ use std::cell::{Cell, Ref, RefCell, UnsafeCell};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::marker::PhantomPinned;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::ptr::addr_eq;
-use std::rc::{Rc, Weak};
+use std::rc::{Rc, UniqueRc, Weak};
 use std::{mem, ptr};
-
+use std::error::Request;
+use std::hash::{Hash, Hasher};
 use crate::compositor::DrawableSurface;
 use bitflags::bitflags;
 use futures_util::FutureExt;
 use kurbo::{Affine, Point, Size, Vec2};
-
+use winit::window::WindowId;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::window::WeakWindow;
-use crate::PaintCtx;
+use crate::model::Model;
+use crate::window::{WeakWindow, WindowInner};
+use crate::{PaintCtx, Window};
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -25,165 +27,6 @@ bitflags! {
         const PAINT = 0b0001;
         const LAYOUT = 0b0010;
         const NONE = 0b0000;
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Pinned strong pointer with reference equality semantics.
-#[repr(transparent)]
-pub struct RcElement<T: ?Sized = dyn Element>(Pin<Rc<T>>);
-
-impl<T> RcElement<T> {
-    pub fn new(element: T) -> Self {
-        RcElement(Rc::pin(element))
-    }
-
-    pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> Self {
-        unsafe {
-            RcElement(
-                Pin::new_unchecked(Rc::new_cyclic(move |weak| {
-                    let weak = WeakElement(UnsafeCell::new(Some(weak.clone())));
-                    f(weak)
-                })))
-        }
-    }
-}
-
-impl<T: ?Sized> RcElement<T> {
-    pub fn as_ptr(&self) -> *const T {
-        self.0.deref()
-    }
-
-    pub fn downgrade(rc: Self) -> WeakElement<T> {
-        WeakElement(UnsafeCell::new(Some(Rc::downgrade(unsafe { &Pin::into_inner_unchecked(rc.0) }))))
-    }
-}
-
-impl<T: ?Sized> Deref for RcElement<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-impl<T: ?Sized> Clone for RcElement<T> {
-    fn clone(&self) -> Self {
-        RcElement(self.0.clone())
-    }
-}
-
-impl<T: ?Sized, U: ?Sized> PartialEq<RcElement<U>> for RcElement<T> {
-    fn eq(&self, other: &RcElement<U>) -> bool {
-        ptr::addr_eq(self.0.deref(), other.0.deref())
-    }
-}
-
-impl<T: ?Sized> Eq for RcElement<T> {}
-
-impl<T: ?Sized> PartialOrd for RcElement<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: ?Sized> Ord for RcElement<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (self.0.deref() as *const T).cast::<()>().cmp(&(other.0.deref() as *const T).cast::<()>())
-    }
-}
-
-// Workaround for lack of unsized coercion
-impl<T: Element + 'static> From<RcElement<T>> for RcElement {
-    fn from(value: RcElement<T>) -> Self {
-        RcElement(value.0)
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Pinned, nullable weak pointer.
-#[repr(transparent)]
-pub struct WeakElement<T: ?Sized = dyn Element>(UnsafeCell<Option<std::rc::Weak<T>>>);
-
-impl<T: ?Sized> WeakElement<T> {
-    pub fn new() -> Self {
-        WeakElement(UnsafeCell::new(None))
-    }
-
-    pub fn upgrade(&self) -> Option<RcElement<T>> {
-        unsafe {
-            (&*self.0.get()).as_ref().and_then(std::rc::Weak::upgrade).map(|ptr| unsafe { RcElement(Pin::new_unchecked(ptr)) })
-        }
-    }
-
-    pub fn set(&self, other: WeakElement<T>) {
-        unsafe {
-            mem::swap(&mut *self.0.get(), &mut *other.0.get());
-        }
-    }
-
-    pub fn replace(&self, ptr: WeakElement<T>) -> WeakElement<T> {
-        unsafe {
-            mem::swap(&mut *self.0.get(), &mut *ptr.0.get());
-            ptr
-        }
-    }
-
-    pub fn reset(&self) {
-        unsafe {
-            *self.0.get() = None;
-        }
-    }
-}
-
-impl<T: ?Sized> Default for WeakElement<T> {
-    fn default() -> Self {
-        WeakElement::new()
-    }
-}
-
-impl<T: ?Sized> Clone for WeakElement<T> {
-    fn clone(&self) -> Self {
-        WeakElement(UnsafeCell::new(unsafe { (*self.0.get()).clone() }))
-    }
-}
-
-impl<T: ?Sized> PartialEq for WeakElement<T> {
-    fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            match (&*self.0.get(), &*other.0.get()) {
-                (Some(ptr), Some(other)) => {
-                    ptr.ptr_eq(other)
-                }
-                (None, None) => true,
-                _ => false,
-            }
-        }
-    }
-}
-
-impl<T: ?Sized> PartialEq<RcElement<T>> for WeakElement<T> {
-    fn eq(&self, other: &RcElement<T>) -> bool {
-        unsafe {
-            match &*self.0.get() {
-                Some(weak) => {
-                    ptr::addr_eq(weak.as_ptr(), other.0.deref())
-                }
-                None => false,
-            }
-        }
-    }
-}
-
-impl<T: ?Sized> Eq for WeakElement<T> {}
-
-// workaround for lack of unsized coercion
-impl<T: Element + 'static> From<WeakElement<T>> for WeakElement {
-    fn from(value: WeakElement<T>) -> Self {
-        // f*ck this language
-        WeakElement(UnsafeCell::new(unsafe { (*value.0.get()).clone().map(|x| x as Weak<dyn Element>) }))
     }
 }
 
@@ -220,82 +63,6 @@ pub trait AttachedProperty: Any {
 }
 
 /*
-pub(crate) struct WeakNullableElemPtr(UnsafeCell<Option<WeakElement>>);
-
-impl<'a> PartialEq<Option<&'a Node>> for WeakNullableElemPtr {
-    fn eq(&self, other: &Option<&'a Node>) -> bool {
-        let this = unsafe { &*self.0.get() }.as_ref();
-        let other = other.map(|e| &e.weak_this);
-        match (this, other) {
-            (Some(this), Some(other)) => PinWeak::ptr_eq(this, other),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-}
-
-impl PartialEq<Node> for WeakNullableElemPtr {
-    fn eq(&self, other: &Node) -> bool {
-        let this = unsafe { &*self.0.get() }.as_ref();
-        let other = &other.weak_this;
-        if let Some(this) = this {
-            Weak::ptr_eq(this, other)
-        } else {
-            false
-        }
-    }
-}*/
-
-/*
-impl PartialEq<Option<Weak<dyn Visual>>> for WeakNullableElemPtr {
-    fn eq(&self, other: &Option<Weak<dyn Visual>>) -> bool {
-        self.get().as_ref().map(|w| Weak::ptr_eq(w, other)).unwrap_or(false)
-    }
-}*/
-
-/*
-impl Default for WeakNullableElemPtr {
-    fn default() -> Self {
-        WeakNullableElemPtr(UnsafeCell::new(None))
-    }
-}
-
-impl WeakNullableElemPtr {
-    pub fn get(&self) -> Option<WeakElement> {
-        unsafe { &*self.0.get() }.clone()
-    }
-
-    pub fn set(&self, other: Option<WeakElement>) {
-        unsafe {
-            *self.0.get() = other;
-        }
-    }
-
-    pub fn replace(&self, other: Option<WeakElement>) -> Option<WeakElement> {
-        unsafe { mem::replace(&mut *self.0.get(), other) }
-    }
-
-    pub fn upgrade(&self) -> Option<RcElement> {
-        self.get().as_ref().and_then(PinWeak::upgrade)
-    }
-}*/
-
-/*
-pub struct SiblingIter {
-    next: Option<Rc<dyn ElementMethods>>,
-}
-
-impl Iterator for SiblingIter {
-    type Item = Rc<dyn ElementMethods>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let r = self.next.clone();
-        self.next = self.next.as_ref().and_then(|n| n.next.get());
-        r
-    }
-}
-*/
-
 /// Depth-first traversal of the visual tree.
 pub struct Cursor {
     next: Option<RcElement>,
@@ -331,66 +98,325 @@ impl Iterator for Cursor {
         Some(next)
     }
 }
+*/
 
-/// State common to all elements (the "base class" of all elements).
-///
-/// Concrete elements hold a field of this type, and implement the corresponding `Element` trait.
-pub struct Node {
-    _pin: PhantomPinned,
-    //weak_this: WeakElementRef,
-    parent: WeakElement,
-    // Weak pointer to this element.
-    weak_this: WeakElement,
-    children: RefCell<Vec<RcElement>>,
-    index_in_parent: Cell<usize>,
+/// Weak reference to an element in the element tree.
+#[derive(Clone)]
+pub struct WeakElementAny(Weak<RefCell<Node<dyn Element>>>);
 
-    /// Pointer to the parent owner window.
-    pub(crate) window: RefCell<WeakWindow>,
-    /// Layout: transform from local to parent coordinates.
-    transform: Cell<Affine>,
-    /// Layout: geometry (size and baseline) of this element.
-    geometry: Cell<Size>,
-    /// TODO unused
-    change_flags: Cell<ChangeFlags>,
-    // List of child elements.
-    //children: RefCell<Vec<AnyVisual>>,
-    /// Name of the element.
-    name: RefCell<String>,
-    /// Whether the element is focusable via tab-navigation.
-    focusable: Cell<bool>,
-    /// Map of attached properties.
-    attached_properties: UnsafeCell<BTreeMap<TypeId, Box<dyn Any>>>,
+impl WeakElementAny {
+    pub fn upgrade(&self) -> Option<ElementAny> {
+        todo!()
+    }
 }
 
-impl Node {
-    pub(crate) fn new(weak_this: WeakElement) -> Node {
+impl Default for WeakElementAny {
+    fn default() -> Self {
+        todo!()
+    }
+}
+
+// Element refs are compared by pointer equality.
+impl PartialEq for WeakElementAny {
+    fn eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for WeakElementAny {}
+
+impl Hash for WeakElementAny {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Weak::as_ptr(&self.0).hash(state)
+    }
+}
+
+/// Strong reference to an element in the element tree.
+#[derive(Clone)]
+pub struct ElementAny(Rc<RefCell<Node<dyn Element>>>);
+
+impl ElementAny {
+    /// Returns a weak reference to this element.
+    pub fn downgrade(&self) -> WeakElementAny {
+        WeakElementAny(Rc::downgrade(&self.0))
+    }
+
+    /// Returns whether this element has a parent.
+    pub fn has_parent(&self) -> bool {
+        // TODO: maybe not super efficient
+        self.parent().is_some()
+    }
+
+    /// Sets the parent of this element.
+    pub fn set_parent(&self, parent: WeakElementAny) {
+        todo!()
+    }
+
+    /// Returns the parent of this element, if it has one.
+    pub fn parent(&self) -> Option<ElementAny> {
+        self.0.header.borrow().parent.upgrade()
+    }
+
+
+    /// Marks this element as needing a repaint.
+    // ISSUE: this can't be called inside an element method because it only has access
+    // to the element, not the containing `Node`.
+    // Most of the time, relayout & repaints should be requested by the element for the element itself.
+    // So this should be a method on a context object passed to element methods instead.
+    // Upward propagation is done when the method returns.
+
+    //pub fn mark_needs_repaint(&self) {
+    //    self.set_dirty_flags(ChangeFlags::PAINT);
+    //}
+
+    // Marks this element as needing a relayout.
+    //pub fn mark_needs_relayout(&self) {
+    //    self.set_dirty_flags(ChangeFlags::LAYOUT | ChangeFlags::PAINT);
+    //}
+
+    pub(crate) fn mark_layout_done(&self) {
+        let f = &self.0.shared.change_flags;
+        f.set(f.get() & !ChangeFlags::LAYOUT);
+    }
+
+    pub(crate) fn mark_paint_done(&self) {
+        let f = &self.0.shared.change_flags;
+        f.set(f.get() & !ChangeFlags::PAINT);
+    }
+
+    pub fn needs_relayout(&self) -> bool {
+        self.0.shared.change_flags.get().contains(ChangeFlags::LAYOUT)
+    }
+
+    pub fn needs_repaint(&self) -> bool {
+        self.0.shared.change_flags.get().contains(ChangeFlags::PAINT)
+    }
+
+    pub fn measure(&self, layout_input: &LayoutInput) -> Size {
+        let ref mut node = *self.0.header.borrow_mut();
+        let ref mut inner = *self.0.inner.borrow_mut();
+        let children = &node.children[..];
+        inner.measure(children, layout_input)
+    }
+
+    pub fn layout(&self, size: Size) -> LayoutOutput {
+        let ref mut node = *self.0.header.borrow_mut();
+        let ref mut inner = *self.0.inner.borrow_mut();
+        let children = &node.children[..];
+        let result = inner.layout(children, size);
+        self.0.shared.change_flags.set(self.0.shared.change_flags.get().difference(ChangeFlags::LAYOUT));
+        result
+    }
+
+    /*pub fn invoke<R>(&self, window_ctx: &mut WindowCtx, f: impl FnOnce(&mut dyn Element, &mut ElementCtx) -> R) -> R {
+        let ref mut header = *self.0.header.borrow_mut();
+        let ref mut inner = *self.0.inner.borrow_mut();
+        let mut ctx = ElementCtx {
+            this: self.downgrade(),
+            window_ctx: window_ctx,
+            header,
+        };
+        f(&mut inner, &mut ctx)
+    }*/
+
+    /// Hit-tests this element and its children.
+    pub(crate) fn hit_test(&self, point: Point) -> Vec<ElementAny> {
+        // Helper function to recursively hit-test the children of a visual.
+        // point: point in the local coordinate space of the visual
+        // transform: accumulated transform from the local coord space of `visual` to the root coord space
+        fn hit_test_rec(
+            node: &ElementAny,
+            point: Point,
+            transform: Affine,
+            result: &mut Vec<ElementAny>,
+        ) -> bool {
+            let header = node.0.header.borrow_mut();
+            let mut element = node.0.inner.borrow();
+
+            let mut hit = false;
+            // hit-test ourselves
+            if element.hit_test(point) {
+                hit = true;
+                result.push(node.clone());
+            }
+
+            for child in header.children.borrow().iter() {
+                let child_transform = child.0.header.transform;
+                let transform = transform * child_transform;
+                let local_point = transform.inverse() * point;
+                if hit_test_rec(child.clone(), local_point, transform, result) {
+                    hit = true;
+                    break;
+                }
+            }
+
+            hit
+        }
+
+        let mut path = Vec::new();
+        hit_test_rec(self, point, self.transform(), &mut path);
+        path
+    }
+
+    pub fn paint(&self, surface: &DrawableSurface, scale_factor: f64) {
+        let size = self.0.borrow().header.geometry;
+        let mut paint_ctx = PaintCtx {
+            scale_factor,
+            window_transform: Default::default(),
+            surface,
+            size,
+        };
+
+        // Recursively paint the UI tree.
+        fn paint_rec(node: &Node, ctx: &mut PaintCtx) {
+            node.inner.borrow_mut().paint(ctx);
+            for child in node.header.children.iter() {
+                ctx.with_transform(&child.transform(), |ctx| {
+                    // TODO clipping
+                    paint_rec(&**child, ctx);
+                    child.mark_paint_done();
+                });
+            }
+        }
+
+        paint_rec(self, &mut paint_ctx);
+    }
+
+    pub fn add_offset(&self, offset: Vec2) {
+        self.0.borrow_mut().header.add_offset(offset)
+    }
+
+    pub fn set_offset(&self, offset: Vec2) {
+        self.0.borrow_mut().header.set_offset(offset)
+    }
+
+    /// Returns the list of ancestors of this visual, plus this visual itself, sorted from the root
+    /// to this visual.
+    pub fn ancestors_and_self(&self) -> Vec<ElementAny> {
+        let mut ancestors = Vec::new();
+        let mut current = self.clone();
+        while let Some(parent) = current.parent() {
+            ancestors.push(parent.clone());
+            current = parent;
+        }
+        ancestors.reverse();
+        ancestors.push(self.clone());
+        ancestors
+    }
+
+
+    /// Returns a reference to the specified attached property.
+    ///
+    /// # Panics
+    /// Panics if the attached property is not set.
+    ///
+    /// # Safety
+    ///
+    /// This function unsafely borrows the value of the attached property.
+    /// The caller must ensure that the value isn't mutated (via `set`) while the reference is alive.
+    ///
+    /// In most cases you should prefer `get` over this function.
+    pub unsafe fn get_ref<T: AttachedProperty>(&self, property: T) -> &T::Value {
+        self.try_get_ref::<T>(property).expect("attached property not set")
+    }
+
+    /// Returns a reference to the specified attached property, or `None` if it is not set.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `get_ref`.
+    pub unsafe fn try_get_ref<T: AttachedProperty>(&self, _property: T) -> Option<&T::Value> {
+        let attached_properties = unsafe { &*self.attached_properties.get() };
+        attached_properties
+            .get(&TypeId::of::<T>())
+            .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
+    }
+}
+
+/// Trait for elements that can be converted into a `ElementAny`.
+///
+/// This is implemented for all types that implement `Element`.
+pub trait IntoElementAny {
+    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny;
+}
+
+impl<T> IntoElementAny for T
+where
+    T: Element,
+{
+    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny {
+        let mut node = UniqueRc::new(RefCell::new(Node::new(self)));
+        let weak = WeakElementAny(UniqueRc::downgrade(&node));
+        let header = &mut node.get_mut().header;
+        header.weak_this = weak;
+        header.parent = parent;
+        header.index_in_parent = index_in_parent;
+        ElementAny(UniqueRc::into_rc(node))
+    }
+}
+
+
+struct NodeHeader {
+    parent: WeakElementAny,
+    // Weak pointer to this element.
+    weak_this: WeakElementAny,
+    children: Vec<ElementAny>,
+    index_in_parent: usize,
+    change_flags: ChangeFlags,
+    /// Pointer to the parent owner window.
+    pub(crate) window: WeakWindow,
+    /// Layout: transform from local to parent coordinates.
+    transform: Affine,
+    /// Layout: geometry (size and baseline) of this element.
+    geometry: Size,
+    /// Name of the element.
+    name: String,
+    /// Whether the element is focusable via tab-navigation.
+    focusable: bool,
+    /// Map of attached properties.
+    attached_properties: BTreeMap<TypeId, Box<dyn Any>>,
+}
+
+impl NodeHeader {
+    pub fn set_offset(&mut self, offset: Vec2) {
+        self.transform = Affine::translate(offset);
+    }
+
+    pub fn add_offset(&mut self, offset: Vec2) {
+        self.transform *= Affine::translate(offset);
+    }
+}
+
+struct Node<T: Element + ?Sized = dyn Element> {
+    header: NodeHeader,
+    inner: RefCell<T>,
+}
+
+impl<T> Node<T> {
+    fn new(inner: T) -> Node<T> {
         Node {
-            _pin: PhantomPinned,
-            weak_this,
-            children: Default::default(),
-            index_in_parent: Default::default(),
-            window: Default::default(),
-            parent: Default::default(),
-            transform: Cell::new(Affine::default()),
-            geometry: Cell::new(Size::default()),
-            change_flags: Cell::new(ChangeFlags::LAYOUT | ChangeFlags::PAINT),
-            name: RefCell::new(String::new()),
-            focusable: Cell::new(false),
-            attached_properties: Default::default(),
+            header: NodeHeader {
+                weak_this: WeakElementAny::default(),
+                children: Default::default(),
+                index_in_parent: Default::default(),
+                change_flags: Cell::new(Default::default()),
+                window: Default::default(),
+                parent: Default::default(),
+                transform: Affine::default(),
+                geometry: Size::default(),
+                name: String::new(),
+                focusable: false,
+                attached_properties: Default::default(),
+            },
+            inner: RefCell::new(inner),
         }
     }
 
-    /// Creates a new element with the specified type and constructor.
-    pub fn new_derived<'a, T: Element + 'static>(f: impl FnOnce(Node) -> T) -> RcElement<T> {
-        RcElement::new_cyclic(move |weak: WeakElement<T>| {
-            let weak: WeakElement = weak.into();
-            let node = Node::new(weak);
-            let element = f(node);
-            element
-        })
+    pub fn set_parent(&mut self, parent: WeakElementAny) {
+        self.header.parent = parent;
     }
 
-    /// Detaches this element from the tree.
+    /*/// Detaches this element from the tree.
     pub fn detach(&self) {
         if let Some(parent) = self.parent() {
             // remove from parent's children
@@ -405,19 +431,20 @@ impl Node {
         }
 
         self.parent.reset();
-    }
+    }*/
 
-    fn insert_child_at(&self, at: usize, to_insert: RcElement) {
-        to_insert.detach();
-        to_insert.parent.set(self.weak());
+    fn insert_child_at(&mut self, at: usize, to_insert: ElementAny) {
+        assert!(!to_insert.has_parent(), "element already has a parent");
+
+        to_insert.0.borrow_mut().header.parent = self.header.weak_this.clone();
+
         //to_insert.set_parent_window(self.window.clone());
         // SAFETY: no other references may exist to the children vector at this point,
         // provided the safety contracts of other unsafe methods are upheld.
-        let mut children = self.children.borrow_mut();
-        assert!(at <= children.len());
-        children.insert(at, to_insert);
-        for i in at..children.len() {
-            children[i].index_in_parent.set(i);
+        assert!(at <= self.header.children.len());
+        self.header.children.insert(at, to_insert);
+        for i in at..self.header.children.len() {
+            self.header.children[i].0.borrow_mut().header.index_in_parent = i;
         }
         self.mark_needs_relayout();
     }
@@ -428,47 +455,23 @@ impl Node {
         pinned
     }*/
 
-    /// Inserts the specified element after this element.
+    /*/// Inserts the specified element after this element.
     pub fn insert_after(&self, to_insert: RcElement) {
         if let Some(parent) = self.parent.upgrade() {
             parent.insert_child_at(self.index_in_parent.get() + 1, to_insert)
         } else {
             panic!("tried to insert after an element with no parent");
         }
-    }
+    }*/
 
     /// Inserts the specified element at the end of the children of this element.
-    pub fn add_child(&self, child: impl Into<RcElement>) {
-        let len = self.children.borrow().len();
+    pub fn add_child(&mut self, child: impl Into<ElementAny>) {
+        let len = self.header.children.len();
         self.insert_child_at(len, child.into());
     }
 
-    pub fn next(&self) -> Option<RcElement> {
-        if let Some(parent) = self.parent() {
-            let index_in_parent = self.index_in_parent.get();
-            // SAFETY: no mutable references may exist to the children vector at this point,
-            // provided the safety contracts of other unsafe methods are upheld.
-            // There may be other shared references but that's not an issue.
-            parent.children().get(index_in_parent + 1).cloned()
-        } else {
-            None
-        }
-    }
 
-    /// Returns the number of children of this element.
-    pub fn child_count(&self) -> usize {
-        // SAFETY: no mutable references may exist to the children vector at this point,
-        // provided the safety contracts of other unsafe methods are upheld.
-        unsafe { self.children_ref().len() }
-    }
-
-    /// Returns the child element at the specified index.
-    pub fn child_at(&self, index: usize) -> Option<RcElement> {
-        // SAFETY: same as `child_count`
-        unsafe { self.children_ref().get(index).cloned() }
-    }
-
-    /// Returns a slice of all children of this element.
+    /*/// Returns a slice of all children of this element.
     ///
     /// # Safety
     ///
@@ -495,7 +498,7 @@ impl Node {
     /// Returns a reference to the list of children of this element.
     pub fn children(&self) -> Ref<[RcElement]> {
         Ref::map(self.children.borrow(), |v| v.as_slice())
-    }
+    }*/
 
     /// Returns a cursor at this element
     pub fn cursor(&self) -> Cursor {
@@ -532,18 +535,18 @@ impl Node {
         }
     }*/
 
-    /// Requests focus for the current element.
+    /*/// Requests focus for the current element.
     pub fn set_focus(&self) {
-        self.window.borrow().set_focus(self.weak());
-    }
+        self.header.window.borrow().set_focus(self.weak());
+    }*/
 
     pub fn set_tab_focusable(&self, focusable: bool) {
         self.focusable.set(focusable);
     }
 
-    pub fn set_pointer_capture(&self) {
+    /*pub fn set_pointer_capture(&self) {
         self.window.borrow().set_pointer_capture(self.weak());
-    }
+    }*/
 
     /*pub fn children(&self) -> Ref<[AnyVisual]> {
         Ref::map(self.children.borrow(), |v| v.as_slice())
@@ -573,10 +576,10 @@ impl Node {
         }
     }
 
-    /// Returns the parent of this visual, if it has one.
+    /*/// Returns the parent of this visual, if it has one.
     pub fn parent(&self) -> Option<RcElement> {
         self.parent.upgrade()
-    }
+    }*/
 
     /// Returns the transform of this visual relative to its parent.
     ///
@@ -590,14 +593,6 @@ impl Node {
         self.transform.set(transform);
     }
 
-    /// This should be called by `Visual::layout()` so this doesn't set the layout dirty flag.
-    pub fn set_offset(&self, offset: Vec2) {
-        self.set_transform(Affine::translate(offset));
-    }
-
-    pub fn add_offset(&self, offset: Vec2) {
-        self.set_transform(self.transform.get() * Affine::translate(offset));
-    }
 
     /// Returns the transform from this visual's coordinate space to the coordinate space of the parent window.
     ///
@@ -613,19 +608,6 @@ impl Node {
         transform
     }
 
-    /// Returns the list of ancestors of this visual, plus this visual itself, sorted from the root
-    /// to this visual.
-    pub fn ancestors_and_self(&self) -> Vec<RcElement> {
-        let mut ancestors = Vec::new();
-        let mut current = self.rc();
-        while let Some(parent) = current.parent() {
-            ancestors.push(parent.clone());
-            current = parent;
-        }
-        ancestors.reverse();
-        ancestors.push(self.rc());
-        ancestors
-    }
 
     /// Returns this visual as a reference-counted pointer.
     pub fn rc(&self) -> RcElement {
@@ -633,7 +615,7 @@ impl Node {
     }
 
     pub fn weak(&self) -> WeakElement {
-        self.weak_this.clone()
+        self.header.weak_this.clone()
     }
 
     /*
@@ -643,15 +625,17 @@ impl Node {
         self.iter_children().collect()
     }*/
 
+
+    /// Sets the dirty flags on the element and propagates them upwards.
     fn set_dirty_flags(&self, flags: ChangeFlags) {
-        let flags = self.change_flags.get() | flags;
-        self.change_flags.set(flags);
-        if let Some(parent) = self.parent() {
-            parent.set_dirty_flags(flags);
+        let flags = self.shared.change_flags.get() | flags;
+        self.shared.change_flags.set(flags);
+        if let Some(parent) = self.shared.parent.upgrade() {
+            parent.0.set_dirty_flags(flags);
         }
         if flags.contains(ChangeFlags::PAINT) {
             // TODO: maybe don't call repaint for every widget in the hierarchy. winit should coalesce repaint requests, but still
-            self.window.borrow().request_repaint()
+            self.header.window.borrow().request_repaint()
         }
     }
 
@@ -679,6 +663,22 @@ impl Node {
         self.change_flags.get().contains(ChangeFlags::PAINT)
     }
 
+    /// Returns the next sibling of this element, if it has one.
+    pub fn next(&self) -> Option<ElementAny> {
+        if let Some(parent) = self.parent() {
+            // ISSUE: the parent node header may be inaccessible, because
+            // there might be an active mutable borrow in the call stack.
+
+            let index_in_parent = self.index_in_parent.get();
+            // SAFETY: no mutable references may exist to the children vector at this point,
+            // provided the safety contracts of other unsafe methods are upheld.
+            // There may be other shared references but that's not an issue.
+            parent.children().get(index_in_parent + 1).cloned()
+        } else {
+            None
+        }
+    }
+
     /// Sets the value of an attached property.
     ///
     /// This replaces the value if the property is already set.
@@ -696,89 +696,210 @@ impl Node {
         // is localized entirely within `set`).
         unsafe { self.try_get_ref(property).cloned() }
     }
+}
 
-    /// Returns a reference to the specified attached property.
-    ///
-    /// # Panics
-    /// Panics if the attached property is not set.
-    ///
-    /// # Safety
-    ///
-    /// This function unsafely borrows the value of the attached property.
-    /// The caller must ensure that the value isn't mutated (via `set`) while the reference is alive.
-    ///
-    /// In most cases you should prefer `get` over this function.
-    pub unsafe fn get_ref<T: AttachedProperty>(&self, property: T) -> &T::Value {
-        self.try_get_ref::<T>(property).expect("attached property not set")
+
+impl ElementCtx {
+    /// Reads the value from the specified model and declares a dependency on it. The block that
+    /// was passed this context will be called again when the value changes.
+    pub fn read<T: Clone>(&mut self, model: Model<T>) -> T {
+        //model.on_change
+        todo!()
     }
 
-    /// Returns a reference to the specified attached property, or `None` if it is not set.
-    ///
-    /// # Safety
-    ///
-    /// Same contract as `get_ref`.
-    pub unsafe fn try_get_ref<T: AttachedProperty>(&self, _property: T) -> Option<&T::Value> {
-        let attached_properties = unsafe { &*self.attached_properties.get() };
-        attached_properties
-            .get(&TypeId::of::<T>())
-            .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
+    /// Marks this element as needing a relayout
+    pub fn mark_needs_relayout(&mut self) {
+        todo!()
     }
+
+    /// Mounts or remounts a child element in the element tree.
+    pub fn remount(&mut self, child: &ElementAny) {
+        todo!()
+    }
+
+    /// Measures a child element.
+    pub fn measure(&mut self, child: &ElementAny) {
+        todo!()
+    }
+}
+
+
+pub struct WindowCtx {
+    request_pointer_capture: Option<WeakElementAny>,
+    request_focus: Option<WeakElementAny>,
+    request_repaint: bool,
+    request_relayout: bool,
+}
+
+
+/// Context passed to mutable methods of the `Element` trait.
+///
+/// Allows an element to mount/unmount children, request repaints or relayouts, and declare
+/// dependencies on changing `Model` values.
+pub struct ElementCtx<'a> {
+    this: WeakElementAny,
+    window_ctx: &'a mut WindowCtx,
+    node: &'a mut Node<dyn Element>,
+    dirty_flags: ChangeFlags,
+}
+
+
+impl<'a> ElementCtx<'a> {
+    /// Returns the number of children of this element.
+    pub fn child_count(&self) -> usize {
+        // SAFETY: no mutable references may exist to the children vector at this point,
+        // provided the safety contracts of other unsafe methods are upheld.
+        self.node.header.children.len()
+    }
+
+    /// Returns the child element at the specified index.
+    pub fn child_at(&self, index: usize) -> Option<ElementAny> {
+        // SAFETY: same as `child_count`
+        self.node.header.children.get(index).cloned()
+    }
+
+    pub fn mark_needs_repaint(&mut self) {
+        self.dirty_flags |= ChangeFlags::PAINT;
+    }
+
+    pub fn mark_needs_relayout(&mut self) {
+        self.dirty_flags |= ChangeFlags::LAYOUT | ChangeFlags::PAINT;
+    }
+}
+
+pub struct EventCtx<'a> {
+    ctx: ElementCtx<'a>,
+}
+
+impl<'a> EventCtx<'a> {
+    pub fn mark_needs_repaint(&mut self) {
+        self.ctx.mark_needs_repaint()
+    }
+
+    pub fn mark_needs_relayout(&mut self) {
+        self.ctx.mark_needs_relayout()
+    }
+}
+
+/// Context passed to `Element::measure`.
+pub struct MeasureCtx<'a> {
+    /// Parent window.
+    pub(crate) window: &'a WindowInner,
+    /// The children of the element being measured.
+    pub children: &'a [ElementAny],
+}
+
+/// Context passed to `Element::layout`.
+pub struct LayoutCtx<'a> {
+    /// The children of the element being laid out.
+    pub children: &'a [ElementAny],
 }
 
 /// Methods of elements in the element tree.
 pub trait Element {
-    fn node(&self) -> &Node;
-
-    fn rc(&self) -> RcElement {
-        self.node().rc()
-    }
-
-    fn weak(&self) -> WeakElement {
-        self.node().weak()
-    }
-
-    ///// Returns the value of a named property.
-    //fn property(&self, name: &str) -> Option<&dyn Any> {
-    //    None
-    //}
-
-    /// Sets the value of a named property.
-    #[allow(unused_variables)]
-    fn set_property(&self, name: &str, value: &kyute_dsl::PropertyExpr) {}
-
-
     /// Asks the element to measure itself under the specified constraints, but without actually laying
     /// out the children.
-    fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size;
+    fn measure(&mut self, children: &[ElementAny], layout_input: &LayoutInput) -> Size;
 
-    /// Specifies the size of the element, and to lays out its children.
+    /// Specifies the size of the element, and lays out its children.
     ///
     /// # Arguments
     /// * `children` - the children of the element.
     /// * `size` - the exact size of the element. Typically, this is one of the sizes returned by a
     /// previous call to `measure`.
-    fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
-        // The default implementation just returns the union of the geometry of the children.
-        let mut output = LayoutOutput::default();
-        for child in children {
-            let child_output = child.do_layout(size);
-            output.width = output.width.max(child_output.width);
-            output.height = output.height.max(child_output.height);
-            child.set_offset(Vec2::ZERO);
-        }
-        output
-    }
+    fn layout(&mut self, children: &[ElementAny], size: Size) -> LayoutOutput;
 
-    fn hit_test(&self, point: Point) -> bool {
-        self.node().geometry.get().to_rect().contains(point)
-    }
-    #[allow(unused_variables)]
-    fn paint(&self, ctx: &mut PaintCtx) {}
+    /// Called to perform hit-testing on the bounds of this element.
+    fn hit_test(&self, point: Point) -> bool;
 
+    /// Paints this element on a target surface using the specified `PaintCtx`.
     #[allow(unused_variables)]
-    fn event(&self, event: &mut Event)
+    fn paint(&mut self, ctx: &mut PaintCtx);
+
+    /// Called when an event is sent to this element.
+    #[allow(unused_variables)]
+    fn event(&mut self, ctx: &mut EventCtx, event: &mut Event)
     {}
 }
+
+
+/// A wrapper for elements as they are being constructed.
+///
+/// Basically this is a wrapper around Rc that provides a `DerefMut` impl since we know it's the
+/// only strong reference to it.
+pub struct ElementBuilder<T>(UniqueRc<Node<T>>);
+
+impl<T: Default> Default for ElementBuilder<T> {
+    fn default() -> Self {
+        ElementBuilder::new(Default::default())
+    }
+}
+
+impl<T> ElementBuilder<T> {
+    /// Creates a new `ElementBuilder` instance.
+    pub fn new(inner: T) -> ElementBuilder<T> {
+        let mut urc = UniqueRc::new(Node::new(inner));
+        urc.header.get_mut().weak_this = WeakElementAny(UniqueRc::downgrade(&urc));
+        ElementBuilder(urc)
+    }
+
+    /// Assigns a name to the element, for debugging purposes.
+    pub fn debug_name(mut self, name: impl Into<String>) -> Self {
+        self.0.header.get_mut().name.replace(name.into());
+        self
+    }
+}
+
+impl<T: Element> ElementBuilder<T> {
+    /// Adds a new child element.
+    pub fn add_child(mut self, child: impl IntoElementAny) -> Self {
+        let index = self.0.header.get_mut().children.len();
+        self.insert_child_at_index(child, index)
+    }
+
+    /// Inserts a new child element at the specified index.
+    pub fn insert_child_at_index(mut self, child: impl IntoElementAny, index: usize) -> Self {
+        let parent = WeakElementAny(UniqueRc::downgrade(&self.0));
+        let children = &mut self.0.header.get_mut().children;
+        assert!(index <= children.len());
+        let child = child.into_element(parent, index);
+        children.insert(index, child);
+        self
+    }
+}
+
+impl<T> Deref for ElementBuilder<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            // SAFETY:
+            // The `UniqueRc` cannot be cloned so there aren't any aliasing exclusive references
+            // to the inner element. The only way to obtain an exclusive reference is through the
+            // `DerefMut` impl, which borrows the whole `ElementBuilder`, and thus would prevent
+            // `deref` from being called at the same time.
+            self.0.inner.try_borrow_unguarded().unwrap_unchecked()
+        }
+    }
+}
+
+impl<T> DerefMut for ElementBuilder<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // We have mutable access to the inner element, so we can safely return a mutable reference.
+        self.0.inner.get_mut()
+    }
+}
+
+impl<T: Element> IntoElementAny for ElementBuilder<T> {
+    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny {
+        let header = self.0.header.get_mut();
+        header.weak_this = WeakElementAny(UniqueRc::downgrade(&self.0));
+        header.parent = parent;
+        header.index_in_parent = index_in_parent;
+        ElementAny(UniqueRc::into_rc(self.0))
+    }
+}
+
 
 /// An entry in the hit-test chain that leads to the visual that was hit.
 #[derive(Clone)]
@@ -796,15 +917,6 @@ impl PartialEq for HitTestEntry {
 }
 
 impl Eq for HitTestEntry {}
-
-impl<'a> Deref for dyn Element + 'a {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        self.node()
-    }
-}
-
 
 impl dyn Element + '_ {
     /*pub fn children(&self) -> Ref<[AnyVisual]> {
@@ -827,80 +939,17 @@ impl dyn Element + '_ {
         self.element().children.borrow().len()
     }*/
 
-    pub fn do_measure(&self, layout_input: &LayoutInput) -> Size {
-        let children = self.children();
-        self.measure(&*children, layout_input)
-    }
-
-
-    pub fn do_layout(&self, size: Size) -> LayoutOutput {
-        let children = self.children();
-        self.geometry.set(size);
-        let output = self.layout(&*children, size);
-        self.mark_layout_done();
-        output
-    }
-
+    /*
+        pub fn do_layout(&self, size: Size) -> LayoutOutput {
+            let children = self.children();
+            self.geometry.set(size);
+            let output = self.layout(&*children, size);
+            self.mark_layout_done();
+            output
+        }
+    */
     pub fn send_event(&self, event: &mut Event) {
-        // issue: allocating on every event is not great
         self.event(event);
-    }
-
-    /// Hit-tests this visual and its children.
-    pub(crate) fn do_hit_test(&self, point: Point) -> Vec<RcElement> {
-        // Helper function to recursively hit-test the children of a visual.
-        // point: point in the local coordinate space of the visual
-        // transform: accumulated transform from the local coord space of `visual` to the root coord space
-        fn hit_test_rec(
-            visual: &dyn Element,
-            point: Point,
-            transform: Affine,
-            result: &mut Vec<RcElement>,
-        ) -> bool {
-            let mut hit = false;
-            // hit-test ourselves
-            if visual.hit_test(point) {
-                hit = true;
-                result.push(visual.rc().into());
-            }
-
-            for child in visual.children().iter() {
-                let transform = transform * child.transform();
-                let local_point = transform.inverse() * point;
-                if hit_test_rec(&**child, local_point, transform, result) {
-                    hit = true;
-                    break;
-                }
-            }
-
-            hit
-        }
-
-        let mut path = Vec::new();
-        hit_test_rec(self, point, self.transform(), &mut path);
-        path
-    }
-
-    pub fn do_paint(&self, surface: &DrawableSurface, scale_factor: f64) {
-        let mut paint_ctx = PaintCtx {
-            scale_factor,
-            window_transform: Default::default(),
-            surface,
-        };
-
-        // Recursively paint the UI tree.
-        fn paint_rec(visual: &dyn Element, ctx: &mut PaintCtx) {
-            visual.paint(ctx);
-            for child in visual.children().iter() {
-                ctx.with_transform(&child.transform(), |ctx| {
-                    // TODO clipping
-                    paint_rec(&**child, ctx);
-                    child.mark_paint_done();
-                });
-            }
-        }
-
-        paint_rec(self, &mut paint_ctx);
     }
 }
 
