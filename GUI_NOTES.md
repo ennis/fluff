@@ -1219,3 +1219,10 @@ Decision: switch to a flat map. Xilem/masonry does the same. "component-owns" ap
 (even if it is mostly hidden from the user).
 Widget manipulation methods should take a special receiver with traversal context, like masonry.
 However, unlike masonry, containers don't hold the list of their children.
+
+# Applications with complex GUIs
+
+- Autodesk Maya: uses Qt
+- Ableton: custom, closed source, not extensible
+- Affinity Designer: possibly custom C# or C++, closed source
+- Sublime Text: possibly custom, rendering with skia, closed source

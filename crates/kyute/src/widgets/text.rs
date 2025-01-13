@@ -6,64 +6,63 @@ use skia_safe::textlayout;
 use tracing::{trace, trace_span};
 
 use crate::drawing::ToSkia;
-use crate::element::{Node, Element, RcElement};
+use crate::element::{Element, ElementAny, ElementCtx, EventCtx, HitTestCtx, LayoutCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun};
 use crate::PaintCtx;
 
+/// A run of styled text.
 pub struct Text {
-    node: Node,
-    relayout: Cell<bool>,
-    intrinsic_size: Cell<Option<Size>>,
-    paragraph: RefCell<textlayout::Paragraph>,
+    relayout: bool,
+    intrinsic_size: Option<Size>,
+    paragraph: textlayout::Paragraph,
 }
 
-impl Deref for Text {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
-    }
-}
 
 impl Text {
-    pub fn new(text: &[TextRun]) -> RcElement<Text> {
+    /// Creates a new text element with the specified text.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use kyute::text;
+    /// use kyute::widgets::text::Text;
+    /// use kyute::text::TextRun;
+    ///
+    /// let text = Text::new(text![size(20.0) "Hello, " { b "world!" }]);
+    /// ```
+    pub fn new(text: &[TextRun]) -> Text {
         let paragraph = TextLayout::new(text).inner;
-        Node::new_derived(|node| Text {
-            node,
-            relayout: Cell::new(true),
-            intrinsic_size: Cell::new(None),
-            paragraph: RefCell::new(paragraph),
-        })
+        Text {
+            relayout: true,
+            intrinsic_size: None,
+            paragraph: paragraph,
+        }
     }
 
-    pub fn set_text(&self, text: &[TextRun]) {
+    /*pub fn set_text(&self, text: &[TextRun]) {
         let paragraph = TextLayout::new(text).inner;
         self.paragraph.replace(paragraph);
         self.intrinsic_size.set(None);
         self.relayout.set(true);
         self.mark_needs_relayout();
-    }
+    }*/
 }
 
 impl Element for Text {
-    fn node(&self) -> &Node {
-        &self.node
-    }
+    fn measure(&mut self, _ctx: &LayoutCtx, layout_input: &LayoutInput) -> Size {
+        let _span = trace_span!("Text::measure").entered();
 
-    fn measure(&self, _children: &[RcElement], layout_input: &LayoutInput) -> Size {
-        let _span = trace_span!("TextEdit::measure",).entered();
-
-        let p = &mut *self.paragraph.borrow_mut();
+        let p = &mut self.paragraph;
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         p.layout(space);
         Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&self, _children: &[RcElement], size: Size) -> LayoutOutput {
+    fn layout(&mut self, _ctx: &LayoutCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
-        let p = &mut *self.paragraph.borrow_mut();
+        let p = &mut self.paragraph;
         p.layout(size.width as f32);
         let output = LayoutOutput {
             width: p.longest_line() as f64,
@@ -73,16 +72,16 @@ impl Element for Text {
         output
     }
 
-    fn hit_test(&self, _point: Point) -> bool {
-        false
+    fn hit_test(&self, _ctx: &mut HitTestCtx, _point: Point) -> bool {
+        todo!()
     }
 
-    fn paint(&self, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         ctx.with_canvas(|canvas| {
-            self.paragraph.borrow().paint(canvas, Point::ZERO.to_skia());
+            self.paragraph.paint(canvas, Point::ZERO.to_skia());
         })
     }
 
-    fn event(&self, _event: &mut Event)
+    fn event(&mut self, _ctx: &mut EventCtx, _event: &mut Event)
     {}
 }

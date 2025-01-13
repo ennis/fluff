@@ -1,6 +1,8 @@
 //! Macro to create styled text runs.
 
+use crate::element::{ElementAny, IntoElementAny, WeakElementAny};
 use crate::text::TextStyle;
+use crate::widgets::text::Text;
 
 /// String slice with associated style attributes.
 #[derive(Copy, Clone)]
@@ -231,6 +233,8 @@ macro_rules! __text {
 /// # Example
 ///
 /// ```
+/// use kyute::text;
+///
 /// text! [ size(20.0) "Hello, world!" { b "test" } ];
 /// ```
 #[macro_export]
@@ -244,4 +248,10 @@ macro_rules! text {
             )
         }
     };
+}
+
+impl<const N: usize> IntoElementAny for &[TextRun<'_>; N] {
+    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny {
+        Text::new(self).into_element(parent, index_in_parent)
+    }
 }

@@ -1,10 +1,7 @@
-use crate::element::RcElement;
-
-
 #[derive(Copy, Clone)]
 pub struct TemplateEntry {
     pub name: &'static str,
-    pub builder: fn() -> RcElement,
+    // pub builder: fn() -> RcElement,
 }
 
 inventory::collect!(TemplateEntry);

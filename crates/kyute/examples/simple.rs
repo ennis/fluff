@@ -19,15 +19,6 @@ fn main() {
 
     application::run(async {
         let main_button = button("Test"); // &str
-        let frame = Frame::new();
-
-        frame.set_border_color(Color::from_hex("5f5637"));
-        frame.set_border_radius(8.0);
-        frame.set_background_color(Color::from_hex("211e13"));
-        frame.set_direction(Axis::Vertical);
-        frame.set_gap(4.0.into());
-        frame.set_initial_gap(4.0.into());
-        frame.set_final_gap(4.0.into());
 
         let text_edit = TextEdit::new();
         text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));
@@ -39,10 +30,19 @@ fn main() {
         text_edit2.set_wrap_mode(WrapMode::NoWrap);
 
         let value = 450;
-        frame.add_child(Text::new(text!( size(12.0) family("Inter") #44AE12 { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word aaaaaaaaaaaaaaaaa\n" "Value=" i "{value}" )));
-        frame.add_child(text_edit.clone());
-        frame.add_child(text_edit2.clone());
-        frame.add_child(main_button.clone());
+        let frame = Frame::new()
+            .border_color(Color::from_hex("5f5637"))
+            .border_radius(8.0)
+            .background_color(Color::from_hex("211e13"))
+            .direction(Axis::Vertical)
+            .gap(4.0)
+            .initial_gap(4.0)
+            .final_gap(4.0)
+            .child(text!( size(12.0) family("Inter") #44AE12 { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word aaaaaaaaaaaaaaaaa\n" "Value=" i "{value}" ))
+            .child(text_edit)
+            .child(text_edit2)
+            .child(main_button);
+
 
         let window_options = WindowOptions {
             title: "Hello, world!",
@@ -51,7 +51,7 @@ fn main() {
             ..Default::default()
         };
 
-        let main_window = Window::new(&window_options, frame.clone().into());
+        let main_window = Window::new(&window_options, frame);
         let mut popup: Option<Window> = None;
 
         loop {
@@ -62,7 +62,7 @@ fn main() {
                         eprintln!("Popup closing");
                     } else {
                         // create popup
-                        let popup_options = WindowOptions {
+                        let p = Window::new(&WindowOptions {
                             title: "Popup",
                             size: Size::new(400.0, 300.0),
                             parent: Some(main_window.raw_window_handle()),
@@ -70,9 +70,7 @@ fn main() {
                             no_focus: true,
                             position: Some(Point::new(100.0, 100.0)),
                             ..Default::default()
-                        };
-                        let button = button("Close me");
-                        let p = Window::new(&popup_options, button.clone().into());
+                        }, button("Close me"));
                         main_window.set_popup(&p);
                         popup = Some(p);
                     }

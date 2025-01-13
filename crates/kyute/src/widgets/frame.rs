@@ -2,19 +2,15 @@
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
-use kurbo::{Insets, RoundedRect, Size, Vec2};
-use smallvec::SmallVec;
-use tracing::{trace, trace_span};
-use crate::ElementState;
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, Node, RcElement};
+use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, EventCtx, HitTestCtx, IntoElementAny, LayoutCtx, MeasureCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::flex::{flex_layout, FlexLayoutParams};
-use crate::layout::{
-    Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue,
-};
-use crate::{drawing, layout, register_template, Notifier, Color, PaintCtx};
-
+use crate::layout::{Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue};
+use crate::{drawing, layout, register_template, Color, ElementState, Notifier, PaintCtx};
+use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
+use smallvec::SmallVec;
+use tracing::{trace, trace_span};
 
 #[derive(Clone, Default)]
 pub struct FrameStyleOverride {
@@ -82,75 +78,36 @@ impl FrameStyle {
     }
 }
 
-
-/// A container with a fixed width and height, into which a unique widget is placed.
+/// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
-    node: Node,
     pub clicked: Notifier<()>,
     pub hovered: Notifier<bool>,
     pub active: Notifier<bool>,
     pub focused: Notifier<bool>,
     pub state_changed: Notifier<ElementState>,
-    layout: RefCell<FrameLayout>,
+    layout: FrameLayout,
 
-    width: Cell<SizeValue>,
-    height: Cell<SizeValue>,
-    min_width: Cell<SizeValue>,
-    min_height: Cell<SizeValue>,
-    max_width: Cell<SizeValue>,
-    max_height: Cell<SizeValue>,
+    width: SizeValue,
+    height: SizeValue,
+    min_width: SizeValue,
+    min_height: SizeValue,
+    max_width: SizeValue,
+    max_height: SizeValue,
+    padding: Insets,
 
-    padding: Cell<Insets>,
+    state: ElementState,
+    style: FrameStyle,
+    style_changed: bool,
+    state_affects_style: bool,
+    resolved_style: FrameStyle,
 
-    state: Cell<ElementState>,
-    style: RefCell<FrameStyle>,
-    style_changed: Cell<bool>,
-    state_affects_style: Cell<bool>,
-    resolved_style: RefCell<FrameStyle>,
+    children: Vec<ElementAny>,
 }
-
-impl Deref for Frame {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
-    }
-}
-
-macro_rules! paint_style_setter {
-    ($s:ident, $setter:ident: $ty:ty) => {
-        pub fn $setter(&self, value: $ty) {
-            self.style.borrow_mut().$s = value;
-            self.style_changed.set(true);
-            self.mark_needs_repaint();
-        }
-    };
-}
-
-macro_rules! layout_style_setter {
-    ($s:ident, $p:pat, $setter:ident: $ty:ty) => {
-        pub fn $setter(&self, value: $ty) {
-            let $p = &mut *self.layout.borrow_mut();
-            *$s = value;
-            self.mark_needs_relayout();
-        }
-    };
-}
-
-/*
-register_template!(Frame);
-
-impl Default for Frame {
-    fn default() -> Self {
-        Frame::new()
-    }
-}*/
 
 impl Frame {
-    /// Creates a new `Frame` with the given decoration.
-    pub fn new() -> RcElement<Frame> {
-        Node::new_derived(|node| Frame {
-            node,
+    /// Creates a new `Frame` with the default styles.
+    pub fn new() -> ElementBuilder<Frame> {
+        ElementBuilder::new(Frame {
             clicked: Default::default(),
             hovered: Default::default(),
             active: Default::default(),
@@ -166,51 +123,145 @@ impl Frame {
             padding: Default::default(),
             state: Default::default(),
             style: Default::default(),
-            style_changed: Cell::new(true),
-            state_affects_style: Cell::new(false),
+            style_changed: true,
+            state_affects_style: false,
             resolved_style: Default::default(),
+            children: vec![],
         })
     }
 
-    pub fn set_style(&self, style: FrameStyle) {
-        self.style.replace(style);
-        self.style_changed.set(true);
-        self.mark_needs_relayout();
+    /// Adds a child item to this frame.
+    #[must_use]
+    pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
+        let weak_self = self.weak();
+        self.children.push(child.into_element(weak_self, 0));
+        self
     }
 
-    pub fn set_border(&self, value: f64) {
-        self.style.borrow_mut().border_size.x0 = value;
-        self.style.borrow_mut().border_size.x1 = value;
-        self.style.borrow_mut().border_size.y0 = value;
-        self.style.borrow_mut().border_size.y1 = value;
-        self.style_changed.set(true);
-        self.mark_needs_repaint();
+    /// Sets the visual style of the frame.
+    #[must_use]
+    pub fn style(mut self: ElementBuilder<Self>, style: FrameStyle) -> ElementBuilder<Self> {
+        self.style = style;
+        self
     }
 
-    pub fn set_border_color(&self, value: Color) {
-        self.style.borrow_mut().border_color = value;
-        self.style_changed.set(true);
-        self.mark_needs_repaint();
+    /// Specifies the size of all four borders around the frame.
+    #[must_use]
+    pub fn border_width(mut self: ElementBuilder<Self>, width: f64) -> ElementBuilder<Self> {
+        self.style.border_size = Insets::uniform(width);
+        self
     }
 
-    pub fn set_border_radius(&self, value: f64) {
-        self.style.borrow_mut().border_radius = value;
-        self.style_changed.set(true);
-        self.mark_needs_repaint();
+    /// Specifies the border color.
+    #[must_use]
+    pub fn border_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+        self.style.border_color = color;
+        self
     }
 
-    pub fn set_background_color(&self, value: Color) {
-        self.style.borrow_mut().background_color = value;
-        self.style_changed.set(true);
-        self.mark_needs_repaint();
+    /// Specifies the border radius.
+    #[must_use]
+    pub fn border_radius(mut self: ElementBuilder<Self>, radius: f64) -> ElementBuilder<Self> {
+        self.style.border_radius = radius;
+        self
     }
 
-    layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
-    layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: SizeValue);
-    layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: SizeValue);
-    layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: SizeValue);
+    /// Specifies the background color.
+    #[must_use]
+    pub fn background_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+        self.style.background_color = color;
+        self
+    }
 
-    pub fn set_padding(&self, value: f64) {
+    /// Specifies layout direction.
+    #[must_use]
+    pub fn direction(mut self: ElementBuilder<Self>, dir: Axis) -> ElementBuilder<Self> {
+        let FrameLayout::Flex { ref mut direction, .. } = self.layout;
+        *direction = dir;
+        self
+    }
+
+    /// Specifies the gap between items in the layout direction.
+    #[must_use]
+    pub fn gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        let FrameLayout::Flex { ref mut gap, .. } = self.layout;
+        *gap = value.into();
+        self
+    }
+
+    /// Specifies the initial gap before the first item in the layout direction.
+    #[must_use]
+    pub fn initial_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        let FrameLayout::Flex {
+            ref mut initial_gap, ..
+        } = self.layout;
+        *initial_gap = value.into();
+        self
+    }
+
+    /// Specifies the final gap after the last item in the layout direction.
+    #[must_use]
+    pub fn final_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        let FrameLayout::Flex { ref mut final_gap, .. } = self.layout;
+        *final_gap = value.into();
+        self
+    }
+
+    /// Specifies the padding (along all four sides) around the content placed inside the frame.
+    #[must_use]
+    pub fn padding(mut self: ElementBuilder<Self>, value: f64) -> ElementBuilder<Self> {
+        self.padding = Insets::uniform(value);
+        self
+    }
+
+    /// Specifies the width of the frame.
+    #[must_use]
+    pub fn width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.width = value.into();
+        self
+    }
+
+    /// Specifies the height of the frame.
+    #[must_use]
+    pub fn height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.height = value.into();
+        self
+    }
+
+    /// Specifies the minimum width of the frame.
+    #[must_use]
+    pub fn min_width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.min_width = value.into();
+        self
+    }
+
+    /// Specifies the minimum height of the frame.
+    #[must_use]
+    pub fn min_height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.min_height = value.into();
+        self
+    }
+
+    /// Specifies the maximum width of the frame.
+    #[must_use]
+    pub fn max_width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.max_width = value.into();
+        self
+    }
+
+    /// Specifies the maximum height of the frame.
+    #[must_use]
+    pub fn max_height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+        self.max_height = value.into();
+        self
+    }
+
+    //layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
+    //layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: SizeValue);
+    //layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: SizeValue);
+    //layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: SizeValue);
+
+    /*pub fn set_padding(&self, value: f64) {
         self.padding.set(Insets::uniform(value));
         self.mark_needs_relayout();
     }
@@ -241,12 +292,12 @@ impl Frame {
         padding.y1 = value;
         self.padding.set(padding);
         self.mark_needs_relayout();
-    }
+    }*/
 
-    pub fn set_content(&self, content: impl Into<RcElement>) {
-        self.clear_children();
-        (self as &dyn Element).add_child(content)
-    }
+    //pub fn set_content(&self, content: impl Into<RcElement>) {
+    //    self.clear_children();
+    //    (self as &dyn Element).add_child(content)
+    //}
 
     /*pub fn set_direction(&self, direction: Axis) {
         if let FrameLayout::Flex { direction: ref mut d, .. } = *self.layout.borrow_mut() {
@@ -255,53 +306,49 @@ impl Frame {
         }
     }*/
 
-    pub fn set_width(&self, value: SizeValue) {
-        self.width.set(value);
-        self.mark_needs_relayout();
-    }
+    //pub fn set_width(&self, value: SizeValue) {
+    //    self.width.set(value);
+    //    self.mark_needs_relayout();
+    //}
+    //
+    //pub fn set_height(&self, value: SizeValue) {
+    //    self.height.set(value);
+    //    self.mark_needs_relayout();
+    //}
+    //
+    //pub fn set_min_width(&self, value: SizeValue) {
+    //    self.min_width.set(value);
+    //    self.mark_needs_relayout();
+    //}
+    //
+    //pub fn set_min_height(&self, value: SizeValue) {
+    //    self.min_height.set(value);
+    //    self.mark_needs_relayout();
+    //}
+    //
+    //pub fn set_max_width(&self, value: SizeValue) {
+    //    self.max_width.set(value);
+    //    self.mark_needs_relayout();
+    //}
+    //
+    //pub fn set_max_height(&self, value: SizeValue) {
+    //    self.max_height.set(value);
+    //    self.mark_needs_relayout();
+    //}
 
-    pub fn set_height(&self, value: SizeValue) {
-        self.height.set(value);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_min_width(&self, value: SizeValue) {
-        self.min_width.set(value);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_min_height(&self, value: SizeValue) {
-        self.min_height.set(value);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_max_width(&self, value: SizeValue) {
-        self.max_width.set(value);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_max_height(&self, value: SizeValue) {
-        self.max_height.set(value);
-        self.mark_needs_relayout();
-    }
-
-    pub async fn clicked(&self) {
-        self.clicked.wait().await;
-    }
-
-    fn calculate_style(&self) {
-        if self.style_changed.get() {
-            self.resolved_style
-                .replace(self.style.borrow().apply_overrides(self.state.get()));
-            self.style_changed.set(false);
-        }
-    }
+    //fn calculate_style(&self) {
+    //    if self.style_changed.get() {
+    //        self.resolved_style
+    //            .replace(self.style.borrow().apply_overrides(self.state.get()));
+    //        self.style_changed.set(false);
+    //    }
+    //}
 }
 
 struct BoxSizingParams<'a> {
     /// Main axis direction (direction of the text). For now, it's always horizontal.
     axis: Axis,
-    children: &'a [RcElement],
+    children: &'a [ElementAny],
 }
 
 impl Frame {
@@ -318,17 +365,24 @@ impl Frame {
     /// * `cross` - cross axis size constraint (available space)
     fn measure_content(
         &self,
+        ctx: &LayoutCtx,
         p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
         height_constraint: SizeConstraint,
     ) -> Size {
-        let _span = trace_span!("Frame::measure_content", ?width_constraint, ?height_constraint, ?parent_width, ?parent_height).entered();
+        let _span = trace_span!(
+            "Frame::measure_content",
+            ?width_constraint,
+            ?height_constraint,
+            ?parent_width,
+            ?parent_height
+        )
+            .entered();
 
-        let padding = self.padding.get();
-        let width = width_constraint.deflate(padding.x_value());
-        let height = height_constraint.deflate(padding.y_value());
+        let width = width_constraint.deflate(self.padding.x_value());
+        let height = height_constraint.deflate(self.padding.y_value());
 
         // Measure the children by performing the measure steps of flex layout.
         let FrameLayout::Flex {
@@ -336,42 +390,46 @@ impl Frame {
             gap,
             initial_gap,
             final_gap,
-        } = self.layout.borrow().clone();
+        } = self.layout.clone();
 
-        let output = flex_layout(
-            LayoutMode::Measure,
-            &FlexLayoutParams {
-                direction,
-                width_constraint: width,
-                height_constraint: height,
-                parent_width,
-                parent_height,
-                gap,
-                initial_gap,
-                final_gap,
-            },
-            p.children,
-        );
+        let output = flex_layout(LayoutMode::Measure, &FlexLayoutParams {
+            direction,
+            width_constraint: width,
+            height_constraint: height,
+            parent_width,
+            parent_height,
+            gap,
+            initial_gap,
+            final_gap,
+        }, ctx, p.children);
 
         Size {
-            width: output.width + padding.x_value(),
-            height: output.height + padding.y_value(),
+            width: output.width + self.padding.x_value(),
+            height: output.height + self.padding.y_value(),
         }
     }
 
     /// Measures a box element sized according to the specified constraints.
     fn measure_inner(
         &self,
+        ctx: &LayoutCtx,
         p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
         height_constraint: SizeConstraint,
     ) -> Size {
-        let _span = trace_span!("Frame::measure_inner", ?width_constraint, ?height_constraint, ?parent_width, ?parent_height).entered();
+        let _span = trace_span!(
+            "Frame::measure_inner",
+            ?width_constraint,
+            ?height_constraint,
+            ?parent_width,
+            ?parent_height
+        )
+            .entered();
 
         //
-        let eval_width = |size: SizeValue| -> Option<f64> {
+        let mut eval_width = |size: SizeValue| -> Option<f64> {
             match size {
                 // Fixed size: use the specified size
                 SizeValue::Fixed(s) => Some(s),
@@ -385,7 +443,10 @@ impl Frame {
                         SizeValue::MaxContent => SizeConstraint::MAX,
                         _ => unreachable!(),
                     };
-                    Some(self.measure_content(p, parent_width, parent_height, cstr, height_constraint).width)
+                    Some(
+                        self.measure_content(ctx, p, parent_width, parent_height, cstr, height_constraint)
+                            .width,
+                    )
                 }
                 _ => None,
             }
@@ -393,13 +454,14 @@ impl Frame {
 
         //
 
-        let mut width = eval_width(self.width.get()).unwrap_or_else(|| {
+        let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint).width
+            self.measure_content(ctx, p, parent_width, parent_height, width_constraint, height_constraint)
+                .width
         });
-        let min_width = eval_width(self.min_width.get()).unwrap_or(0.0);
-        let max_width = eval_width(self.max_width.get()).unwrap_or(f64::INFINITY);
+        let min_width = eval_width(self.min_width).unwrap_or(0.0);
+        let max_width = eval_width(self.max_width).unwrap_or(f64::INFINITY);
 
         // Clamp the width to the specified min and max values.
         width = width.clamp(min_width, max_width);
@@ -407,7 +469,7 @@ impl Frame {
         // updated width constraint due to clamping min/max width
         let updated_width_constraint = SizeConstraint::Available(width);
 
-        let eval_height = |size: SizeValue| -> Option<f64> {
+        let mut eval_height = |size: SizeValue| -> Option<f64> {
             match size {
                 SizeValue::Fixed(s) => Some(s),
                 SizeValue::Percentage(percent) => Some(parent_height? * percent),
@@ -417,17 +479,21 @@ impl Frame {
                         SizeValue::MaxContent => SizeConstraint::MAX,
                         _ => unreachable!(),
                     };
-                    Some(self.measure_content(p, parent_width, parent_height, updated_width_constraint, cstr).height)
+                    Some(
+                        self.measure_content(ctx, p, parent_width, parent_height, updated_width_constraint, cstr)
+                            .height,
+                    )
                 }
                 _ => None,
             }
         };
 
-        let mut height = eval_height(self.height.get()).unwrap_or_else(|| {
-            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint).height
+        let mut height = eval_height(self.height).unwrap_or_else(|| {
+            self.measure_content(ctx, p, parent_width, parent_height, width_constraint, height_constraint)
+                .height
         });
-        let min_height = eval_height(self.min_height.get()).unwrap_or(0.0);
-        let max_height = eval_height(self.max_height.get()).unwrap_or(f64::INFINITY);
+        let min_height = eval_height(self.min_height).unwrap_or(0.0);
+        let max_height = eval_height(self.max_height).unwrap_or(f64::INFINITY);
 
         height = height.clamp(min_height, max_height);
 
@@ -436,42 +502,16 @@ impl Frame {
 }
 
 impl Element for Frame {
-    fn node(&self) -> &Node {
-        &self.node
-    }
-
-    //fn property(&self, name: &str) -> Option<&dyn Any> {}
-
-    fn set_property(&self, name: &str, value: &kyute_dsl::PropertyExpr) {
-        /*match name {
-            "width" => value.cast().map(|v| self.set_width(SizeValue::Fixed(v))),
-            "height" => value.cast().map(|v| self.set_height(SizeValue::Fixed(v))),
-            "min_width" => value.cast().map(|v| self.set_min_width(SizeValue::Fixed(v))),
-            "min_height" => value.cast().map(|v| self.set_min_height(SizeValue::Fixed(v))),
-            "max_width" => value.cast().map(|v| self.set_max_width(SizeValue::Fixed(v))),
-            "max_height" => value.cast().map(|v| self.set_max_height(SizeValue::Fixed(v))),
-            "padding" => value.cast().map(|v| self.set_padding(v)),
-            "padding_left" => value.cast().map(|v| self.set_padding_left(v)),
-            "padding_right" => value.cast().map(|v| self.set_padding_right(v)),
-            "padding_top" => value.cast().map(|v| self.set_padding_top(v)),
-            "padding_bottom" => value.cast().map(|v| self.set_padding_bottom(v)),
-            "border_left" => value.cast().map(|v| self.set_border_left(LengthOrPercentage::Px(v))),
-            "border_right" => value.cast().map(|v| self.set_border_right(LengthOrPercentage::Px(v))),
-            "border_top" => value.cast().map(|v| self.set_border_top(LengthOrPercentage::Px(v))),
-            "border_bottom" => value.cast().map(|v| self.set_border_bottom(LengthOrPercentage::Px(v))),
-            "gap" => value.cast().map(|v| self.set_gap(FlexSize { size: v, flex: 1.0 })),
-        };*/
-    }
-
-    fn measure(&self, children: &[RcElement], layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, ctx: &LayoutCtx, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
 
         // TODO vertical direction layout
         let p = BoxSizingParams {
             axis: Axis::Horizontal,
-            children,
+            children: &self.children[..],
         };
         let output = self.measure_inner(
+            ctx,
             &p,
             layout_input.parent_width,
             layout_input.parent_height,
@@ -481,10 +521,10 @@ impl Element for Frame {
         output
     }
 
-    fn layout(&self, children: &[RcElement], size: Size) -> LayoutOutput {
+    fn layout(&mut self, ctx: &LayoutCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
 
-        let padding = self.padding.get();
+        let padding = self.padding;
         let content_area_width = size.width - padding.x_value();
         let content_area_height = size.height - padding.y_value();
 
@@ -493,7 +533,7 @@ impl Element for Frame {
             gap,
             initial_gap,
             final_gap,
-        } = self.layout.borrow().clone();
+        } = self.layout;
 
         let mut output = flex_layout(
             LayoutMode::Place,
@@ -508,7 +548,8 @@ impl Element for Frame {
                 initial_gap,
                 final_gap,
             },
-            children,
+            ctx,
+            &self.children[..],
         );
 
         output.width = size.width;
@@ -516,18 +557,21 @@ impl Element for Frame {
         output.baseline = output.baseline.map(|b| b + padding.y0);
 
         let offset = Vec2::new(padding.x0, padding.y0);
-        for child in children.iter() {
+        for child in self.children.iter() {
             child.add_offset(offset);
         }
         output
     }
 
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.calculate_style();
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        todo!()
+    }
 
-        let size = self.node.size();
-        let rect = size.to_rect();
-        let s = self.resolved_style.borrow();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        //self.calculate_style();
+
+        let rect = ctx.size.to_rect();
+        let s = self.resolved_style.clone();
 
         let border_radius = s.border_radius;
         // border shape
@@ -561,40 +605,44 @@ impl Element for Frame {
                 canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
             }
         });
+
+        // paint children
+        for child in self.children.iter() {
+            child.paint(ctx);
+        }
     }
 
-    fn event(&self, event: &mut Event) {
-        fn update_state(this: &Frame, state: ElementState) {
-            this.state.set(state);
+    fn event(&mut self, ctx: &mut EventCtx, event: &mut Event) {
+        fn update_state(this: &mut Frame, ctx: &mut EventCtx, state: ElementState) {
+            this.state = state;
             this.state_changed.invoke(state);
-            if this.state_affects_style.get() {
-                this.style_changed.set(true);
-                this.mark_needs_relayout();
+            if this.state_affects_style {
+                this.style_changed = true;
+                ctx.mark_needs_relayout();
             }
         }
 
-        let mut state = self.state.get();
         match event {
             Event::PointerDown(_) => {
-                state.set_active(true);
-                update_state(self, state);
+                self.state.set_active(true);
+                update_state(self, ctx, self.state);
                 self.active.invoke(true);
             }
             Event::PointerUp(_) => {
-                if state.is_active() {
-                    state.set_active(false);
-                    update_state(self, state);
+                if self.state.is_active() {
+                    self.state.set_active(false);
+                    update_state(self, ctx, self.state);
                     self.clicked.invoke(());
                 }
             }
             Event::PointerEnter(_) => {
-                state.set_hovered(true);
-                update_state(self, state);
+                self.state.set_hovered(true);
+                update_state(self, ctx, self.state);
                 self.hovered.invoke(true);
             }
             Event::PointerLeave(_) => {
-                state.set_hovered(false);
-                update_state(self, state);
+                self.state.set_hovered(false);
+                update_state(self, ctx, self.state);
                 self.hovered.invoke(false);
             }
             _ => {}

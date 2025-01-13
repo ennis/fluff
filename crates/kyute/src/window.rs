@@ -22,7 +22,7 @@ use crate::app_globals::AppGlobals;
 use crate::application::{with_event_loop_window_target, WindowHandler};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
-use crate::element::{Element, Node, RcElement, WeakElement};
+use crate::element::{Element, ElementAny, HitTestCtx, IntoElementAny, WeakElementAny};
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
 use crate::{application, Notifier, Color};
 use crate::layout::{LayoutInput, SizeConstraint};
@@ -87,8 +87,8 @@ struct InputState {
     pointer_buttons: PointerButtons,
     last_click: Option<LastClick>,
     // Result of the previous hit-test
-    last_innermost_hit: Option<RcElement>,
-    last_hits: BTreeSet<RcElement>,
+    last_innermost_hit: Option<WeakElementAny>,
+    last_hits: BTreeSet<WeakElementAny>,
     //prev_hit_test_result: Vec<HitTestEntry>,
 }
 
@@ -99,7 +99,7 @@ pub(crate) struct WindowInner {
     focus_changed: Notifier<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
     resized: Notifier<Size>, // RefCell<Option<Box<dyn Fn(Size)>>>,
 
-    root: RcElement,
+    root: ElementAny,
     layer: Layer,
     window: winit::window::Window,
     hidden_before_first_draw: Cell<bool>,
@@ -107,9 +107,9 @@ pub(crate) struct WindowInner {
     last_physical_size: Cell<Size>,
     input_state: RefCell<InputState>,
     /// The widget currently grabbing the pointer.
-    pointer_capture: WeakElement,
+    pointer_capture: WeakElementAny,
     /// The widget that has the focus for keyboard events.
-    focus: WeakElement,
+    focus: WeakElementAny,
     background: Cell<Color>,
     active_popup: RefCell<Option<Weak<WindowInner>>>,
     // DEBUGGING
@@ -117,18 +117,18 @@ pub(crate) struct WindowInner {
 }
 
 impl WindowInner {
-    fn is_focused(&self, element: &Node) -> bool {
-        self.focus == element.weak()
+    fn is_focused(&self, element: WeakElementAny) -> bool {
+        self.focus == element
     }
 
-    fn check_belongs_to_window(&self, element: &Node) {
+    fn check_belongs_to_window(&self, element: &ElementAny) {
         assert!(
             Weak::ptr_eq(&element.window.borrow().shared, &self.weak_this),
             "element must belong to this window"
         );
     }
 
-    fn set_focus(&self, element: WeakElement) {
+    fn set_focus(&self, element: WeakElementAny) {
         //let weak = element.map(|e| e.weak()).unwrap_or_default();
 
         if let Some(ref element) = element.upgrade() {
@@ -151,7 +151,7 @@ impl WindowInner {
         }
     }
 
-    fn set_pointer_capture(&self, element: WeakElement) {
+    fn set_pointer_capture(&self, element: WeakElementAny) {
         if let Some(element) = element.upgrade() {
             self.check_belongs_to_window(element.node());
         }
@@ -164,7 +164,7 @@ impl WindowInner {
     /// It will first invoke the event handler of the target visual.
     /// If the event is "bubbling", it will invoke the event handler of the parent visual,
     /// and so on until the root visual is reached.
-    fn dispatch_event(&self, target: &dyn Element, event: &mut Event, bubbling: bool) {
+    fn dispatch_event(&self, target: ElementAny, event: &mut Event, bubbling: bool) {
         // get dispatch chain
         let chain = target.ancestors_and_self();
         assert!(
@@ -183,9 +183,9 @@ impl WindowInner {
 
         if bubbling {
             // dispatch the event, bubbling from the target up the root
-            for (visual, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
+            for (element, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
                 event.set_transform(transform);
-                visual.send_event(event);
+                element.send_event(event);
             }
         } else {
             // dispatch the event to the target only
@@ -207,7 +207,8 @@ impl WindowInner {
         // Handle tab navigation
         match event {
             Event::KeyDown(ke) if ke.key == Key::Tab => {
-                if let Some(focus) = self.focus.upgrade() {
+                todo!("tab navigation");
+                /*if let Some(focus) = self.focus.upgrade() {
                     // Go to next focusable element
                     if let Some(next_focus) = focus.next_focusable_element() {
                         self.set_focus(next_focus.weak());
@@ -218,7 +219,7 @@ impl WindowInner {
                         // no focusable elements
                         self.set_focus(WeakElement::new());
                     }
-                }
+                }*/
             }
             _ => {}
         }
@@ -242,7 +243,9 @@ impl WindowInner {
     ) {
         let mut input_state = self.input_state.borrow_mut();
 
-        let hits = self.root.do_hit_test(hit_position);
+        let mut hit_test_ctx = HitTestCtx::new();
+        self.root.hit_test(&mut hit_test_ctx, hit_position);
+        let hits = hit_test_ctx.hits;
         let innermost_hit = hits.last().cloned();
         let is_pointer_up = matches!(event, Event::PointerUp(_));
 
@@ -251,7 +254,7 @@ impl WindowInner {
         let target = self.pointer_capture.upgrade().or(innermost_hit.clone());
 
         if let Some(target) = target {
-            self.dispatch_event(&*target, &mut event, true);
+            self.dispatch_event(target, &mut event, true);
         }
 
         // release pointer capture automatically on pointer up
@@ -568,13 +571,13 @@ impl WindowInner {
         }
 
         if self.root.needs_relayout() {
-            let size = self.root.do_measure(&LayoutInput {
+            let size = self.root.measure(&LayoutInput {
                 parent_width: Some(size.width),
                 parent_height: Some(size.height),
                 width: SizeConstraint::Available(size.width),
                 height: SizeConstraint::Available(size.height),
             });
-            let _geom = self.root.do_layout(size);
+            let _geom = self.root.layout(size);
         }
 
         let surface = self.layer.acquire_drawing_surface();
@@ -656,25 +659,25 @@ impl WeakWindow {
         }
     }
 
-    pub fn set_focus(&self, element: WeakElement) {
+    pub fn set_focus(&self, element: WeakElementAny) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_focus(element);
         }
     }
 
-    pub fn set_pointer_capture(&self, element: WeakElement) {
+    pub fn set_pointer_capture(&self, element: WeakElementAny) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_pointer_capture(element);
         }
     }
 
-    /// Returns a reference to the currently focused element.
+    /*/// Returns a reference to the currently focused element.
     pub fn is_focused(&self, element: &Node) -> bool {
         self.shared
             .upgrade()
             .map(|shared| shared.is_focused(element))
             .unwrap_or(false)
-    }
+    }*/
 }
 
 pub struct WindowOptions<'a> {
@@ -705,7 +708,8 @@ impl<'a> Default for WindowOptions<'a> {
 
 impl Window {
     /// TODO builder
-    pub fn new(options: &WindowOptions, root: RcElement) -> Self {
+    pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
+        let root = root.into_element(WeakElementAny::default(), 0);
         let window = with_event_loop_window_target(|event_loop| {
             // the window is initially invisible, we show it after the first frame is painted.
             let mut builder = winit::window::WindowBuilder::new()
@@ -776,7 +780,7 @@ impl Window {
         Window { shared }
     }
 
-    pub fn set_focus(&self, element: WeakElement) {
+    pub fn set_focus(&self, element: WeakElementAny) {
         self.shared.set_focus(element);
     }
 

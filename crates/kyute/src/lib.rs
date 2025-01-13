@@ -1,3 +1,6 @@
+#![feature(unique_rc_arc)]
+#![feature(arbitrary_self_types)]
+
 mod app_globals;
 pub mod application;
 mod backend;
@@ -25,7 +28,7 @@ pub mod tree;
 // reexports
 pub use app_globals::AppGlobals;
 pub use kyute_common::Color;
-pub use element::{Node, Element};
+pub use element::{Element};
 //pub use component::{Component};
 pub use event::Event;
 pub use notifier::Notifier;

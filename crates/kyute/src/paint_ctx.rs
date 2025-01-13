@@ -1,6 +1,6 @@
 use crate::compositor::DrawableSurface;
 use crate::drawing::ToSkia;
-use kurbo::{Affine, Rect, Vec2};
+use kurbo::{Affine, Rect, Size, Vec2};
 
 /// Paint context.
 pub struct PaintCtx<'a> {
@@ -9,6 +9,8 @@ pub struct PaintCtx<'a> {
     pub(crate) window_transform: Affine,
     /// Drawable surface.
     pub surface: &'a DrawableSurface,
+    pub size: Size,
+    pub has_focus: bool,
     //pub(crate) debug_info: PaintDebugInfo,
 }
 

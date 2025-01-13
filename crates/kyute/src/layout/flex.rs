@@ -1,7 +1,7 @@
 use kurbo::{Size, Vec2};
 use tracing::trace;
-
-use crate::element::{AttachedProperty, RcElement};
+use crate::element::{ElementAny, LayoutCtx, WindowCtx};
+//use crate::element::{AttachedProperty};
 use crate::layout;
 use crate::layout::{Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue, SpacingAfter, SpacingBefore};
 
@@ -29,9 +29,10 @@ pub enum CrossAxisAlignment {
 
 pub struct FlexFactor;
 
+/*
 impl AttachedProperty for FlexFactor {
     type Value = f64;
-}
+}*/
 
 /// Size value with a flex growth factor.
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
@@ -95,7 +96,7 @@ pub struct FlexLayoutParams {
     pub final_gap: SizeValue,
 }
 
-pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, children: &[ElementAny]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
@@ -159,7 +160,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
         //let flex = child.get(layout::FlexFactor).unwrap_or_default();
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
-            .do_measure(&LayoutInput::from_logical(
+            .measure(ctx, &LayoutInput::from_logical(
                 main_axis,
                 main_size_constraint,
                 cross_size_constraint,
@@ -169,7 +170,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
             .main_cross(main_axis);
         // also measure the max width so that we know how much it can grow
         let max_item_main = child
-            .do_measure(&LayoutInput::from_logical(
+            .measure(ctx, &LayoutInput::from_logical(
                 main_axis,
                 SizeConstraint::MAX,
                 cross_size_constraint,
@@ -288,13 +289,15 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
             // even if the provided main size has grown, it may return the same main size.
             // Concrete example: text elements
             measures[i].cross = child
-                .do_measure(&LayoutInput::from_logical(
-                    main_axis,
-                    measures[i].main.into(),
-                    cross_size_constraint,
-                    parent_main,
-                    parent_cross,
-                ))
+                .measure(
+                    ctx,
+                    &LayoutInput::from_logical(
+                        main_axis,
+                        measures[i].main.into(),
+                        cross_size_constraint,
+                        parent_main,
+                        parent_cross,
+                    ))
                 .axis(cross_axis);
         }
 
@@ -309,7 +312,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
 
         if alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
-            let layout = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+            let layout = child.layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
@@ -335,7 +338,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[RcElement
     for (i, child) in children.iter().enumerate() {
         // TODO don't layout again if we already have the layout (the child may be already laid out
         // due to baseline alignment)
-        child_layouts[i] = child.do_layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+        child_layouts[i] = child.layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
     }
 
     trace!(
