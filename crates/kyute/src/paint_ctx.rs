@@ -10,7 +10,6 @@ pub struct PaintCtx<'a> {
     /// Drawable surface.
     pub surface: &'a DrawableSurface,
     pub size: Size,
-    pub has_focus: bool,
     //pub(crate) debug_info: PaintDebugInfo,
 }
 

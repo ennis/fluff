@@ -6,7 +6,7 @@ use skia_safe::textlayout;
 use tracing::{trace, trace_span};
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementAny, ElementCtx, EventCtx, HitTestCtx, LayoutCtx};
+use crate::element::{Element, ElementAny, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun};
@@ -14,6 +14,7 @@ use crate::PaintCtx;
 
 /// A run of styled text.
 pub struct Text {
+    ctx: ElementCtxAny,
     relayout: bool,
     intrinsic_size: Option<Size>,
     paragraph: textlayout::Paragraph,
@@ -35,6 +36,7 @@ impl Text {
     pub fn new(text: &[TextRun]) -> Text {
         let paragraph = TextLayout::new(text).inner;
         Text {
+            ctx: ElementCtxAny::new(),
             relayout: true,
             intrinsic_size: None,
             paragraph: paragraph,
@@ -51,7 +53,15 @@ impl Text {
 }
 
 impl Element for Text {
-    fn measure(&mut self, _ctx: &LayoutCtx, layout_input: &LayoutInput) -> Size {
+    fn ctx(&self) -> &ElementCtxAny {
+        &self.ctx
+    }
+
+    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
+        &mut self.ctx
+    }
+
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
@@ -60,7 +70,7 @@ impl Element for Text {
         Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&mut self, _ctx: &LayoutCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
         let p = &mut self.paragraph;
         p.layout(size.width as f32);
@@ -82,6 +92,6 @@ impl Element for Text {
         })
     }
 
-    fn event(&mut self, _ctx: &mut EventCtx, _event: &mut Event)
+    fn event(&mut self, _ctx: &mut WindowCtx, _event: &mut Event)
     {}
 }

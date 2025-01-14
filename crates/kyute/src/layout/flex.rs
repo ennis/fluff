@@ -96,7 +96,7 @@ pub struct FlexLayoutParams {
     pub final_gap: SizeValue,
 }
 
-pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, children: &[ElementAny]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAny]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
@@ -160,7 +160,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, chil
         //let flex = child.get(layout::FlexFactor).unwrap_or_default();
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
-            .measure(ctx, &LayoutInput::from_logical(
+            .measure(&LayoutInput::from_logical(
                 main_axis,
                 main_size_constraint,
                 cross_size_constraint,
@@ -170,7 +170,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, chil
             .main_cross(main_axis);
         // also measure the max width so that we know how much it can grow
         let max_item_main = child
-            .measure(ctx, &LayoutInput::from_logical(
+            .measure(&LayoutInput::from_logical(
                 main_axis,
                 SizeConstraint::MAX,
                 cross_size_constraint,
@@ -290,7 +290,6 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, chil
             // Concrete example: text elements
             measures[i].cross = child
                 .measure(
-                    ctx,
                     &LayoutInput::from_logical(
                         main_axis,
                         measures[i].main.into(),
@@ -312,7 +311,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, chil
 
         if alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
-            let layout = child.layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+            let layout = child.layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
@@ -338,7 +337,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, ctx: &LayoutCtx, chil
     for (i, child) in children.iter().enumerate() {
         // TODO don't layout again if we already have the layout (the child may be already laid out
         // due to baseline alignment)
-        child_layouts[i] = child.layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+        child_layouts[i] = child.layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
     }
 
     trace!(

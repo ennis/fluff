@@ -3,7 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, EventCtx, HitTestCtx, IntoElementAny, LayoutCtx, MeasureCtx, WindowCtx};
+use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, LayoutCtx, MeasureCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::flex::{flex_layout, FlexLayoutParams};
 use crate::layout::{Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue};
@@ -11,6 +11,7 @@ use crate::{drawing, layout, register_template, Color, ElementState, Notifier, P
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
 use smallvec::SmallVec;
 use tracing::{trace, trace_span};
+use crate::application::run_queued;
 
 #[derive(Clone, Default)]
 pub struct FrameStyleOverride {
@@ -80,6 +81,7 @@ impl FrameStyle {
 
 /// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
+    ctx: ElementCtx<Self>,
     pub clicked: Notifier<()>,
     pub hovered: Notifier<bool>,
     pub active: Notifier<bool>,
@@ -108,6 +110,7 @@ impl Frame {
     /// Creates a new `Frame` with the default styles.
     pub fn new() -> ElementBuilder<Frame> {
         ElementBuilder::new(Frame {
+            ctx: ElementCtx::new(),
             clicked: Default::default(),
             hovered: Default::default(),
             active: Default::default(),
@@ -133,7 +136,7 @@ impl Frame {
     /// Adds a child item to this frame.
     #[must_use]
     pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
-        let weak_self = self.weak();
+        let weak_self = self.weak_any();
         self.children.push(child.into_element(weak_self, 0));
         self
     }
@@ -365,7 +368,6 @@ impl Frame {
     /// * `cross` - cross axis size constraint (available space)
     fn measure_content(
         &self,
-        ctx: &LayoutCtx,
         p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
@@ -401,7 +403,7 @@ impl Frame {
             gap,
             initial_gap,
             final_gap,
-        }, ctx, p.children);
+        }, p.children);
 
         Size {
             width: output.width + self.padding.x_value(),
@@ -412,7 +414,6 @@ impl Frame {
     /// Measures a box element sized according to the specified constraints.
     fn measure_inner(
         &self,
-        ctx: &LayoutCtx,
         p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
@@ -444,7 +445,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(ctx, p, parent_width, parent_height, cstr, height_constraint)
+                        self.measure_content(p, parent_width, parent_height, cstr, height_constraint)
                             .width,
                     )
                 }
@@ -457,7 +458,7 @@ impl Frame {
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(ctx, p, parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint)
                 .width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
@@ -480,7 +481,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(ctx, p, parent_width, parent_height, updated_width_constraint, cstr)
+                        self.measure_content(p, parent_width, parent_height, updated_width_constraint, cstr)
                             .height,
                     )
                 }
@@ -489,7 +490,7 @@ impl Frame {
         };
 
         let mut height = eval_height(self.height).unwrap_or_else(|| {
-            self.measure_content(ctx, p, parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint)
                 .height
         });
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
@@ -502,7 +503,19 @@ impl Frame {
 }
 
 impl Element for Frame {
-    fn measure(&mut self, ctx: &LayoutCtx, layout_input: &LayoutInput) -> Size {
+    fn ctx(&self) -> &ElementCtxAny {
+        &self.ctx
+    }
+
+    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
+        &mut self.ctx
+    }
+
+    fn children(&self) -> Vec<ElementAny> {
+        self.children.clone()
+    }
+
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
 
         // TODO vertical direction layout
@@ -511,17 +524,17 @@ impl Element for Frame {
             children: &self.children[..],
         };
         let output = self.measure_inner(
-            ctx,
             &p,
             layout_input.parent_width,
             layout_input.parent_height,
             layout_input.width,
             layout_input.height,
         );
+
         output
     }
 
-    fn layout(&mut self, ctx: &LayoutCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
 
         let padding = self.padding;
@@ -548,7 +561,6 @@ impl Element for Frame {
                 initial_gap,
                 final_gap,
             },
-            ctx,
             &self.children[..],
         );
 
@@ -612,13 +624,13 @@ impl Element for Frame {
         }
     }
 
-    fn event(&mut self, ctx: &mut EventCtx, event: &mut Event) {
-        fn update_state(this: &mut Frame, ctx: &mut EventCtx, state: ElementState) {
+    fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {
+        fn update_state(this: &mut Frame, ctx: &mut WindowCtx, state: ElementState) {
             this.state = state;
             this.state_changed.invoke(state);
             if this.state_affects_style {
                 this.style_changed = true;
-                ctx.mark_needs_relayout();
+                this.ctx.mark_needs_layout();
             }
         }
 

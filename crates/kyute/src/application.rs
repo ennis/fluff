@@ -47,7 +47,9 @@ struct AppState {
     windows: RefCell<HashMap<WindowId, Weak<dyn WindowHandler>>>,
     spawner: LocalSpawner,
     timers: RefCell<SmallVec<Timer, 4>>,
+    queued_callbacks: RefCell<Vec<Box<dyn FnOnce()>>>,
 }
+
 
 scoped_thread_local!(static APP_STATE: AppState);
 
@@ -65,8 +67,30 @@ pub fn spawn(fut: impl Future<Output=()> + 'static) -> AbortHandle {
     })
 }
 
+
+/// Registers a closure to run during the next iteration of the event loop, and wakes the event loop.
+pub fn run_queued(f: impl FnOnce() + 'static) {
+    APP_STATE.with(|state| {
+        state.queued_callbacks.borrow_mut().push(Box::new(f));
+    });
+    wake_event_loop();
+}
+
+/// Registers a closure to run at a certain point in the future.
+pub fn run_after(after: Duration, f: impl FnOnce() + 'static) {
+    let deadline = Instant::now() + after;
+
+    // using async tasks is not strictly necessary but it's a way to exercise the async machinery
+    spawn(async move {
+        wait_until(deadline).await;
+        run_queued(f);
+    });
+}
+
+
 /// Handler for window events.
 pub trait WindowHandler {
+    /// Called by the event loop when a window event is received that targets this window.
     fn event(&self, event: &winit::event::WindowEvent);
 }
 
@@ -131,9 +155,10 @@ pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::
 
     let mut local_pool = LocalPool::new();
     let app_state = AppState {
-        windows: RefCell::new(HashMap::new()),
+        windows: Default::default(),
         spawner: local_pool.spawner(),
-        timers: RefCell::new(Default::default()),
+        timers: Default::default(),
+        queued_callbacks: Default::default(),
     };
 
     let result = APP_STATE.set(&app_state, || {
@@ -151,6 +176,7 @@ pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::
                 //let event_time = Instant::now().duration_since(event_loop_start_time);
                 APP_STATE.with(|state| {
                     match event {
+                        // TIMERS //////////////////////////////////////////////////////////////////
                         Event::NewEvents(cause) => {
                             match cause {
                                 StartCause::ResumeTimeReached { .. }
@@ -171,6 +197,17 @@ pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::
                                 StartCause::Init => {}
                             }
                         }
+
+                        // USER WAKEUP /////////////////////////////////////////////////////////////
+                        Event::UserEvent(ExtEvent::UpdateUi) => {
+                            // run queued callbacks
+                            let ref mut queued_callbacks = *state.queued_callbacks.borrow_mut();
+                            for callback in queued_callbacks.drain(..) {
+                                callback();
+                            }
+                        }
+
+                        // WINDOW EVENTS ///////////////////////////////////////////////////////////
                         Event::WindowEvent {
                             window_id,
                             event: window_event,

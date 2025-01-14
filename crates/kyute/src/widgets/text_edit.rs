@@ -11,7 +11,7 @@ use unicode_segmentation::GraphemeCursor;
 
 use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, EventCtx, HitTestCtx, LayoutCtx};
+use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
 use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
@@ -308,16 +308,18 @@ enum Gesture {
 
 /// Single- or multiline text editor.
 pub struct TextEdit {
+    ctx: ElementCtx<Self>,
     selection_changed: Notifier<Selection>,
     state: TextEditState,
-    gesture: Cell<Option<Gesture>>,
-    blink_phase: Cell<bool>,
-    blink_reset: Cell<bool>,
+    gesture: Option<Gesture>,
+    blink_phase: bool,
+    blink_pending_reset: bool,
 }
 
 impl TextEdit {
     pub fn new() -> ElementBuilder<TextEdit> {
-        let text_edit = ElementBuilder::new(TextEdit {
+        let mut text_edit = ElementBuilder::new(TextEdit {
+            ctx: ElementCtx::new(),
             selection_changed: Default::default(),
             state: TextEditState {
                 text: String::new(),
@@ -335,123 +337,117 @@ impl TextEdit {
                 text_overflow: TextOverflow::Clip,
                 line_clamp: None,
             },
-            blink_phase: Cell::new(true),
-            blink_reset: Cell::new(false),
-            gesture: Cell::new(None),
+            blink_phase: true,
+            blink_pending_reset: false,
+            gesture: None,
         });
 
-        // TODO
-        //text_edit.set_tab_focusable(true);
-
-        /*// spawn the caret blinker task
-        let this_weak = text_edit.weak();
-        spawn(async move {
-            'task: loop {
-                // Initial delay before blinking
-                wait_for(CARET_BLINK_INITIAL_DELAY).await;
-                // blinking
-                'blink: loop {
-                    if let Some(this) = this_weak.upgrade() {
-                        if this.blink_reset.replace(false) {
-                            // reset requested
-                            this.blink_phase.set(true);
-                            this.mark_needs_repaint();
-                            break 'blink;
-                        }
-                        this.blink_phase.set(!this.blink_phase.get());
-                        this.mark_needs_repaint();
-                    } else {
-                        // text edit is dead, exit task
-                        break 'task;
-                    }
-                    wait_for(CARET_BLINK_INTERVAL).await;
-                }
-            }
-        });*/
-
+        text_edit.reset_blink_cursor();
         text_edit
     }
 
-    pub fn set_wrap_mode(&mut self, ctx: &mut ElementCtx, wrap_mode: WrapMode) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn reset_blink_cursor(&mut self) {
+        self.blink_phase = true;
+        self.blink_pending_reset = true;
+        self.ctx.mark_needs_paint();
+        // Initial delay before blinking
+        self.ctx.run_after(CARET_BLINK_INITIAL_DELAY, move |this| {
+            this.blink_pending_reset = false;
+            this.blink_cursor();
+        });
+    }
+
+    pub fn blink_cursor(&mut self) {
+        if self.blink_pending_reset {
+            // ignore this blink event, a reset is pending, we're in the initial delay
+            return;
+        }
+
+        self.blink_phase = !self.blink_phase;
+        self.ctx.mark_needs_paint();
+        self.ctx.run_after(CARET_BLINK_INTERVAL, TextEdit::blink_cursor);
+    }
+
+    pub fn set_wrap_mode(&mut self, wrap_mode: WrapMode) {
+        let this = &mut self.state;
         if this.wrap_mode != wrap_mode {
             this.wrap_mode = wrap_mode;
             this.rebuild_paragraph();
             this.relayout = true;
-            ctx.mark_needs_relayout();
+            self.ctx.mark_needs_layout();
         }
     }
 
-    pub fn set_max_lines(&mut self, ctx: &mut ElementCtx, max_lines: usize) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_max_lines(&mut self, max_lines: usize) {
+        let this = &mut self.state;
         this.line_clamp = Some(max_lines);
         this.rebuild_paragraph();
         this.relayout = true;
-        ctx.mark_needs_relayout();
+        self.ctx.mark_needs_layout();
     }
 
-    pub fn set_text_align(&mut self, ctx: &mut ElementCtx, align: TextAlign) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_text_align(&mut self, align: TextAlign) {
+        let this = &mut self.state;
         if this.align != align {
             this.align = align;
             this.rebuild_paragraph();
             this.relayout = true;
-            ctx.mark_needs_relayout();
+            self.ctx.mark_needs_layout();
         }
     }
 
-    pub fn set_overflow(&mut self, ctx: &mut ElementCtx, overflow: TextOverflow) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_overflow(&mut self, overflow: TextOverflow) {
+        let this = &mut self.state;
         if this.text_overflow != overflow {
             this.text_overflow = overflow;
             this.rebuild_paragraph();
             this.relayout = true;
-            ctx.mark_needs_relayout();
+            self.ctx.mark_needs_layout();
         }
     }
 
-    /// Resets the phase of the blinking caret.
-    pub fn reset_blink(&mut self, ctx: &mut ElementCtx) {
+    /*/// Resets the phase of the blinking caret.
+    pub fn reset_blink(&mut self) {
         self.blink_phase.set(true);
-        self.blink_reset.set(true);
-        ctx.mark_needs_repaint();
-    }
+        self.blink_pending_reset.set(true);
+        self.ctx.mark_needs_paint();
+    }*/
 
-    pub fn set_caret_color(&mut self, ctx: &mut ElementCtx, color: Color) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_caret_color(&mut self, color: Color) {
+        let this = &mut self.state;
         if this.caret_color != color {
             this.caret_color = color;
-            ctx.mark_needs_repaint();
+            self.ctx.mark_needs_paint();
         }
     }
 
-    pub fn set_selection_color(&mut self, ctx: &mut ElementCtx, color: Color) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_selection_color(&mut self, color: Color) {
+        let this = &mut self.state;
         if this.selection_color != color {
             this.selection_color = color;
-            ctx.mark_needs_repaint();
+            self.ctx.mark_needs_paint();
         }
     }
 
-    pub fn set_text_style(&mut self, ctx: &mut ElementCtx, text_style: TextStyle) {
-        let this = &mut *self.state.borrow_mut();
+    pub fn set_text_style(&mut self, text_style: TextStyle) {
+        let this = &mut self.state;
         this.text_style = text_style.into_static();
         this.rebuild_paragraph();
         this.relayout = true;
-        ctx.mark_needs_relayout();
+        self.ctx.mark_needs_layout();
     }
 
     /// Returns the current selection.
     pub fn selection(&self) -> Selection {
-        self.state.borrow().selection
+        self.state.selection
     }
 
     /// Sets the current selection.
-    pub fn set_selection(&mut self, ctx: &mut ElementCtx, selection: Selection) -> bool {
+    pub fn set_selection(&mut self, selection: Selection) -> bool {
         // TODO clamp selection to text length
-        let this = &mut *self.state.borrow_mut();
+        let this = &mut self.state;
         if this.set_selection(selection) {
-            ctx.mark_needs_repaint();
+            self.ctx.mark_needs_paint();
             true
         } else {
             false
@@ -460,42 +456,42 @@ impl TextEdit {
 
     /// Returns the current text.
     pub fn text(&self) -> String {
-        self.state.borrow().text.clone()
+        self.state.text.clone()
     }
 
     /// Sets the current text.
-    pub fn set_text(&mut self, ctx: &mut ElementCtx, text: impl Into<String>) {
+    pub fn set_text(&mut self, text: impl Into<String>) {
         // TODO we could compare the previous and new text
         // to relayout only affected lines.
-        let this = &mut *self.state.borrow_mut();
+        let this = &mut self.state;
         this.text = text.into();
         this.rebuild_paragraph();
         this.relayout = true;
-        ctx.mark_needs_relayout();
+        self.ctx.mark_needs_layout();
     }
 
     pub fn text_position_for_point(&self, point: Point) -> usize {
-        self.state.borrow().text_position_for_point(point)
+        self.state.text_position_for_point(point)
     }
 
     /// NOTE: valid only after first layout.
-    pub fn set_cursor_at_point(&mut self, ctx: &mut ElementCtx, point: Point, keep_anchor: bool) -> bool {
-        if self.state.borrow_mut().set_cursor_at_point(point, keep_anchor) {
-            ctx.mark_needs_repaint();
+    pub fn set_cursor_at_point(&mut self, point: Point, keep_anchor: bool) -> bool {
+        if self.state.set_cursor_at_point(point, keep_anchor) {
+            self.ctx.mark_needs_paint();
             true
         } else {
             false
         }
     }
 
-    pub fn select_word_under_cursor(&mut self, ctx: &mut ElementCtx) {
-        if self.state.borrow_mut().select_word_under_cursor() {
-            self.mark_needs_repaint();
+    pub fn select_word_under_cursor(&mut self) {
+        if self.state.select_word_under_cursor() {
+            self.ctx.mark_needs_paint();
         }
     }
 
     pub fn word_selection_at_text_position(&self, pos: usize) -> Selection {
-        self.state.borrow().word_selection_at_text_position(pos)
+        self.state.word_selection_at_text_position(pos)
     }
 
     /*pub fn select_word_at_offset_with_anchor(&self, offset: usize, anchor_selection: Selection) -> bool {
@@ -527,34 +523,34 @@ impl TextEdit {
     }*/
 
     /// Moves the cursor to the next or previous word boundary.
-    pub fn move_cursor_to_next_word(&mut self, ctx: &mut ElementCtx, keep_anchor: bool) {
-        if self.state.borrow_mut().move_cursor_to_next_word(keep_anchor) {
-            ctx.mark_needs_repaint();
+    pub fn move_cursor_to_next_word(&mut self, keep_anchor: bool) {
+        if self.state.move_cursor_to_next_word(keep_anchor) {
+            self.ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_prev_word(&mut self, ctx: &mut ElementCtx, keep_anchor: bool) {
-        if self.state.borrow_mut().move_cursor_to_prev_word(keep_anchor) {
-            ctx.mark_needs_repaint();
+    pub fn move_cursor_to_prev_word(&mut self, keep_anchor: bool) {
+        if self.state.move_cursor_to_prev_word(keep_anchor) {
+            self.ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_next_grapheme(&mut self, ctx: &mut ElementCtx, keep_anchor: bool) {
-        if self.state.borrow_mut().move_cursor_to_next_grapheme(keep_anchor) {
-            ctx.mark_needs_repaint();
+    pub fn move_cursor_to_next_grapheme(&mut self, keep_anchor: bool) {
+        if self.state.move_cursor_to_next_grapheme(keep_anchor) {
+            self.ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_prev_grapheme(&mut self, ctx: &mut ElementCtx, keep_anchor: bool) {
-        if self.state.borrow_mut().move_cursor_to_prev_grapheme(keep_anchor) {
-            ctx.mark_needs_repaint();
+    pub fn move_cursor_to_prev_grapheme(&mut self, keep_anchor: bool) {
+        if self.state.move_cursor_to_prev_grapheme(keep_anchor) {
+            self.ctx.mark_needs_paint();
         }
     }
 
     /// Selects the line under the cursor.
-    pub fn select_line_under_cursor(&mut self, ctx: &mut ElementCtx) {
-        if self.state.borrow_mut().select_line_under_cursor() {
-            ctx.mark_needs_repaint();
+    pub fn select_line_under_cursor(&mut self, ctx: &mut ElementCtxAny) {
+        if self.state.select_line_under_cursor() {
+            self.ctx.mark_needs_paint();
         }
     }
 
@@ -575,17 +571,25 @@ impl TextEdit {
 // - become scrollable
 
 impl Element for TextEdit {
-    fn measure(&mut self, _ctx: &LayoutCtx, layout_input: &LayoutInput) -> Size {
+    fn ctx(&self) -> &ElementCtxAny {
+        &self.ctx
+    }
+
+    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
+        &mut self.ctx
+    }
+
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("TextEdit::measure",).entered();
 
-        let this = &mut *self.state.borrow_mut();
+        let this = &mut self.state;
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         this.paragraph.layout(space);
         Size::new(this.paragraph.longest_line() as f64, this.paragraph.height() as f64)
     }
 
-    fn layout(&mut self, _ctx: &LayoutCtx, size: Size) -> LayoutOutput {
-        let this = &mut *self.state.borrow_mut();
+    fn layout(&mut self, size: Size) -> LayoutOutput {
+        let this = &mut self.state;
         this.paragraph.layout(size.width as f32);
         let output = LayoutOutput {
             width: this.paragraph.longest_line() as f64,
@@ -601,7 +605,7 @@ impl Element for TextEdit {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        let this = &mut *self.state.borrow_mut();
+        let this = &mut self.state;
         let bounds = ctx.size.to_rect();
 
         ctx.with_canvas(|canvas| {
@@ -626,7 +630,7 @@ impl Element for TextEdit {
                 canvas.draw_rect(text_box.rect, &selection_paint);
             }
 
-            if self.has_focus() && self.blink_phase.get() {
+            if self.ctx.has_focus() && (self.blink_phase || self.blink_pending_reset) {
                 if let Some(info) = this.paragraph.get_glyph_cluster_at(this.selection.end) {
                     let caret_rect = Rect::from_origin_size(
                         Point::new((info.bounds.left as f64).round(), (info.bounds.top as f64).round()),
@@ -642,10 +646,8 @@ impl Element for TextEdit {
         });
     }
 
-    fn event(&mut self, ctx: &mut EventCtx, event: &mut Event) {
+    fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {
         let mut selection_changed = false;
-        //let mut this = self.state.borrow_mut();
-        let mut set_focus = false;
 
         match event {
             Event::PointerDown(event) => {
@@ -653,51 +655,49 @@ impl Element for TextEdit {
                 eprintln!("[text_edit] pointer down: {:?}", pos);
                 if event.repeat_count == 2 {
                     // select word under cursor
-                    self.select_word_under_cursor(ctx);
+                    self.select_word_under_cursor();
                     selection_changed = true;
-                    self.gesture.set(Some(Gesture::WordSelection {
+                    self.gesture = Some(Gesture::WordSelection {
                         anchor: self.selection(),
-                    }));
+                    });
                 } else if event.repeat_count == 3 {
                     // TODO select line under cursor
                 } else {
-                    selection_changed |= self.set_cursor_at_point(ctx, pos, false);
-                    self.gesture.set(Some(Gesture::CharacterSelection));
+                    selection_changed |= self.set_cursor_at_point(pos, false);
+                    self.gesture = Some(Gesture::CharacterSelection);
                 }
-                self.reset_blink(ctx);
-                // Don't immediately call `set_focus` because we'll recurse into this event handler
-                // with `self.state` already borrowed mutably.
-                set_focus = true;
-                ctx.set_pointer_capture();
+                self.reset_blink_cursor();
+                self.ctx.set_focus();
+                self.ctx.set_pointer_capture();
             }
             Event::PointerMove(event) => {
                 //eprintln!("pointer move point: {:?}", event.local_position());
                 let pos = event.local_position();
 
-                match self.gesture.get() {
+                match self.gesture {
                     Some(Gesture::CharacterSelection) => {
-                        selection_changed |= self.set_cursor_at_point(ctx, pos, true);
+                        selection_changed |= self.set_cursor_at_point(pos, true);
                     }
                     Some(Gesture::WordSelection { anchor }) => {
                         let text_offset = self.text_position_for_point(pos);
                         let word_selection = self.word_selection_at_text_position(text_offset);
-                        selection_changed |= self.set_selection(ctx, add_selections(anchor, word_selection));
+                        selection_changed |= self.set_selection(add_selections(anchor, word_selection));
                     }
                     _ => {}
                 }
 
-                self.reset_blink(ctx);
+                self.reset_blink_cursor();
             }
             Event::PointerUp(_event) => {
-                self.gesture.set(None);
+                self.gesture = None;
             }
             Event::FocusGained => {
                 eprintln!("focus gained");
-                self.reset_blink(ctx);
+                self.reset_blink_cursor();
             }
             Event::FocusLost => {
                 eprintln!("focus lost");
-                selection_changed |= self.set_selection(ctx, Selection::empty(0));
+                selection_changed |= self.set_selection(Selection::empty(0));
             }
             Event::KeyDown(event) => {
                 let keep_anchor = event.modifiers.shift();
@@ -706,21 +706,21 @@ impl Element for TextEdit {
                     Key::ArrowLeft => {
                         // TODO bidi?
                         if word_nav {
-                            self.move_cursor_to_prev_word(ctx, keep_anchor);
+                            self.move_cursor_to_prev_word(keep_anchor);
                         } else {
-                            self.move_cursor_to_prev_grapheme(ctx, keep_anchor);
+                            self.move_cursor_to_prev_grapheme(keep_anchor);
                         }
                         selection_changed = true;
-                        self.reset_blink(ctx);
+                        self.reset_blink_cursor();
                     }
                     Key::ArrowRight => {
                         if word_nav {
-                            self.move_cursor_to_next_word(ctx, keep_anchor);
+                            self.move_cursor_to_next_word(keep_anchor);
                         } else {
-                            self.move_cursor_to_next_grapheme(ctx, keep_anchor);
+                            self.move_cursor_to_next_grapheme(keep_anchor);
                         }
                         selection_changed = true;
-                        self.reset_blink(ctx);
+                        self.reset_blink_cursor();
                     }
                     Key::Character(ref s) => {
                         // TODO don't do this, emit the changed text instead
@@ -732,8 +732,8 @@ impl Element for TextEdit {
                         self.state.relayout = true;
                         self.state.selection = Selection::empty(selection.min() + s.len());
                         selection_changed = true;
-                        ctx.mark_needs_relayout();
-                        self.reset_blink(ctx);
+                        self.ctx.mark_needs_layout();
+                        self.reset_blink_cursor();
                     }
                     _ => {}
                 }
@@ -741,12 +741,8 @@ impl Element for TextEdit {
             _ => {}
         }
 
-        if set_focus {
-            ctx.set_focus();
-        }
-
         if selection_changed {
-            ctx.mark_needs_repaint();
+            self.ctx.mark_needs_paint();
             self.selection_changed.invoke(self.selection());
         }
     }
