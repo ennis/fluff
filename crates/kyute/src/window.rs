@@ -115,6 +115,8 @@ pub(crate) struct WindowInner {
     active_popup: RefCell<Option<Weak<WindowInner>>>,
     // DEBUGGING
     last_kb_event: RefCell<Option<KeyboardEvent>>,
+    /// Flag indicating that the element tree of this window should be laid out again.
+    needs_layout: Cell<bool>,
 }
 
 impl WindowInner {
@@ -459,6 +461,15 @@ impl WindowInner {
         self.active_popup.replace(Some(Rc::downgrade(&window.shared)));
     }
 
+    fn mark_needs_layout(&self) {
+        self.needs_layout.set(true);
+        self.window.request_redraw();
+    }
+
+    fn mark_needs_paint(&self) {
+        self.window.request_redraw();
+    }
+
     /// Converts & dispatches a winit window event.
     fn dispatch_window_event(&self, event: &WindowEvent) {
         // First, redirect the input event to the popup window if there is one.
@@ -526,7 +537,7 @@ impl WindowInner {
                     // resize the compositor layer
                     self.layer.set_surface_size(sizef);
                 }
-                self.root.mark_needs_relayout();
+                self.needs_layout.set(true);
             }
             WindowEvent::Focused(focused) => {
                 self.focus_changed.invoke(*focused);
@@ -554,7 +565,7 @@ impl WindowInner {
             //self.layer.set_surface_size(physical_size);
         }
 
-        if self.root.needs_relayout() {
+        if self.needs_layout.replace(false) {
             let size = self.root.measure(&LayoutInput {
                 parent_width: Some(size.width),
                 parent_height: Some(size.height),
@@ -753,6 +764,7 @@ impl Window {
             background: Cell::new(options.background),
             active_popup: RefCell::new(None),
             last_kb_event: RefCell::new(None),
+            needs_layout: Cell::new(true),
         });
 
         application::register_window(window_id, shared.clone());
@@ -776,6 +788,14 @@ impl Window {
         WeakWindow {
             shared: Rc::downgrade(&self.shared),
         }
+    }
+
+    pub fn mark_needs_layout(&self) {
+        self.shared.mark_needs_layout();
+    }
+
+    pub fn mark_needs_paint(&self) {
+        self.shared.mark_needs_paint();
     }
 
     pub fn set_popup(&self, window: &Window) {

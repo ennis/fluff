@@ -133,6 +133,13 @@ impl Frame {
         })
     }
 
+    /// Specifies a closure to be called when the frame is clicked.
+    #[must_use]
+    pub fn on_click(mut self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
+        self.clicked.watch(move |_| func());
+        self
+    }
+
     /// Adds a child item to this frame.
     #[must_use]
     pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
@@ -339,13 +346,12 @@ impl Frame {
     //    self.mark_needs_relayout();
     //}
 
-    //fn calculate_style(&self) {
-    //    if self.style_changed.get() {
-    //        self.resolved_style
-    //            .replace(self.style.borrow().apply_overrides(self.state.get()));
-    //        self.style_changed.set(false);
-    //    }
-    //}
+    fn resolve_style(&mut self) {
+        if self.style_changed {
+            self.resolved_style = self.style.apply_overrides(self.state);
+            self.style_changed = false;
+        }
+    }
 }
 
 struct BoxSizingParams<'a> {
@@ -576,14 +582,14 @@ impl Element for Frame {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        todo!()
+        self.ctx.size().to_rect().contains(point)
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        //self.calculate_style();
+        self.resolve_style();
 
         let rect = ctx.size.to_rect();
-        let s = self.resolved_style.clone();
+        let s = &self.resolved_style;
 
         let border_radius = s.border_radius;
         // border shape

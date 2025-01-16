@@ -42,7 +42,15 @@ impl<T: 'static> Notifier<T> {
 
         let cb_index = self.watch(move |t| {
             unsafe {
-                // SAFETY: no other references to `result` or `waker` are live
+                // SAFETY: no other references to `result` or `waker` are live.
+
+                // FIXME: unsound: the future returned by wait can be dropped (cancelled) before it is polled to completion
+                // and we end up with a dangling reference to the result.
+                // We also can't use a guard to unwatch because we can `mem::forget` the future
+                // which won't call destructors.
+
+                // ALTERNATIVE: allocate result and waker on the heap
+
                 *result_ptr = Some(t);
                 if let Some(waker) = (*waker_ptr).take() {
                     waker.wake();
@@ -63,6 +71,9 @@ impl<T: 'static> Notifier<T> {
             }
         }).await;
 
+        // FIXME: this is unsound because the future returned by wait can be dropped before it is
+        // polled to completion: we end up with
+
         self.unwatch(cb_index);
         unsafe { (*result.get()).take().unwrap() }
     }
@@ -77,3 +88,5 @@ impl<T: Clone + 'static> Notifier<T> {
         }
     }
 }
+
+pub struct Signal {}

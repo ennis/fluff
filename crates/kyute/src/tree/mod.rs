@@ -258,10 +258,10 @@ impl<'a, N> NodeRefMut<'a, N> {
             if this.parent.is_null() {
                 return;
             }
-            let parent = unsafe { &mut *this.parent };
+            let parent = &mut *this.parent;
             parent.children.remove(this.index_in_parent);
             for i in this.index_in_parent..parent.children.len() {
-                let child = unsafe { &mut *parent.children[i] };
+                let child = &mut *parent.children[i];
                 child.index_in_parent -= 1;
             }
             this.parent = std::ptr::null_mut();
@@ -307,7 +307,7 @@ impl<'a, N> NodeRefMut<'a, N> {
     pub fn children(&self) -> impl Iterator<Item=&'a N> + '_ {
         // SAFETY: the children are guaranteed to be valid as long as the parent node is alive.
         unsafe {
-            (*self.0).children.iter().map(|&child| unsafe { &(*child).inner })
+            (*self.0).children.iter().map(|&child| &(*child).inner)
         }
     }
 

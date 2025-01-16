@@ -288,7 +288,7 @@ impl Hash for WeakElementAny {
 
 impl Ord for WeakElementAny {
     fn cmp(&self, other: &Self) -> Ordering {
-        Weak::as_ptr(&self.0).cmp(&Weak::as_ptr(&other.0))
+        Weak::as_ptr(&self.0).cast::<()>().cmp(&Weak::as_ptr(&other.0).cast::<()>())
     }
 }
 
@@ -373,7 +373,7 @@ impl PartialOrd for ElementAny {
 
 impl Ord for ElementAny {
     fn cmp(&self, other: &Self) -> Ordering {
-        Rc::as_ptr(&self.0).cmp(&Rc::as_ptr(&other.0))
+        Rc::as_ptr(&self.0).cast::<()>().cmp(&Rc::as_ptr(&other.0).cast::<()>())
     }
 }
 
@@ -448,7 +448,9 @@ impl ElementAny {
     pub fn layout(&self, size: Size) -> LayoutOutput {
         let ref mut inner = *self.borrow_mut();
         inner.ctx_mut().geometry = size;
-        inner.layout(size)
+        let output = inner.layout(size);
+        inner.ctx_mut().change_flags.remove(ChangeFlags::LAYOUT);
+        output
     }
 
     /// Returns the list of children of this element.
@@ -529,7 +531,8 @@ impl ElementAny {
     }
 
     pub fn get<A: AttachedProperty>(&self, property: A) -> Option<A::Value> {
-        todo!("get")
+        //todo!("get")
+        None
     }
 
     /// Returns a reference to the specified attached property, or `None` if it is not set.
@@ -538,11 +541,12 @@ impl ElementAny {
     ///
     /// Same contract as `get_ref`.
     pub unsafe fn try_get_ref<A: AttachedProperty>(&self, _property: A) -> Option<&A::Value> {
-        todo!("try_get_ref")
+        //todo!("try_get_ref")
         //let attached_properties = unsafe { &*self.attached_properties.get() };
         //attached_properties
         //    .get(&TypeId::of::<T>())
         //    .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
+        None
     }
 }
 
@@ -614,6 +618,14 @@ impl ElementCtxAny {
         self.transform *= Affine::translate(offset);
     }
 
+    pub fn size(&self) -> Size {
+        self.geometry
+    }
+
+    pub fn transform(&self) -> &Affine {
+        &self.transform
+    }
+
     pub fn mark_needs_layout(&mut self) {
         self.change_flags |= ChangeFlags::LAYOUT;
     }
@@ -661,6 +673,14 @@ impl ElementCtxAny {
             }
             parent_ctx.change_flags |= self.change_flags;
             parent_ctx.propagate_dirty_flags();
+        }
+
+        if let Some(window) = self.window.upgrade() {
+            if self.change_flags.contains(ChangeFlags::LAYOUT) {
+                window.mark_needs_layout();
+            } else if self.change_flags.contains(ChangeFlags::PAINT) {
+                window.mark_needs_paint();
+            }
         }
     }
 }

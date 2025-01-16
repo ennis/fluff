@@ -7,7 +7,7 @@ use crate::ElementState;
 use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
 use crate::widgets::text::Text;
 use crate::{text, Color};
-use crate::element::IntoElementAny;
+use crate::element::{ElementBuilder, IntoElementAny};
 use crate::layout::{Axis, SizeValue};
 
 fn button_style() -> FrameStyle {
@@ -48,7 +48,7 @@ fn button_style() -> FrameStyle {
     BUTTON_STYLE.with(|s| s.clone())
 }
 
-pub fn button(label: impl Into<String>) -> impl IntoElementAny {
+pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
     let label = label.into();
     let theme = &DARK_THEME;
     let text_style = TextStyle::new()
