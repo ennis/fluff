@@ -1226,3 +1226,57 @@ However, unlike masonry, containers don't hold the list of their children.
 - Ableton: custom, closed source, not extensible
 - Affinity Designer: possibly custom C# or C++, closed source
 - Sublime Text: possibly custom, rendering with skia, closed source
+
+# Practical GUI visual design
+
+Ideally, would use something like illustrator instead of doing stuff in code. However, very difficult
+to do responsive stuff in software like that.
+
+Alternative: a mini drawing language that can be hot-reloaded.
+Contains drawing instructions.
+
+Q: how to pass information from Rust to the drawing instructions?
+Q: how to embed rust code in it?
+Q: interactivity?
+Q: how to embed other components?
+
+```
+
+Input:
+- drawing region (rectangle)
+- 
+
+Variables:
+- center
+
+Declarations:
+- transform blocks
+- clip regions
+
+
+{
+    #rect(bounds) {
+        #fill(FILL_COLOR)
+        #stroke(1px, inner, STROKE_COLOR)
+        #box_shadow()
+    }
+    
+    
+    line(from: centerLeft, to: centerRight, 2px, center, STROKE_COLOR)
+    
+    #line(from: topLeft, to: bottomRight, 1px, center, STROKE_COLOR)
+    #line(from: bottomLeft, to: topRight, 1px, center, STROKE_COLOR)
+    
+    #if(hovered) {
+        #rect(bounds) { #fill(FILL_COLOR_HOVERED) }
+    }
+    
+    rect(bounds) + Fill { color: FILL_COLOR } + Stroke { } 
+        .fill(FILL_COLOR)
+        .stroke(1
+
+}
+
+
+
+```

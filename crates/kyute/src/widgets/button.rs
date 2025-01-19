@@ -1,14 +1,14 @@
 use kurbo::{Insets, Vec2};
 
 use crate::drawing::BoxShadow;
-use crate::text::TextStyle;
-use crate::theme::DARK_THEME;
-use crate::ElementState;
-use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
-use crate::widgets::text::Text;
-use crate::{text, Color};
 use crate::element::{ElementBuilder, IntoElementAny};
 use crate::layout::{Axis, SizeValue};
+use crate::text::TextStyle;
+use crate::theme::DARK_THEME;
+use crate::widgets::flex::Flex;
+use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
+use crate::widgets::text::Text;
+use crate::{text, Color, ElementState};
 
 fn button_style() -> FrameStyle {
     thread_local! {
@@ -46,6 +46,8 @@ fn button_style() -> FrameStyle {
         };
     }
     BUTTON_STYLE.with(|s| s.clone())
+
+    // Alternative:
 }
 
 pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
@@ -59,12 +61,13 @@ pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
     Frame::new()
         .style(button_style())
         .padding(4.0)
-        .direction(Axis::Horizontal)
-        .initial_gap(SizeValue::Stretch)
-        .final_gap(SizeValue::Stretch)
         .width(SizeValue::MaxContent)
-        .min_width(SizeValue::Fixed(80.0))
-        .child(text!( style(text_style) "{label}" ))
+        .min_width(80)
+        .content(
+            Flex::row()
+                .gaps(SizeValue::Stretch, 0, SizeValue::Stretch)
+                .child(text!( style(text_style) "{label}" )),
+        )
 
     /*let frame_weak = RcElement::downgrade(frame.clone());
     frame.state_changed.watch(move |state| {

@@ -6,7 +6,7 @@ use std::time::Duration;
 use keyboard_types::Key;
 use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
-use tracing::trace_span;
+use tracing::{info, trace_span, warn};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::application::{spawn, wait_for};
@@ -347,11 +347,15 @@ impl TextEdit {
     }
 
     pub fn reset_blink_cursor(&mut self) {
+        if self.blink_pending_reset {
+            return;
+        }
         self.blink_phase = true;
         self.blink_pending_reset = true;
         self.ctx.mark_needs_paint();
         // Initial delay before blinking
         self.ctx.run_after(CARET_BLINK_INITIAL_DELAY, move |this| {
+            info!("past caret blink delay");
             this.blink_pending_reset = false;
             this.blink_cursor();
         });
@@ -364,7 +368,10 @@ impl TextEdit {
         }
 
         self.blink_phase = !self.blink_phase;
-        self.ctx.mark_needs_paint();
+        if self.ctx.has_focus() {
+            info!("blink");
+            self.ctx.mark_needs_paint();
+        }
         self.ctx.run_after(CARET_BLINK_INTERVAL, TextEdit::blink_cursor);
     }
 
@@ -600,8 +607,8 @@ impl Element for TextEdit {
         output
     }
 
-    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        todo!()
+    fn hit_test(&self, _ctx: &mut HitTestCtx, point: Point) -> bool {
+        self.ctx.rect().contains(point)
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
@@ -677,16 +684,16 @@ impl Element for TextEdit {
                 match self.gesture {
                     Some(Gesture::CharacterSelection) => {
                         selection_changed |= self.set_cursor_at_point(pos, true);
+                        self.reset_blink_cursor();
                     }
                     Some(Gesture::WordSelection { anchor }) => {
                         let text_offset = self.text_position_for_point(pos);
                         let word_selection = self.word_selection_at_text_position(text_offset);
                         selection_changed |= self.set_selection(add_selections(anchor, word_selection));
+                        self.reset_blink_cursor();
                     }
                     _ => {}
                 }
-
-                self.reset_blink_cursor();
             }
             Event::PointerUp(_event) => {
                 self.gesture = None;

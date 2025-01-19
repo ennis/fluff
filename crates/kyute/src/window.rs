@@ -224,7 +224,7 @@ impl WindowInner {
         let mut hit_test_ctx = HitTestCtx::new();
         self.root.hit_test(&mut hit_test_ctx, hit_position);
         let hits = hit_test_ctx.hits;
-        let innermost_hit = hits.last().cloned();
+        let innermost_hit = hits.first().cloned();
         let is_pointer_up = matches!(event, Event::PointerUp(_));
 
         // If something is grabbing the pointer, then the event is delivered to that element;

@@ -198,6 +198,12 @@ impl From<f64> for SizeValue {
     }
 }
 
+impl From<i32> for SizeValue {
+    fn from(size: i32) -> Self {
+        SizeValue::Fixed(size as f64)
+    }
+}
+
 /// Conversion of SizeValue from DSL expressions.
 impl TryFrom<PropertyExpr> for SizeValue {
     type Error = &'static str;

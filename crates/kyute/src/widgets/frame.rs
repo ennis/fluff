@@ -7,7 +7,7 @@ use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtx
 use crate::event::Event;
 use crate::layout::flex::{flex_layout, FlexLayoutParams};
 use crate::layout::{Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue};
-use crate::{drawing, layout, register_template, Color, ElementState, Notifier, PaintCtx};
+use crate::{drawing, layout, Color, ElementState, Notifier, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
 use smallvec::SmallVec;
 use tracing::{trace, trace_span};
@@ -87,7 +87,6 @@ pub struct Frame {
     pub active: Notifier<bool>,
     pub focused: Notifier<bool>,
     pub state_changed: Notifier<ElementState>,
-    layout: FrameLayout,
 
     width: SizeValue,
     height: SizeValue,
@@ -103,7 +102,7 @@ pub struct Frame {
     state_affects_style: bool,
     resolved_style: FrameStyle,
 
-    children: Vec<ElementAny>,
+    content: Option<ElementAny>,
 }
 
 impl Frame {
@@ -116,7 +115,6 @@ impl Frame {
             active: Default::default(),
             focused: Default::default(),
             state_changed: Default::default(),
-            layout: Default::default(),
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -129,7 +127,7 @@ impl Frame {
             style_changed: true,
             state_affects_style: false,
             resolved_style: Default::default(),
-            children: vec![],
+            content: None,
         })
     }
 
@@ -142,9 +140,9 @@ impl Frame {
 
     /// Adds a child item to this frame.
     #[must_use]
-    pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
+    pub fn content(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
         let weak_self = self.weak_any();
-        self.children.push(child.into_element(weak_self, 0));
+        self.content = Some(child.into_element(weak_self, 0));
         self
     }
 
@@ -183,39 +181,6 @@ impl Frame {
         self
     }
 
-    /// Specifies layout direction.
-    #[must_use]
-    pub fn direction(mut self: ElementBuilder<Self>, dir: Axis) -> ElementBuilder<Self> {
-        let FrameLayout::Flex { ref mut direction, .. } = self.layout;
-        *direction = dir;
-        self
-    }
-
-    /// Specifies the gap between items in the layout direction.
-    #[must_use]
-    pub fn gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
-        let FrameLayout::Flex { ref mut gap, .. } = self.layout;
-        *gap = value.into();
-        self
-    }
-
-    /// Specifies the initial gap before the first item in the layout direction.
-    #[must_use]
-    pub fn initial_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
-        let FrameLayout::Flex {
-            ref mut initial_gap, ..
-        } = self.layout;
-        *initial_gap = value.into();
-        self
-    }
-
-    /// Specifies the final gap after the last item in the layout direction.
-    #[must_use]
-    pub fn final_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
-        let FrameLayout::Flex { ref mut final_gap, .. } = self.layout;
-        *final_gap = value.into();
-        self
-    }
 
     /// Specifies the padding (along all four sides) around the content placed inside the frame.
     #[must_use]
@@ -266,90 +231,11 @@ impl Frame {
         self
     }
 
-    //layout_style_setter!(direction, FrameLayout::Flex{direction, ..}, set_direction: Axis);
-    //layout_style_setter!(gap, FrameLayout::Flex{gap, ..}, set_gap: SizeValue);
-    //layout_style_setter!(initial_gap, FrameLayout::Flex{initial_gap, ..}, set_initial_gap: SizeValue);
-    //layout_style_setter!(final_gap, FrameLayout::Flex{final_gap, ..}, set_final_gap: SizeValue);
-
-    /*pub fn set_padding(&self, value: f64) {
-        self.padding.set(Insets::uniform(value));
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_padding_left(&self, value: f64) {
-        let mut padding = self.padding.get();
-        padding.x0 = value;
-        self.padding.set(padding);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_padding_right(&self, value: f64) {
-        let mut padding = self.padding.get();
-        padding.x1 = value;
-        self.padding.set(padding);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_padding_top(&self, value: f64) {
-        let mut padding = self.padding.get();
-        padding.y0 = value;
-        self.padding.set(padding);
-        self.mark_needs_relayout();
-    }
-
-    pub fn set_padding_bottom(&self, value: f64) {
-        let mut padding = self.padding.get();
-        padding.y1 = value;
-        self.padding.set(padding);
-        self.mark_needs_relayout();
-    }*/
-
-    //pub fn set_content(&self, content: impl Into<RcElement>) {
-    //    self.clear_children();
-    //    (self as &dyn Element).add_child(content)
-    //}
-
-    /*pub fn set_direction(&self, direction: Axis) {
-        if let FrameLayout::Flex { direction: ref mut d, .. } = *self.layout.borrow_mut() {
-            *d = direction;
-            self.mark_needs_relayout();
-        }
-    }*/
-
-    //pub fn set_width(&self, value: SizeValue) {
-    //    self.width.set(value);
-    //    self.mark_needs_relayout();
-    //}
-    //
-    //pub fn set_height(&self, value: SizeValue) {
-    //    self.height.set(value);
-    //    self.mark_needs_relayout();
-    //}
-    //
-    //pub fn set_min_width(&self, value: SizeValue) {
-    //    self.min_width.set(value);
-    //    self.mark_needs_relayout();
-    //}
-    //
-    //pub fn set_min_height(&self, value: SizeValue) {
-    //    self.min_height.set(value);
-    //    self.mark_needs_relayout();
-    //}
-    //
-    //pub fn set_max_width(&self, value: SizeValue) {
-    //    self.max_width.set(value);
-    //    self.mark_needs_relayout();
-    //}
-    //
-    //pub fn set_max_height(&self, value: SizeValue) {
-    //    self.max_height.set(value);
-    //    self.mark_needs_relayout();
-    //}
-
     fn resolve_style(&mut self) {
         if self.style_changed {
             self.resolved_style = self.style.apply_overrides(self.state);
             self.style_changed = false;
+            self.state_affects_style = self.style.affected_by_state();
         }
     }
 }
@@ -374,53 +260,31 @@ impl Frame {
     /// * `cross` - cross axis size constraint (available space)
     fn measure_content(
         &self,
-        p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
         height_constraint: SizeConstraint,
     ) -> Size {
-        let _span = trace_span!(
-            "Frame::measure_content",
-            ?width_constraint,
-            ?height_constraint,
-            ?parent_width,
-            ?parent_height
-        )
-            .entered();
-
         let width = width_constraint.deflate(self.padding.x_value());
         let height = height_constraint.deflate(self.padding.y_value());
 
-        // Measure the children by performing the measure steps of flex layout.
-        let FrameLayout::Flex {
-            direction,
-            gap,
-            initial_gap,
-            final_gap,
-        } = self.layout.clone();
+        let size = if let Some(content) = &self.content {
+            content.measure(&LayoutInput {
+                parent_width,
+                parent_height,
+                width,
+                height,
+            })
+        } else {
+            Size::ZERO
+        };
 
-        let output = flex_layout(LayoutMode::Measure, &FlexLayoutParams {
-            direction,
-            width_constraint: width,
-            height_constraint: height,
-            parent_width,
-            parent_height,
-            gap,
-            initial_gap,
-            final_gap,
-        }, p.children);
-
-        Size {
-            width: output.width + self.padding.x_value(),
-            height: output.height + self.padding.y_value(),
-        }
+        size + self.padding.size()
     }
 
     /// Measures a box element sized according to the specified constraints.
     fn measure_inner(
         &self,
-        p: &BoxSizingParams,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
@@ -451,7 +315,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(p, parent_width, parent_height, cstr, height_constraint)
+                        self.measure_content(parent_width, parent_height, cstr, height_constraint)
                             .width,
                     )
                 }
@@ -464,7 +328,7 @@ impl Frame {
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(parent_width, parent_height, width_constraint, height_constraint)
                 .width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
@@ -487,7 +351,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(p, parent_width, parent_height, updated_width_constraint, cstr)
+                        self.measure_content(parent_width, parent_height, updated_width_constraint, cstr)
                             .height,
                     )
                 }
@@ -496,7 +360,7 @@ impl Frame {
         };
 
         let mut height = eval_height(self.height).unwrap_or_else(|| {
-            self.measure_content(p, parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(parent_width, parent_height, width_constraint, height_constraint)
                 .height
         });
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
@@ -518,71 +382,44 @@ impl Element for Frame {
     }
 
     fn children(&self) -> Vec<ElementAny> {
-        self.children.clone()
+        self.content.clone().into_iter().collect()
     }
 
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
-
         // TODO vertical direction layout
-        let p = BoxSizingParams {
-            axis: Axis::Horizontal,
-            children: &self.children[..],
-        };
         let output = self.measure_inner(
-            &p,
             layout_input.parent_width,
             layout_input.parent_height,
             layout_input.width,
             layout_input.height,
         );
-
         output
     }
 
     fn layout(&mut self, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
+        let content_area = size - self.padding.size();
 
-        let padding = self.padding;
-        let content_area_width = size.width - padding.x_value();
-        let content_area_height = size.height - padding.y_value();
-
-        let FrameLayout::Flex {
-            direction,
-            gap,
-            initial_gap,
-            final_gap,
-        } = self.layout;
-
-        let mut output = flex_layout(
-            LayoutMode::Place,
-            &FlexLayoutParams {
-                direction,
-                width_constraint: SizeConstraint::Available(content_area_width),
-                height_constraint: SizeConstraint::Available(content_area_height),
-                // TODO parent width is unknown, so we can't use it for percentage calculations
-                parent_width: None,
-                parent_height: None,
-                gap,
-                initial_gap,
-                final_gap,
-            },
-            &self.children[..],
-        );
+        let mut output = if let Some(ref content) = self.content {
+            let output = content.layout(content_area);
+            content.set_offset(Vec2::new(self.padding.x0, self.padding.y0));
+            output
+        } else {
+            LayoutOutput::default()
+        };
 
         output.width = size.width;
         output.height = size.height;
-        output.baseline = output.baseline.map(|b| b + padding.y0);
-
-        let offset = Vec2::new(padding.x0, padding.y0);
-        for child in self.children.iter() {
-            child.add_offset(offset);
-        }
+        output.baseline = output.baseline.map(|b| b + self.padding.y0);
         output
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        self.ctx.size().to_rect().contains(point)
+        if let Some(content) = &self.content {
+            content.hit_test(ctx, point);
+        }
+        self.ctx.rect().contains(point)
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
@@ -625,8 +462,8 @@ impl Element for Frame {
         });
 
         // paint children
-        for child in self.children.iter() {
-            child.paint(ctx);
+        if let Some(content) = &self.content {
+            content.paint(ctx);
         }
     }
 
@@ -636,7 +473,7 @@ impl Element for Frame {
             this.state_changed.invoke(state);
             if this.state_affects_style {
                 this.style_changed = true;
-                this.ctx.mark_needs_layout();
+                this.ctx.mark_needs_paint();
             }
         }
 

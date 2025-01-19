@@ -3,7 +3,7 @@ use std::ops::Deref;
 
 use kurbo::{Point, Size};
 use skia_safe::textlayout;
-use tracing::{trace, trace_span};
+use tracing::{trace, trace_span, warn};
 
 use crate::drawing::ToSkia;
 use crate::element::{Element, ElementAny, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
@@ -82,8 +82,8 @@ impl Element for Text {
         output
     }
 
-    fn hit_test(&self, _ctx: &mut HitTestCtx, _point: Point) -> bool {
-        todo!()
+    fn hit_test(&self, _ctx: &mut HitTestCtx, point: Point) -> bool {
+        self.ctx.rect().contains(point)
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {

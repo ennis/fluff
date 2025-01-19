@@ -1,9 +1,12 @@
+use crate::element::{ElementAny, LayoutCtx, WindowCtx};
 use kurbo::{Size, Vec2};
 use tracing::trace;
-use crate::element::{ElementAny, LayoutCtx, WindowCtx};
 //use crate::element::{AttachedProperty};
 use crate::layout;
-use crate::layout::{Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue, SpacingAfter, SpacingBefore};
+use crate::layout::{
+    Alignment, Axis, AxisSizeHelper, HorizontalAlignment, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint,
+    SizeValue, SpacingAfter, SpacingBefore,
+};
 
 /*
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
@@ -27,59 +30,6 @@ pub enum CrossAxisAlignment {
     Baseline,
 }
 
-pub struct FlexFactor;
-
-/*
-impl AttachedProperty for FlexFactor {
-    type Value = f64;
-}*/
-
-/// Size value with a flex growth factor.
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-struct FlexSize {
-    /// Minimum space.
-    size: f64,
-    /// Flex factor (0.0 means no stretching).
-    flex: f64,
-}
-
-
-impl FlexSize {
-    const NULL: FlexSize = FlexSize { size: 0.0, flex: 0.0 };
-
-    /// Combines two flex sizes, e.g. two margins that collapse.
-    fn combine(self, other: FlexSize) -> FlexSize {
-        FlexSize {
-            size: self.size.max(other.size),
-            flex: self.flex.max(other.flex),
-        }
-    }
-
-    fn grow(self, available: f64) -> f64 {
-        if self.flex != 0.0 && available.is_finite() {
-            self.size.max(available)
-        } else {
-            self.size
-        }
-    }
-}
-
-impl From<f64> for FlexSize {
-    fn from(size: f64) -> Self {
-        FlexSize { size, flex: 0.0 }
-    }
-}
-
-impl From<SizeValue> for FlexSize {
-    fn from(size: SizeValue) -> Self {
-        match size {
-            SizeValue::Fixed(size) => FlexSize { size, flex: 0.0 },
-            SizeValue::Stretch => FlexSize { size: 0.0, flex: 1.0 },
-            _ => FlexSize::NULL,
-        }
-    }
-}
-
 
 pub struct FlexLayoutParams {
     /// The direction of the main axis of the flex container (vertical or horizontal).
@@ -96,30 +46,35 @@ pub struct FlexLayoutParams {
     pub final_gap: SizeValue,
 }
 
-pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAny]) -> LayoutOutput {
+pub struct FlexChild {
+    pub element: ElementAny,
+    pub flex: f64,
+    pub margin_before: SizeValue,
+    pub margin_after: SizeValue,
+    pub cross_axis_alignment: Alignment,
+}
+
+impl FlexChild {
+    pub fn new(element: ElementAny) -> Self {
+        FlexChild {
+            element,
+            flex: 0.0,
+            margin_before: SizeValue::Fixed(0.0),
+            margin_after: SizeValue::Fixed(0.0),
+            cross_axis_alignment: Default::default(),
+        }
+    }
+}
+
+pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
 
-    let (main_size_constraint, cross_size_constraint, parent_main, parent_cross) =
-        match p.direction {
-            Axis::Horizontal => {
-                (
-                    p.width_constraint,
-                    p.height_constraint,
-                    p.parent_width,
-                    p.parent_height,
-                )
-            }
-            Axis::Vertical => {
-                (
-                    p.height_constraint,
-                    p.width_constraint,
-                    p.parent_height,
-                    p.parent_width,
-                )
-            }
-        };
+    let (main_size_constraint, cross_size_constraint, parent_main, parent_cross) = match p.direction {
+        Axis::Horizontal => (p.width_constraint, p.height_constraint, p.parent_width, p.parent_height),
+        Axis::Vertical => (p.height_constraint, p.width_constraint, p.parent_height, p.parent_width),
+    };
 
     // ======
     // ====== Calculate the available space on the main axis ======
@@ -157,9 +112,10 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
     // Measure each child along the main axis (flex factor, ideal and maximum sizes), including fixed spacing.
     for (i, child) in children.iter().enumerate() {
         // get child flex factor
-        //let flex = child.get(layout::FlexFactor).unwrap_or_default();
+        let flex = child.flex;
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
+            .element
             .measure(&LayoutInput::from_logical(
                 main_axis,
                 main_size_constraint,
@@ -170,6 +126,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
             .main_cross(main_axis);
         // also measure the max width so that we know how much it can grow
         let max_item_main = child
+            .element
             .measure(&LayoutInput::from_logical(
                 main_axis,
                 SizeConstraint::MAX,
@@ -180,7 +137,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
             .axis(main_axis);
 
         non_flex_main_total += item_main;
-        flex_sum += /*flex*/ 0.0;   // TODO
+        flex_sum += flex;
 
         measures[i] = ItemMeasure {
             main: item_main,
@@ -190,8 +147,8 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
         };
 
         // add margin contributions
-        let margin_before = child.get(SpacingBefore).unwrap_or_default();
-        let margin_after = child.get(SpacingAfter).unwrap_or_default();
+        let margin_before = child.margin_before; // child.get(SpacingBefore).unwrap_or_default();
+        let margin_after = child.margin_after; // get(SpacingAfter).unwrap_or_default();
         //let min_margin_before = child.get(SpacingAfter).unwrap_or_default();
         //let min_margin_after = child.get(SpacingAfter).unwrap_or_default();
 
@@ -289,14 +246,14 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
             // even if the provided main size has grown, it may return the same main size.
             // Concrete example: text elements
             measures[i].cross = child
-                .measure(
-                    &LayoutInput::from_logical(
-                        main_axis,
-                        measures[i].main.into(),
-                        cross_size_constraint,
-                        parent_main,
-                        parent_cross,
-                    ))
+                .element
+                .measure(&LayoutInput::from_logical(
+                    main_axis,
+                    measures[i].main.into(),
+                    cross_size_constraint,
+                    parent_main,
+                    parent_cross,
+                ))
                 .axis(cross_axis);
         }
 
@@ -304,14 +261,16 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
 
         // If baseline alignment is requested, we need to perform child layout to get the baseline,
         // and perform alignment to know the final cross size.
-        let alignment = match cross_axis {
-            Axis::Horizontal => child.get(layout::HorizontalAlignment).unwrap_or_default(),
-            Axis::Vertical => child.get(layout::VerticalAlignment).unwrap_or_default(),
-        };
+        /*let alignment = match cross_axis {
+            Axis::Horizontal => child.horizontal_alignment, //child.get(layout::HorizontalAlignment).unwrap_or_default(),
+            Axis::Vertical => child.vertical_alignment // child.get(layout::VerticalAlignment).unwrap_or_default(),
+        };*/
 
-        if alignment == Alignment::FirstBaseline {
+        if child.cross_axis_alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
-            let layout = child.layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+            let layout = child
+                .element
+                .layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
@@ -337,7 +296,9 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
     for (i, child) in children.iter().enumerate() {
         // TODO don't layout again if we already have the layout (the child may be already laid out
         // due to baseline alignment)
-        child_layouts[i] = child.layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+        child_layouts[i] = child
+            .element
+            .layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
     }
 
     trace!(
@@ -354,10 +315,11 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
     for (i, child) in children.iter().enumerate() {
         let cross_child_size = child_layouts[i].size(cross_axis);
 
-        let alignment = match cross_axis {
-            Axis::Horizontal => child.get(layout::HorizontalAlignment).unwrap_or_default(),
-            Axis::Vertical => child.get(layout::VerticalAlignment).unwrap_or_default(),
-        };
+        /*let alignment = match cross_axis {
+            Axis::Horizontal => child.horizontal_alignment, // child.get(layout::HorizontalAlignment).unwrap_or_default(),
+            Axis::Vertical => child.vertical_alignment, // child.get(layout::VerticalAlignment).unwrap_or_default(),
+        };*/
+        let alignment = child.cross_axis_alignment;
 
         let offset_cross = match alignment {
             Alignment::Relative(p) => p * (cross_size - cross_child_size),
@@ -378,10 +340,10 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
         // set child offset
         match main_axis {
             Axis::Horizontal => {
-                child.set_offset(Vec2::new(offset_main, offset_cross));
+                child.element.set_offset(Vec2::new(offset_main, offset_cross));
             }
             Axis::Vertical => {
-                child.set_offset(Vec2::new(offset_cross, offset_main));
+                child.element.set_offset(Vec2::new(offset_cross, offset_main));
             }
         }
         offset_main += measures[i].main + margins[i + 1].size;
@@ -389,4 +351,42 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[ElementAn
 
     // TODO baseline may be wrong here?
     LayoutOutput::from_main_cross_sizes(main_axis, main_size, cross_size, Some(max_baseline))
+}
+
+
+/// Size value with a flex growth factor. Helper for `flex_layout`.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+struct FlexSize {
+    /// Minimum space.
+    size: f64,
+    /// Flex factor (0.0 means no stretching).
+    flex: f64,
+}
+
+impl FlexSize {
+    const NULL: FlexSize = FlexSize { size: 0.0, flex: 0.0 };
+
+    /// Combines two flex sizes, e.g. two margins that collapse.
+    fn combine(self, other: FlexSize) -> FlexSize {
+        FlexSize {
+            size: self.size.max(other.size),
+            flex: self.flex.max(other.flex),
+        }
+    }
+}
+
+impl From<f64> for FlexSize {
+    fn from(size: f64) -> Self {
+        FlexSize { size, flex: 0.0 }
+    }
+}
+
+impl From<SizeValue> for FlexSize {
+    fn from(size: SizeValue) -> Self {
+        match size {
+            SizeValue::Fixed(size) => FlexSize { size, flex: 0.0 },
+            SizeValue::Stretch => FlexSize { size: 0.0, flex: 1.0 },
+            _ => FlexSize::NULL,
+        }
+    }
 }

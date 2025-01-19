@@ -5,7 +5,7 @@ use crate::window::{WeakWindow, WindowInner};
 use crate::PaintCtx;
 use bitflags::bitflags;
 use futures_util::FutureExt;
-use kurbo::{Affine, Point, Size, Vec2};
+use kurbo::{Affine, Point, Rect, Size, Vec2};
 use std::any::{Any, TypeId};
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
@@ -76,6 +76,7 @@ pub fn set_keyboard_focus(target: ElementAny) {
         // If necessary, activate the target window.
         if let Some(parent_window) = parent_window.shared.upgrade() {
             //parent_window.
+            //war!("activate window")
         }
 
         // Update the global focus.
@@ -494,6 +495,7 @@ impl ElementAny {
         ctx.with_transform(&transform, |ctx| {
             inner.paint(ctx);
         });
+        inner.ctx_mut().change_flags.remove(ChangeFlags::PAINT);
     }
 
     pub(crate) fn paint_on_surface(&self, surface: &DrawableSurface, scale_factor: f64) {
@@ -616,6 +618,10 @@ impl ElementCtxAny {
 
     pub fn add_offset(&mut self, offset: Vec2) {
         self.transform *= Affine::translate(offset);
+    }
+
+    pub fn rect(&self) -> Rect {
+        self.geometry.to_rect()
     }
 
     pub fn size(&self) -> Size {
