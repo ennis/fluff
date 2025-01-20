@@ -1280,3 +1280,48 @@ Declarations:
 
 
 ```
+
+Drawing a button:
+
+- centering text inside a region
+- drawing a border inside a shape
+- drawing a box shadow inside a shape
+- conditionals
+- gradients
+
+```rust
+
+fn draw(cx: &mut DrawCtx) {
+    use kyute::drawing::prelude::*; // Inside, Center, Outside, rgb
+
+    // set rounding around edges of the current shape
+    cx.border_radius(8);
+
+    // draw a 1px border inside current shape 
+    cx.border(1, Inside, rgb(255, 0, 255));
+
+    // fill the current shape with a pattern, in this case a solid color
+    let hovered = cx.hovered();
+    cx.fill(if hovered { rgb(...) } else { rgb(...) });
+
+    // drop shadow
+
+    // sets the baseline of the containing block.
+    cx.baseline(80);
+
+    // centered label
+    // Specify alignment within the containing box: 
+    // horizontally centered, baseline positioned 80px below top
+    cx.label(TextCentered, Baseline, text!["OK"]);  // TextItem
+
+    // equivalent:
+    let label = cx.make_label(text!["OK"]);
+    let pos = cx.centered(label.cap_height_bbox());
+    cx.draw_label(pos, label);
+
+    // gradients:
+    let g = gradient(cx.h_midline(), [rgb(...), rgb(...)]);
+}
+
+```
+

@@ -4,7 +4,7 @@ use kurbo::{Affine, Rect, Size, Vec2};
 
 /// Paint context.
 pub struct PaintCtx<'a> {
-    pub(crate) scale_factor: f64,
+    pub scale_factor: f64,
     /// Transform from window area to the current element.
     pub(crate) window_transform: Affine,
     /// Drawable surface.

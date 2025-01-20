@@ -1,9 +1,9 @@
+use crate::element::{ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny};
+use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
+use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
+use crate::{Element, PaintCtx};
 use kurbo::{Point, Size};
 use tracing::trace_span;
-use crate::{Element, PaintCtx};
-use crate::element::{ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny};
-use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
-use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 
 pub struct FlexChildBuilder<E> {
     pub element: E,
@@ -81,7 +81,6 @@ impl Flex {
         Self::new().direction(Axis::Vertical)
     }
 
-
     /// Adds a child element to the flex layout.
     #[must_use]
     pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
@@ -92,7 +91,10 @@ impl Flex {
 
     /// Adds a child element to the flex layout with additional layout options.
     #[must_use]
-    pub fn flex_child(mut self: ElementBuilder<Self>, child: FlexChildBuilder<impl IntoElementAny>) -> ElementBuilder<Self> {
+    pub fn flex_child(
+        mut self: ElementBuilder<Self>,
+        child: FlexChildBuilder<impl IntoElementAny>,
+    ) -> ElementBuilder<Self> {
         let weak_any = self.weak_any();
         self.children.push(FlexChild {
             element: child.element.into_element(weak_any, 0),
@@ -148,14 +150,18 @@ impl Flex {
 
     /// Sets the initial, inter-element and final gaps.
     #[must_use]
-    pub fn gaps(mut self: ElementBuilder<Self>, initial_gap: impl Into<SizeValue>, inter_element_gap: impl Into<SizeValue>, final_gap: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn gaps(
+        mut self: ElementBuilder<Self>,
+        initial_gap: impl Into<SizeValue>,
+        inter_element_gap: impl Into<SizeValue>,
+        final_gap: impl Into<SizeValue>,
+    ) -> ElementBuilder<Self> {
         self.initial_gap = initial_gap.into();
         self.gap = inter_element_gap.into();
         self.final_gap = final_gap.into();
         self
     }
 }
-
 
 impl Element for Flex {
     fn ctx(&self) -> &ElementCtxAny {
@@ -167,19 +173,22 @@ impl Element for Flex {
     }
 
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
-        let _span = trace_span!("Flex::measure", ?layout_input)
-            .entered();
+        let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
-        let output = flex_layout(LayoutMode::Measure, &FlexLayoutParams {
-            direction: self.direction,
-            width_constraint: layout_input.width,
-            height_constraint: layout_input.height,
-            parent_width: layout_input.parent_width,
-            parent_height: layout_input.parent_height,
-            gap: self.gap,
-            initial_gap: self.initial_gap,
-            final_gap: self.final_gap,
-        }, &self.children);
+        let output = flex_layout(
+            LayoutMode::Measure,
+            &FlexLayoutParams {
+                direction: self.direction,
+                width_constraint: layout_input.width,
+                height_constraint: layout_input.height,
+                parent_width: layout_input.parent_width,
+                parent_height: layout_input.parent_height,
+                gap: self.gap,
+                initial_gap: self.initial_gap,
+                final_gap: self.final_gap,
+            },
+            &self.children,
+        );
 
         Size {
             width: output.width,

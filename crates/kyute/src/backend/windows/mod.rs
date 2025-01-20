@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
-
+use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
 pub(crate) use compositor::{DrawableSurface, Layer};
 
 mod compositor;
@@ -295,6 +295,15 @@ impl ApplicationBackend {
     pub(crate) fn double_click_time(&self) -> Duration {
         unsafe {
             let ms = GetDoubleClickTime();
+            Duration::from_millis(ms as u64)
+        }
+    }
+
+    /// Returns the system caret blink time.
+    pub(crate) fn get_caret_blink_time(&self) -> Duration {
+        unsafe {
+            let ms = GetCaretBlinkTime();
+            // TODO it may return INFINITE, which should be treated as no blinking
             Duration::from_millis(ms as u64)
         }
     }

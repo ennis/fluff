@@ -39,7 +39,7 @@ impl Text {
             ctx: ElementCtxAny::new(),
             relayout: true,
             intrinsic_size: None,
-            paragraph: paragraph,
+            paragraph,
         }
     }
 

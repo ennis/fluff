@@ -189,6 +189,13 @@ impl Frame {
         self
     }
 
+    /// Specifies the padding (along the left side) around the content placed inside the frame.
+    #[must_use]
+    pub fn padding_left(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+        self.padding.x0 = value.into();
+        self
+    }
+
     /// Specifies the width of the frame.
     #[must_use]
     pub fn width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
@@ -230,6 +237,7 @@ impl Frame {
         self.max_height = value.into();
         self
     }
+
 
     fn resolve_style(&mut self) {
         if self.style_changed {

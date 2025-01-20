@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::fmt;
-
+use kurbo::{Point, Size};
 use skia_safe::textlayout::FontCollection;
 use skia_safe::FontMgr;
 
@@ -49,6 +49,7 @@ pub enum TextAlign {
     Justify,
 }
 
+/// Represents formatted text that is shaped, laid out, and ready to be painted.
 pub struct TextLayout {
     pub inner: skia_safe::textlayout::Paragraph,
 }
@@ -79,64 +80,38 @@ impl TextLayout {
 
         Self { inner: builder.build() }
     }
-}
 
-/*
-/// Lines of formatted (shaped and layouted) text.
-pub struct FormattedText {
-    pub inner: skia_safe::textlayout::Paragraph,
-}
+    /// Recomputes the layout of the text given the specified available width.
+    pub fn layout(&mut self, width: f64) {
+        self.inner.layout(width as f32);
+    }
 
-impl Default for FormattedText {
-    fn default() -> Self {
-        let paragraph_style = sk::textlayout::ParagraphStyle::new();
-        let font_collection = get_font_collection();
-        FormattedText {
-            inner: sk::textlayout::ParagraphBuilder::new(&paragraph_style, font_collection).build(),
+    /// Paints the text at the specified position on a skia canvas.
+    ///
+    /// The position is the position of the upper-left corner of the (ascender) text box.
+    pub fn paint(&self, canvas: &skia_safe::Canvas, pos: Point) {
+        self.inner.paint(canvas, pos.to_skia());
+    }
+
+    /// Returns the height of the text layout.
+    pub fn height(&self) -> f64 {
+        self.inner.height() as f64
+    }
+
+    /// Returns the size of the text layout.
+    pub fn size(&self) -> Size {
+        Size {
+            width: self.inner.longest_line() as f64,
+            height: self.inner.height() as f64,
         }
     }
-}
 
-impl FormattedText {
-    /// Creates a new formatted text object for the specified text runs (text + associated style).
-
-    // Q: take a slice of AttributedRange? No, because the slice needs to be constructed, maybe unnecessarily.
-    // With IntoIterator this works with everything (there are no slices involved)
-
-    pub fn new<'a>(text: impl IntoIterator<Item=AttributedRange<'a>>) -> Self {
-        let font_collection = get_font_collection();
-        let mut text_style = sk::textlayout::TextStyle::new();
-        text_style.set_font_size(16.0 as sk::scalar); // TODO default font size
-        let mut paragraph_style = sk::textlayout::ParagraphStyle::new();
-        paragraph_style.set_text_style(&text_style);
-        let mut builder = sk::textlayout::ParagraphBuilder::new(&paragraph_style, font_collection);
-
-        for run in text.into_iter() {
-            let style = run.style.to_skia();
-            builder.push_style(&style);
-            builder.add_text(&run.str);
-            builder.pop();
-        }
-
-        Self { inner: builder.build() }
-    }
-
-    pub fn from_attributed_str(text: &AttributedStr) -> Self {
-        Self::new(text.iter().cloned())
-    }
-
-    /// Layouts or relayouts the text under the given width constraint.
-    pub fn layout(&mut self, available_width: f64) {
-        self.inner.layout(available_width as f32);
-    }
-
-    /// Returns bounding rectangles for the specified range of text, specified in byte offsets.
-    pub fn get_rects_for_range(&self, range: Range<usize>) -> Vec<Rect> {
-        let text_boxes = self.inner.get_rects_for_range(range, RectHeightStyle::Tight, RectWidthStyle::Tight);
-        text_boxes.iter().map(|r| Rect::from_skia(r.rect)).collect()
+    /// Returns the baseline of the first line of text.
+    pub fn baseline(&self) -> f64 {
+        self.inner.alphabetic_baseline() as f64
     }
 }
-*/
+
 
 // `text!` macro support
 #[doc(hidden)]

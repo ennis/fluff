@@ -15,9 +15,12 @@ use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
 use std::cmp::Ordering;
 use std::fmt::Formatter;
+use std::mem::MaybeUninit;
 use std::time::Duration;
 use tracing::warn;
 use crate::application::{run_after, run_queued};
+use crate::model::{with_tracking_scope, ModelChanged};
+use crate::widgets::builder::{ElementBuilderSequence, ElementSequence};
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -147,6 +150,7 @@ pub struct LayoutCtx {}
 pub trait Element: Any {
     /// Returns a reference to the element internal state.
     // TODO: this could be moved to a supertrait and derived with a macro
+    // TODO: there should be a method to get the typed element context
     fn ctx(&self) -> &ElementCtxAny;
 
     /// Returns a mutable reference to the element's internal state.
@@ -186,6 +190,16 @@ pub trait Element: Any {
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
     fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {}
+}
+
+/// Methods for containers of elements.
+pub trait Container<Item>: Element
+{
+    type Elements: ElementSequence<Item>;
+    // FIXME: the container can't react to individual changes (e.g. to create or invalidate associated elements)
+    // => when this method is called, the container must invalidate any data associated with its
+    // children
+    fn elements(&mut self) -> &mut Self::Elements;
 }
 
 
@@ -383,6 +397,24 @@ impl Eq for ElementAny {}
 impl fmt::Debug for ElementAny {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ElementAny#{:08x}", Rc::as_ptr(&self.0) as *const () as usize as u32)
+    }
+}
+
+impl<T: Element> ElementRc<T> {
+    pub fn as_dyn(&self) -> ElementAny {
+        ElementRc(self.0.clone())
+    }
+
+    /// Invokes a method on this widget.
+    pub(crate) fn invoke<R>(
+        &self,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> R {
+        // TODO don't go through dyn
+        self.as_dyn().invoke(move |this| {
+            let this = this.downcast_mut().expect("unexpected type of element");
+            f(this)
+        })
     }
 }
 
@@ -612,6 +644,11 @@ impl ElementCtxAny {
         }
     }
 
+    /// Returns the weak pointer to this element.
+    pub fn weak_any(&self) -> WeakElementAny {
+        self.weak_this.clone()
+    }
+
     pub fn set_offset(&mut self, offset: Vec2) {
         self.transform = Affine::translate(offset);
     }
@@ -704,6 +741,12 @@ impl<T: 'static> ElementCtx<T> {
         }
     }
 
+    pub fn with_parent(parent: WeakElementAny) -> ElementCtx<T> {
+        let mut ctx = ElementCtx::new();
+        ctx.inner.parent = parent;
+        ctx
+    }
+
     fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut T)) {
         if let Some(this) = weak_this.upgrade() {
             this.invoke(move |this| {
@@ -725,6 +768,16 @@ impl<T: 'static> ElementCtx<T> {
         run_after(duration, move || {
             Self::invoke_helper(weak_this, f);
         })
+    }
+
+    pub fn with_tracking_scope<R>(&mut self, scope: impl FnOnce() -> R, on_changed: impl FnOnce(&mut T) + 'static) -> R {
+        let weak_this = self.weak_this.clone();
+        let (r, tracking_scope) = with_tracking_scope(scope);
+        tracking_scope.watch_once::<ModelChanged, _>(move |source, event| {
+            Self::invoke_helper(weak_this, on_changed);
+            false
+        });
+        r
     }
 }
 
@@ -765,6 +818,19 @@ impl<T: Element> ElementBuilder<T> {
         ElementBuilder(urc)
     }
 
+    pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
+        let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit()));   // UniqueRc<RefCell<MaybeUninit<T>>>
+        // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
+        // because the resulting weak pointer can't be upgraded anyway.
+        let weak: Weak<RefCell<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
+        let weak = WeakElement(weak);
+        urc.get_mut().write(f(weak.clone()));
+        // SAFETY: the value is now initialized
+        let mut urc: UniqueRc<RefCell<T>> = unsafe { mem::transmute(urc) };
+        urc.get_mut().ctx_mut().weak_this = WeakElement(weak.0);
+        ElementBuilder(urc)
+    }
+
     pub fn weak(&self) -> WeakElement<T> {
         let weak = UniqueRc::downgrade(&self.0);
         WeakElement(weak)
@@ -784,7 +850,33 @@ impl<T: Element> ElementBuilder<T> {
         self.ctx_mut().name = name.into();
         self
     }
+
+    pub fn with_tracking_scope<R>(&mut self, scope: impl FnOnce() -> R, on_changed: impl FnOnce(&mut T) + 'static) -> R {
+        let weak_this = self.weak();
+        let (r, tracking_scope) = with_tracking_scope(scope);
+        tracking_scope.watch_once::<ModelChanged, _>(move |source, event| {
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(move |this| {
+                    on_changed(this);
+                });
+            }
+            false
+        });
+        r
+    }
 }
+
+/*
+impl<T: Container> ElementBuilder<T> {
+    pub fn content<Seq>(mut self, content: Seq) -> Self
+    where
+        Seq: ElementBuilderSequence<Elements=T::Elements>,
+    {
+        content.insert_into(&mut *self);
+        self
+    }
+}
+*/
 
 impl<T> Deref for ElementBuilder<T> {
     type Target = T;

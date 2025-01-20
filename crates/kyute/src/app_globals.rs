@@ -35,8 +35,14 @@ impl AppGlobals {
         AppGlobals::try_get().expect("an application should be active on this thread")
     }
 
+    /// Returns the system's double click time.
     pub fn double_click_time(&self) -> Duration {
         self.backend.double_click_time()
+    }
+
+    /// Returns the system's caret blink time.
+    pub fn caret_blink_time(&self) -> Duration {
+        self.backend.get_caret_blink_time()
     }
 
     pub fn teardown() {

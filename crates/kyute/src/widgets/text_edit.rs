@@ -16,7 +16,7 @@ use crate::event::Event;
 use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{Color, Notifier, PaintCtx};
+use crate::{AppGlobals, Color, Notifier, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -372,7 +372,8 @@ impl TextEdit {
             info!("blink");
             self.ctx.mark_needs_paint();
         }
-        self.ctx.run_after(CARET_BLINK_INTERVAL, TextEdit::blink_cursor);
+        let caret_blink_time = AppGlobals::get().caret_blink_time();
+        self.ctx.run_after(caret_blink_time, TextEdit::blink_cursor);
     }
 
     pub fn set_wrap_mode(&mut self, wrap_mode: WrapMode) {
