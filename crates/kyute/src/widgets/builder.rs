@@ -2,9 +2,9 @@
 
 use kurbo::{Point, Size};
 use crate::{Element, PaintCtx};
-use crate::element::{ElementAny, ElementBuilder, Container, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny, WeakElement, ElementRc};
+use crate::element::{ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny, WeakElement, ElementRc};
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{with_tracking_scope, ModelChanged};
+use crate::model::{with_tracking_scope, DataChanged};
 // Issue: the builder is in the element tree but it serves no purpose
 // in the tree (it doesn't participate in layout, doesn't draw anything, doesn't handle events).
 // It would be better if this wasn't an element but a separate thing that can be used to build elements.
@@ -54,6 +54,7 @@ where
     }
 }*/
 
+/*
 
 pub trait ElementSequence<Item> {
     fn items(&self) -> Vec<Item>;
@@ -186,4 +187,4 @@ where
         }
         r.into_elements(container)
     }
-}
+}*/

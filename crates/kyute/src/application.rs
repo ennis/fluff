@@ -17,6 +17,7 @@ use tracy_client::set_thread_name;
 use winit::event::{Event, StartCause};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use winit::window::WindowId;
+use crate::model::maintain_subscription_map;
 
 /// Event loop user event.
 #[derive(Clone, Debug)]
@@ -230,6 +231,9 @@ pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::
 
                     // run tasks that were possibly unblocked as a result of propagating events
                     local_pool.run_until_stalled();
+
+                    // perform various cleanup
+                    maintain_subscription_map();
 
                     // set control flow to wait until next timer expires, or wait until next
                     // event if there are no timers

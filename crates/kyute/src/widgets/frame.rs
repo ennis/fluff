@@ -1,7 +1,4 @@
 //! Frame containers
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
-
 use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, LayoutCtx, MeasureCtx, WindowCtx};
 use crate::event::Event;
@@ -236,6 +233,13 @@ impl Frame {
     pub fn max_height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
         self.max_height = value.into();
         self
+    }
+
+    /// Sets the background color.
+    pub fn set_background_color(&mut self, color: Color) {
+        self.style.background_color = color;
+        self.style_changed = true;
+        self.ctx.mark_needs_paint();
     }
 
 

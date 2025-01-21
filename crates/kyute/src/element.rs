@@ -1,6 +1,8 @@
+use crate::application::{run_after, run_queued};
 use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
+use crate::model::{watch_multi, watch_multi_once, with_tracking_scope, ModelAny, DataChanged, WeakModelAny, SubscriptionKey};
 use crate::window::{WeakWindow, WindowInner};
 use crate::PaintCtx;
 use bitflags::bitflags;
@@ -8,19 +10,17 @@ use futures_util::FutureExt;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
 use std::any::{Any, TypeId};
 use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, UniqueRc, Weak};
-use std::{fmt, mem, ptr};
-use std::cmp::Ordering;
-use std::fmt::Formatter;
-use std::mem::MaybeUninit;
 use std::time::Duration;
+use std::{fmt, mem, ptr};
+use std::panic::Location;
 use tracing::warn;
-use crate::application::{run_after, run_queued};
-use crate::model::{with_tracking_scope, ModelChanged};
-use crate::widgets::builder::{ElementBuilderSequence, ElementSequence};
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -192,16 +192,15 @@ pub trait Element: Any {
     fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {}
 }
 
-/// Methods for containers of elements.
-pub trait Container<Item>: Element
-{
-    type Elements: ElementSequence<Item>;
+/// Exposes the child elements of container elements.
+pub trait Container<Item>: Element {
+    /// The type of the internal container for child elements.
+    type Elements;
     // FIXME: the container can't react to individual changes (e.g. to create or invalidate associated elements)
     // => when this method is called, the container must invalidate any data associated with its
     // children
     fn elements(&mut self) -> &mut Self::Elements;
 }
-
 
 impl dyn Element + 'static {
     /// Downcasts the element to a concrete type.
@@ -303,7 +302,9 @@ impl Hash for WeakElementAny {
 
 impl Ord for WeakElementAny {
     fn cmp(&self, other: &Self) -> Ordering {
-        Weak::as_ptr(&self.0).cast::<()>().cmp(&Weak::as_ptr(&other.0).cast::<()>())
+        Weak::as_ptr(&self.0)
+            .cast::<()>()
+            .cmp(&Weak::as_ptr(&other.0).cast::<()>())
     }
 }
 
@@ -406,10 +407,7 @@ impl<T: Element> ElementRc<T> {
     }
 
     /// Invokes a method on this widget.
-    pub(crate) fn invoke<R>(
-        &self,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> R {
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         // TODO don't go through dyn
         self.as_dyn().invoke(move |this| {
             let this = this.downcast_mut().expect("unexpected type of element");
@@ -436,10 +434,7 @@ impl ElementAny {
     /// Invokes a method on this widget.
     ///
     /// Propagates the dirty flags up the tree.
-    pub(crate) fn invoke<R>(
-        &self,
-        f: impl FnOnce(&mut dyn Element) -> R,
-    ) -> R {
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut dyn Element) -> R) -> R {
         let ref mut inner = *self.borrow_mut();
         let r = f(inner);
         inner.ctx_mut().propagate_dirty_flags();
@@ -770,10 +765,31 @@ impl<T: 'static> ElementCtx<T> {
         })
     }
 
-    pub fn with_tracking_scope<R>(&mut self, scope: impl FnOnce() -> R, on_changed: impl FnOnce(&mut T) + 'static) -> R {
+    #[track_caller]
+    pub fn watch_once(
+        &mut self,
+        models: impl IntoIterator<Item=WeakModelAny>,
+        on_changed: impl FnOnce(&mut T, ModelAny) + 'static,
+    ) -> SubscriptionKey {
+        let weak_this = self.weak_this.clone();
+        watch_multi_once(models, move |source| {
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(move |this| {
+                    let this = this.downcast_mut().expect("unexpected type of element");
+                    on_changed(this, source);
+                });
+            }
+        })
+    }
+
+    pub fn with_tracking_scope<R>(
+        &mut self,
+        scope: impl FnOnce() -> R,
+        on_changed: impl FnOnce(&mut T) + 'static,
+    ) -> R {
         let weak_this = self.weak_this.clone();
         let (r, tracking_scope) = with_tracking_scope(scope);
-        tracking_scope.watch_once::<ModelChanged, _>(move |source, event| {
+        tracking_scope.watch_once(move |source| {
             Self::invoke_helper(weak_this, on_changed);
             false
         });
@@ -819,7 +835,7 @@ impl<T: Element> ElementBuilder<T> {
     }
 
     pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
-        let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit()));   // UniqueRc<RefCell<MaybeUninit<T>>>
+        let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit())); // UniqueRc<RefCell<MaybeUninit<T>>>
         // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
         // because the resulting weak pointer can't be upgraded anyway.
         let weak: Weak<RefCell<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
@@ -851,10 +867,37 @@ impl<T: Element> ElementBuilder<T> {
         self
     }
 
-    pub fn with_tracking_scope<R>(&mut self, scope: impl FnOnce() -> R, on_changed: impl FnOnce(&mut T) + 'static) -> R {
+    /// Runs the specified function on the widget, and runs it again when it changes.
+    #[track_caller]
+    pub fn dynamic(mut self, func: impl FnMut(&mut T) + 'static) -> Self {
+        #[track_caller]
+        fn dynamic_helper<T: Element>(this: &mut T, weak: WeakElement<T>, mut func: impl FnMut(&mut T) + 'static) {
+            let (_, deps) = with_tracking_scope(|| func(this));
+            if !deps.reads.is_empty() {
+                watch_multi_once(deps.reads, move |source| {
+                    if let Some(this) = weak.upgrade() {
+                        this.invoke(move |this| {
+                            dynamic_helper(this, weak, func);
+                        });
+                    }
+                });
+            }
+        }
+
+        let weak = self.weak();
+        let this = self.0.get_mut();
+        dynamic_helper(this, weak, func);
+        self
+    }
+
+    pub fn with_tracking_scope<R>(
+        &mut self,
+        scope: impl FnOnce() -> R,
+        on_changed: impl FnOnce(&mut T) + 'static,
+    ) -> R {
         let weak_this = self.weak();
         let (r, tracking_scope) = with_tracking_scope(scope);
-        tracking_scope.watch_once::<ModelChanged, _>(move |source, event| {
+        tracking_scope.watch_once(move |source| {
             if let Some(this) = weak_this.upgrade() {
                 this.invoke(move |this| {
                     on_changed(this);
@@ -867,7 +910,11 @@ impl<T: Element> ElementBuilder<T> {
 }
 
 /*
-impl<T: Container> ElementBuilder<T> {
+impl<T> ElementBuilder<T>
+where
+    T: Container<Elements=Vec<ElementAny>>,
+{
+    /// Dynamic content
     pub fn content<Seq>(mut self, content: Seq) -> Self
     where
         Seq: ElementBuilderSequence<Elements=T::Elements>,
@@ -875,8 +922,7 @@ impl<T: Container> ElementBuilder<T> {
         content.insert_into(&mut *self);
         self
     }
-}
-*/
+}*/
 
 impl<T> Deref for ElementBuilder<T> {
     type Target = T;

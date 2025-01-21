@@ -1,9 +1,10 @@
-use crate::element::{ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny};
+use crate::element::{ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
 use crate::{Element, PaintCtx};
 use kurbo::{Point, Size};
 use tracing::trace_span;
+use crate::model::{with_tracking_scope, DataChanged};
 
 pub struct FlexChildBuilder<E> {
     pub element: E,
@@ -49,6 +50,12 @@ impl<E> FlexChildBuilder<E> {
     }
 }
 
+
+pub trait DynamicFlexChildren {
+    /// Updates the list of children of the flex element.
+    fn update(&mut self, parent: WeakElementAny, children: &mut Vec<FlexChild>);
+}
+
 pub struct Flex {
     ctx: ElementCtx<Self>,
     direction: Axis,
@@ -79,6 +86,23 @@ impl Flex {
 
     pub fn column() -> ElementBuilder<Self> {
         Self::new().direction(Axis::Vertical)
+    }
+
+    fn update_dynamic_children(&mut self, mut children: impl DynamicFlexChildren + 'static) {
+        let (_, deps) = with_tracking_scope(|| children.update(self.ctx.weak_any(), &mut self.children));
+        self.ctx.mark_needs_layout();
+        if !deps.reads.is_empty() {
+            self.ctx.watch_once(deps.reads, move |this, _| {
+                this.update_dynamic_children(children);
+            });
+        }
+    }
+
+    /// Specifies the contents of the flex layout.
+    #[must_use]
+    pub fn dynamic_children(mut self: ElementBuilder<Self>, children: impl DynamicFlexChildren + 'static) -> ElementBuilder<Self> {
+        self.update_dynamic_children(children);
+        self
     }
 
     /// Adds a child element to the flex layout.

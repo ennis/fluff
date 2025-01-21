@@ -10,7 +10,7 @@ use std::thread::sleep;
 use std::time::Instant;
 
 use keyboard_types::{Key, KeyboardEvent};
-use kurbo::{Affine, Point, Size};
+use kurbo::{Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
@@ -23,8 +23,7 @@ use crate::application::{with_event_loop_window_target, WindowHandler};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
 use crate::element::{
-    dispatch_event, get_keyboard_focus, Element, ElementAny, FocusedElement, HitTestCtx, IntoElementAny,
-    WeakElementAny, WindowCtx,
+    dispatch_event, get_keyboard_focus, Element, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
 };
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
 use crate::layout::{LayoutInput, SizeConstraint};
@@ -778,7 +777,6 @@ impl Window {
 
         Window { shared }
     }
-
 
     pub fn set_pointer_capture(&self, element: WeakElementAny) {
         self.shared.set_pointer_capture(element);

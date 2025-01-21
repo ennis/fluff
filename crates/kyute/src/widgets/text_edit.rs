@@ -1,8 +1,4 @@
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
-use std::rc::Rc;
 use std::time::Duration;
-
 use keyboard_types::Key;
 use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
@@ -654,7 +650,7 @@ impl Element for TextEdit {
         });
     }
 
-    fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(&mut self, _ctx: &mut WindowCtx, event: &mut Event) {
         let mut selection_changed = false;
 
         match event {

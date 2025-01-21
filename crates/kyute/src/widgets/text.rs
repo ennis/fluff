@@ -1,6 +1,3 @@
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
-
 use kurbo::{Point, Size};
 use skia_safe::textlayout;
 use tracing::{trace, trace_span, warn};

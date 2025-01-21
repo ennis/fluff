@@ -40,6 +40,7 @@ kyute-common = { workspace = true }
 kyute-dsl = { workspace = true }
 pin-weak = "1.1.0"
 inventory = "0.3.15"
+color-print = "0.3.7"
 
 # Windows dependencies
 [target.'cfg(target_os="windows")'.dependencies]

@@ -58,13 +58,26 @@ fn main() {
             .border_color(Color::from_hex("5f5637"))
             .border_radius(8.0)
             .background_color(Color::from_hex("211e13"))
-            .content(Flex::new((
-                text!( size(12.0) family("Inter") #44AE12 { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" ),
-                text_edit,
-                main_button,
-                counter_display,
-                increment_button
-            )).vertical().gaps(4, 4, 4));
+            .dynamic({
+                let counter = counter_value.clone();
+                move |frame| {
+                    if counter.get() % 2 == 0 {
+                        frame.set_background_color(Color::from_hex("4c3e0a"));
+                    } else {
+                        frame.set_background_color(Color::from_hex("5f5637"));
+                    }
+                }
+            })
+            .content(Flex::new()
+                .vertical()
+                .gaps(4, 4, 4)
+                .child(text!( size(12.0) family("Inter") #44AE12 { "Hello," i "world!\n" b "This is bold" } "\nThis is a " { #F00 "red" } " word\n" "Value=" i "{value}" ))
+                .child(text_edit)
+                //.child(text_edit2)
+                .child(main_button)
+                .child(counter_display)
+                .child(increment_button)
+            );
 
         let main_window = Window::new(&WindowOptions {
             title: "Hello, world!",
