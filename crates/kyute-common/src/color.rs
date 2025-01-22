@@ -215,3 +215,13 @@ impl Color {
         }
     }
 }
+
+/// Parses a color from a hexadecimal color code.
+///
+/// If the hex code is invalid, this will return an unspecified color. If you need to catch
+/// errors, use `Color::try_from_hex` instead.
+impl From<&str> for Color {
+    fn from(hex: &str) -> Self {
+        Color::try_from_hex(hex).unwrap_or_default()
+    }
+}

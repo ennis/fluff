@@ -4,7 +4,7 @@ use skia_safe as sk;
 use skia_safe::gradient_shader::GradientShaderColors;
 use tracing::warn;
 
-use crate::drawing::{Image, ToSkia};
+use crate::drawing::{Image, LinearGradient, ToSkia};
 use crate::Color;
 
 /// Image repeat mode.
@@ -18,6 +18,7 @@ pub enum RepeatMode {
 #[derive(Clone, Debug)]
 pub struct UniformData(pub sk::Data);
 
+/// Macro to create the uniform data for a shader.
 #[macro_export]
 macro_rules! make_uniform_data {
     ( [$effect:ident] $($name:ident : $typ:ty = $value:expr),*) => {
@@ -76,6 +77,7 @@ macro_rules! shader {
     }};
 }
 
+/// Creates a `Paint` object from the specified shader and uniforms.
 #[macro_export]
 macro_rules! shader_paint {
     ($source:literal, $($name:ident : $typ:ty = $value:expr),*) => {
@@ -141,11 +143,6 @@ impl PartialEq for Paint {
     }
 }
 
-// Nope, not thread safe.
-//impl_env_value!(Paint);
-
-// TODO: move gradient stuff to a specific module
-
 impl Default for Paint {
     fn default() -> Self {
         Paint::Color(Color::new(0.0, 0.0, 0.0, 0.0))
@@ -170,51 +167,7 @@ impl Paint {
                 paint
             }
             Paint::LinearGradient(linear_gradient) => {
-                let c = bounds.center();
-                let w = bounds.width();
-                let h = bounds.height();
-
-                let angle = linear_gradient.angle;
-                let tan_th = angle.tan();
-                let (x, y) = if tan_th > h / w {
-                    (h / (2.0 * tan_th), 0.5 * h)
-                } else {
-                    (0.5 * w, 0.5 * w * tan_th)
-                };
-
-                let a = c + Vec2::new(-x, y);
-                let b = c + Vec2::new(x, -y);
-                let a = a.to_skia();
-                let b = b.to_skia();
-
-                let mut resolved_gradient = linear_gradient.clone();
-                resolved_gradient.resolve_stop_positions();
-
-                let positions: Vec<_> = resolved_gradient
-                    .stops
-                    .iter()
-                    .map(|stop| stop.position.unwrap() as f32)
-                    .collect();
-                let colors: Vec<_> = resolved_gradient
-                    .stops
-                    .iter()
-                    .map(|stop| stop.color.to_skia())
-                    .collect();
-
-                let shader = sk::Shader::linear_gradient(
-                    (a, b),
-                    GradientShaderColors::ColorsInSpace(&colors, Some(sk::ColorSpace::new_srgb())),
-                    &positions[..],
-                    sk::TileMode::Clamp,
-                    None,
-                    None,
-                )
-                .unwrap();
-
-                let mut paint = sk::Paint::default();
-                paint.set_shader(shader);
-                paint.set_anti_alias(true);
-                paint
+                linear_gradient.to_skia_paint(bounds)
             }
             Paint::Image {
                 image,
@@ -248,26 +201,17 @@ impl Paint {
             }
         }
     }
-
-    pub fn image(_uri: &str, _repeat_x: RepeatMode, _repeat_y: RepeatMode) -> Paint {
-        // TODO: call outside of composition?
-        todo!()
-        /*let image_cache = cache::environment().get(&IMAGE_CACHE).unwrap();
-        if let Ok(image) = image_cache.load(uri) {
-            Paint::Image {
-                image,
-                repeat_x,
-                repeat_y,
-            }
-        } else {
-            Paint::Color(Default::default())
-        }*/
-    }
 }
 
 impl From<Color> for Paint {
     fn from(color: Color) -> Self {
         Paint::Color(color)
+    }
+}
+
+impl From<LinearGradient> for Paint {
+    fn from(g: LinearGradient) -> Self {
+        Paint::LinearGradient(g)
     }
 }
 
@@ -292,120 +236,6 @@ where
 
     d.deserialize_f32(Visitor)
 }*/
-
-/// Represents a gradient stop.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ColorStop {
-    /// Position of the stop along the gradient segment, normalized between zero and one.
-    ///
-    /// If `None`, the position is inferred from the position of the surrounding stops.
-    pub position: Option<f64>,
-    /// Stop color.
-    pub color: Color,
-}
-
-/// Describes a linear color gradient.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LinearGradient {
-    /// Direction of the gradient line.
-    //#[serde(deserialize_with = "deserialize_angle")]
-    pub angle: f64,
-    /// List of color stops.
-    pub stops: Vec<ColorStop>,
-}
-
-impl LinearGradient {
-    /// Creates a new `LinearGradient`, with no stops.
-    pub fn new() -> LinearGradient {
-        LinearGradient {
-            angle: Default::default(),
-            stops: vec![],
-        }
-    }
-
-    /// Sets the gradient angle.
-    pub fn angle(mut self, angle: f64) -> Self {
-        self.angle = angle;
-        self
-    }
-
-    /// Appends a color stop to this gradient.
-    pub fn stop(mut self, color: Color, position: impl Into<Option<f64>>) -> Self {
-        self.stops.push(ColorStop {
-            color,
-            position: position.into(),
-        });
-        self
-    }
-
-    /// Resolves color stop positions.
-    ///
-    /// See https://www.w3.org/TR/css-images-3/#color-stop-fixup
-    pub(crate) fn resolve_stop_positions(&mut self) {
-        if self.stops.len() < 2 {
-            warn!("invalid gradient (must have at least two stops)");
-            return;
-        }
-
-        // CSS Images Module Level 3 - 3.4.3. Color Stop “Fixup”
-        //
-        //      If the first color stop does not have a position, set its position to 0%.
-        //      If the last color stop does not have a position, set its position to 100%.
-        //
-        self.stops.first_mut().unwrap().position.get_or_insert(0.0);
-        self.stops.last_mut().unwrap().position.get_or_insert(1.0);
-
-        //
-        //      If a color stop or transition hint has a position that is less than the specified position
-        //      of any color stop or transition hint before it in the list, set its position to be equal
-        //      to the largest specified position of any color stop or transition hint before it.
-        //
-        let mut cur_pos = self.stops.first().unwrap().position.unwrap();
-        for stop in self.stops.iter_mut() {
-            if let Some(mut pos) = stop.position {
-                if pos < cur_pos {
-                    pos = cur_pos;
-                }
-                cur_pos = pos;
-            }
-        }
-
-        //
-        //      If any color stop still does not have a position, then, for each run of adjacent color stops without positions,
-        //      set their positions so that they are evenly spaced between the preceding and following color stops with positions.
-        //
-        let mut i = 0;
-        while i < self.stops.len() {
-            if self.stops[i].position.is_none() {
-                let mut j = i + 1;
-                while self.stops[j].position.is_none() {
-                    j += 1;
-                }
-                let len = j - i + 1;
-                let a = self.stops[i - 1].position.unwrap();
-                let b = self.stops[j].position.unwrap();
-                for k in i..j {
-                    self.stops[i].position = Some(a + (b - a) * (k - i + 1) as f64 / len as f64);
-                }
-                i = j;
-            } else {
-                i += 1;
-            }
-        }
-    }
-}
-
-impl Default for LinearGradient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl From<LinearGradient> for Paint {
-    fn from(g: LinearGradient) -> Self {
-        Paint::LinearGradient(g)
-    }
-}
 
 /*/// From CSS value.
 impl TryFrom<&str> for Paint {

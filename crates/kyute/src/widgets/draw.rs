@@ -67,6 +67,20 @@ pub fn round_to_px(logical: f64, scale_factor: f64) -> f64 {
     (logical * scale_factor).round() / scale_factor
 }
 
+#[macro_export]
+macro_rules! linear_gradient {
+    ($(in $colorspace:ident;)? $angle:expr; $($colorstop:expr),*) => {
+        $crate::drawing::LinearGradient {
+            angle: $angle.into(),
+            stops: vec![$(
+                $crate::drawing::ColorStop::from($colorstop)
+            ),*],
+            color_space: { $crate::drawing::InterpolationColorSpace::Oklab $(; $crate::drawing::InterpolationColorSpace::$colorspace)? },
+        }
+    };
+}
+
+
 impl DrawCtx<'_> {
     /// Returns the horizontal midline (from the center of the left edge to the center of the right edge) of the current region.
     pub fn h_midline(&self) -> Line {
@@ -90,23 +104,32 @@ impl DrawCtx<'_> {
     }
 
     /// Draws a border around the current region.
-    pub fn border(&mut self, size: impl Into<Insets>, position: BorderPosition, color: Color) {
+    pub fn border(&mut self, size: impl Into<Insets>, position: BorderPosition, paint: impl Into<Paint>) {
         let size = size.into();
+        if size == Insets::ZERO {
+            return;
+        }
+
+        let paint = paint.into();
+        if let Paint::Color(color) = paint {
+            if color.alpha() == 0.0 {
+                // fully transparent border
+                return;
+            }
+        }
+
         let border_radius = self.border_radius;
         let inner_shape = RoundedRect::from_rect(self.rect - size, border_radius - 0.5 * size.x_value());
         let outer_shape = RoundedRect::from_rect(self.rect, border_radius);
-
-        if color.alpha() != 0.0 && size != Insets::ZERO {
-            let mut paint = Paint::Color(color).to_sk_paint(self.rect);
-            paint.set_style(skia_safe::paint::Style::Fill);
-            self.canvas
-                .draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
-        }
+        let mut paint = paint.to_sk_paint(self.rect);
+        paint.set_style(skia_safe::paint::Style::Fill);
+        self.canvas
+            .draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
     }
 
-    /// Fills the current region with the specified color.
-    pub fn fill(&mut self, color: Color) {
-        let mut paint = Paint::Color(color).to_sk_paint(self.rect);
+    /// Fills the current region with the specified paint.
+    pub fn fill(&mut self, paint: impl Into<Paint>) {
+        let mut paint = paint.into().to_sk_paint(self.rect);
         paint.set_style(skia_safe::paint::Style::Fill);
         let rrect = RoundedRect::from_rect(self.rect, self.border_radius);
         self.canvas.draw_rrect(rrect.to_skia(), &paint);
@@ -200,7 +223,7 @@ where
             };
 
             self.draw_subscription.unsubscribe();
-            
+
             let (_, deps) = with_tracking_scope(|| {
                 (self.draw_fn)(&mut draw_ctx);
             });

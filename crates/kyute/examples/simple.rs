@@ -1,20 +1,19 @@
-use kurbo::Point;
 pub use kurbo::{self, Size};
-use kyute::layout::Axis;
 use kyute::model::Model;
 use kyute::text::TextStyle;
 use kyute::widgets::button::button;
 use kyute::widgets::draw::Draw;
 use kyute::widgets::flex::Flex;
-use kyute::widgets::frame::{Frame, FrameStyle};
-use kyute::widgets::text::Text;
-use kyute::widgets::text_edit::{TextEdit, WrapMode};
-use kyute::{application, text, Color, Window, WindowOptions};
-use std::future::pending;
+use kyute::widgets::frame::Frame;
+use kyute::widgets::text_edit::TextEdit;
+use kyute::{application, linear_gradient, text, Color, Window, WindowOptions};
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 use tracing_tree::HierarchicalLayer;
+use kyute::drawing::StaticImage;
+
+pub const ALIGN_CENTER: StaticImage = StaticImage::new(include_bytes!("../../../data/ui/align_center.png"));
 
 fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
@@ -33,7 +32,6 @@ fn main() {
         text_edit2.set_text("Hello, world! \n Multi line".to_string());
         text_edit2.set_wrap_mode(WrapMode::NoWrap);*/
 
-
         let counter_value = Model::new(0i32);
         let counter_display = Frame::new().height(20).content(
             Draw::new({
@@ -41,7 +39,8 @@ fn main() {
                 move |cx| {
                     use kyute::widgets::draw::prelude::*;
                     let value = counter_value.get();
-                    cx.fill(rgb(255, 255, 255));
+                    //cx.fill(rgb(255, 255, 255));
+                    cx.fill(linear_gradient!(in Oklab; 0.0; rgb(0, 0, 255), rgb(255, 255, 255)));
                     cx.draw_text(Right, Top, text!["Counter value is " b "{value}"]);
                 }
             }));

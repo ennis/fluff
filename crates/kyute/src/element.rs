@@ -2,7 +2,10 @@ use crate::application::{run_after, run_queued};
 use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{watch_multi, watch_multi_once, with_tracking_scope, ModelAny, DataChanged, WeakModelAny, SubscriptionKey};
+use crate::model::{
+    watch_multi, watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, ModelAny,
+    SubscriptionKey, WeakModelAny,
+};
 use crate::window::{WeakWindow, WindowInner};
 use crate::PaintCtx;
 use bitflags::bitflags;
@@ -16,10 +19,10 @@ use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
+use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::time::Duration;
 use std::{fmt, mem, ptr};
-use std::panic::Location;
 use tracing::warn;
 
 bitflags! {
@@ -870,23 +873,31 @@ impl<T: Element> ElementBuilder<T> {
     /// Runs the specified function on the widget, and runs it again when it changes.
     #[track_caller]
     pub fn dynamic(mut self, func: impl FnMut(&mut T) + 'static) -> Self {
-        #[track_caller]
-        fn dynamic_helper<T: Element>(this: &mut T, weak: WeakElement<T>, mut func: impl FnMut(&mut T) + 'static) {
+        fn dynamic_helper<T: Element>(
+            this: &mut T,
+            weak: WeakElement<T>,
+            mut func: impl FnMut(&mut T) + 'static,
+            caller: &'static Location<'static>,
+        ) {
             let (_, deps) = with_tracking_scope(|| func(this));
             if !deps.reads.is_empty() {
-                watch_multi_once(deps.reads, move |source| {
-                    if let Some(this) = weak.upgrade() {
-                        this.invoke(move |this| {
-                            dynamic_helper(this, weak, func);
-                        });
-                    }
-                });
+                watch_multi_once_with_location(
+                    deps.reads,
+                    move |source| {
+                        if let Some(this) = weak.upgrade() {
+                            this.invoke(move |this| {
+                                dynamic_helper(this, weak, func, caller);
+                            });
+                        }
+                    },
+                    caller,
+                );
             }
         }
 
         let weak = self.weak();
         let this = self.0.get_mut();
-        dynamic_helper(this, weak, func);
+        dynamic_helper(this, weak, func, Location::caller());
         self
     }
 

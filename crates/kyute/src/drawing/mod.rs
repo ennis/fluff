@@ -4,19 +4,19 @@ use kurbo::{Affine, Point, Rect, Vec2};
 pub use kurbo::{RoundedRect, RoundedRectRadii, Shape};
 use skia_safe as sk;
 
+use crate::Color;
 pub use border::BorderStyle;
 pub use box_shadow::{draw_box_shadow, BoxShadow};
-pub use decoration::{Decoration, ShapeBorder, ShapeDecoration, RoundedRectBorder, CompoundBorder};
-pub use image::Image;
+pub use decoration::{CompoundBorder, Decoration, RoundedRectBorder, ShapeBorder, ShapeDecoration};
+pub use image::{Image, StaticImage};
+pub use linear_gradient::{ColorStop, InterpolationColorSpace, LinearGradient};
 pub use paint::Paint;
-//#[cfg(feature = "svg")]
-//pub(crate) use svg_path::svg_path_to_skia;
-use crate::Color;
 
 mod border;
 mod box_shadow;
 mod decoration;
 mod image;
+mod linear_gradient;
 mod paint;
 //mod path;
 //#[cfg(feature = "svg")]

@@ -134,6 +134,7 @@ impl<T: Any> Model<T> {
             [self.downgrade().as_dyn()],
             TypeId::of::<DataChanged>(),
             Box::new(move |source, _e| callback(source.downcast().unwrap())),
+            Location::caller(),
         )
     }
 
@@ -271,26 +272,44 @@ struct ModelHeader {
 #[inline]
 pub fn watch_multi(
     models: impl IntoIterator<Item=WeakModelAny>,
+    callback: impl FnMut(ModelAny) -> bool + 'static,
+) -> SubscriptionKey {
+    watch_multi_with_location(models, callback, Location::caller())
+}
+
+pub fn watch_multi_with_location(
+    models: impl IntoIterator<Item=WeakModelAny>,
     mut callback: impl FnMut(ModelAny) -> bool + 'static,
+    location: &'static Location<'static>,
 ) -> SubscriptionKey {
     subscribe_inner(
         models,
         TypeId::of::<DataChanged>(),
         Box::new(move |source, _e| callback(source)),
+        location,
     )
 }
 
 /// Watches changes on several models at once and calls a callback _the first time_ that any of the models change.
 #[track_caller]
+#[inline]
 pub fn watch_multi_once(
     models: impl IntoIterator<Item=WeakModelAny>,
     callback: impl FnOnce(ModelAny) + 'static,
 ) -> SubscriptionKey {
+    watch_multi_once_with_location(models, callback, Location::caller())
+}
+
+pub fn watch_multi_once_with_location(
+    models: impl IntoIterator<Item=WeakModelAny>,
+    callback: impl FnOnce(ModelAny) + 'static,
+    location: &'static Location<'static>,
+) -> SubscriptionKey {
     let mut callback = Some(callback);
-    watch_multi(models, move |source| {
+    watch_multi_with_location(models, move |source| {
         callback.take().unwrap()(source);
         false
-    })
+    }, location)
 }
 
 /// Trait implemented by data model types (the `T` in `Model<T>`) that can emit events of a
@@ -410,14 +429,15 @@ struct SubscriptionMap {
     subs: SlotMap<SubscriptionKey, Subscription>,
 }
 
-#[track_caller]
+
 fn subscribe_inner(
     sources: impl IntoIterator<Item=WeakModelAny>,
     event_type_id: TypeId,
     callback: Callback,
+    location: &'static Location<'static>,
 ) -> SubscriptionKey {
     #[cfg(debug_assertions)]
-    let sub = Subscription::new(callback, Location::caller());
+    let sub = Subscription::new(callback, location);
     #[cfg(not(debug_assertions))]
     let sub = Subscription::new(callback);
 
