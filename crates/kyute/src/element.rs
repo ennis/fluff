@@ -3,19 +3,17 @@ use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
-    watch_multi, watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, ModelAny,
-    SubscriptionKey, WeakModelAny,
+    watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, ModelAny, SubscriptionKey,
+    WeakModelAny,
 };
-use crate::window::{WeakWindow, WindowInner};
+use crate::window::WeakWindow;
 use crate::PaintCtx;
 use bitflags::bitflags;
-use futures_util::FutureExt;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
 use std::any::{Any, TypeId};
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
@@ -267,19 +265,19 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
 
-            fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+            fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
                 unimplemented!()
             }
 
-            fn layout(&mut self, size: Size) -> LayoutOutput {
+            fn layout(&mut self, _size: Size) -> LayoutOutput {
                 unimplemented!()
             }
 
-            fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+            fn hit_test(&self, _ctx: &mut HitTestCtx, _point: Point) -> bool {
                 unimplemented!()
             }
 
-            fn paint(&mut self, ctx: &mut PaintCtx) {
+            fn paint(&mut self, _ctx: &mut PaintCtx) {
                 unimplemented!()
             }
         }
@@ -771,8 +769,8 @@ impl<T: 'static> ElementCtx<T> {
     #[track_caller]
     pub fn watch_once(
         &mut self,
-        models: impl IntoIterator<Item=WeakModelAny>,
-        on_changed: impl FnOnce(&mut T, ModelAny) + 'static,
+        models: impl IntoIterator<Item = Weak<dyn Any>>,
+        on_changed: impl FnOnce(&mut T, Rc<dyn Any>) + 'static,
     ) -> SubscriptionKey {
         let weak_this = self.weak_this.clone();
         watch_multi_once(models, move |source| {
@@ -839,8 +837,8 @@ impl<T: Element> ElementBuilder<T> {
 
     pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
         let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit())); // UniqueRc<RefCell<MaybeUninit<T>>>
-        // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
-        // because the resulting weak pointer can't be upgraded anyway.
+                                                                          // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
+                                                                          // because the resulting weak pointer can't be upgraded anyway.
         let weak: Weak<RefCell<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
         let weak = WeakElement(weak);
         urc.get_mut().write(f(weak.clone()));
@@ -860,7 +858,7 @@ impl<T: Element> ElementBuilder<T> {
         WeakElement(weak)
     }
 
-    pub fn set_tab_focusable(mut self) -> Self {
+    pub fn set_tab_focusable(self) -> Self {
         todo!("set_tab_focusable")
     }
 
@@ -882,8 +880,8 @@ impl<T: Element> ElementBuilder<T> {
             let (_, deps) = with_tracking_scope(|| func(this));
             if !deps.reads.is_empty() {
                 watch_multi_once_with_location(
-                    deps.reads,
-                    move |source| {
+                    deps.reads.into_iter().map(|w| w.0),
+                    move |_source| {
                         if let Some(this) = weak.upgrade() {
                             this.invoke(move |this| {
                                 dynamic_helper(this, weak, func, caller);
@@ -919,21 +917,6 @@ impl<T: Element> ElementBuilder<T> {
         r
     }
 }
-
-/*
-impl<T> ElementBuilder<T>
-where
-    T: Container<Elements=Vec<ElementAny>>,
-{
-    /// Dynamic content
-    pub fn content<Seq>(mut self, content: Seq) -> Self
-    where
-        Seq: ElementBuilderSequence<Elements=T::Elements>,
-    {
-        content.insert_into(&mut *self);
-        self
-    }
-}*/
 
 impl<T> Deref for ElementBuilder<T> {
     type Target = T;

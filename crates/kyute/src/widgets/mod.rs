@@ -1,8 +1,8 @@
-pub mod text;
+//! Several widgets.
+
 pub mod button;
-//mod interact;
-pub mod frame;
-pub mod text_edit;
-pub mod flex;
 pub mod draw;
-pub mod builder;
+pub mod flex;
+pub mod frame;
+pub mod text;
+pub mod text_edit;

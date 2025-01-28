@@ -159,16 +159,14 @@ impl Paint {
     }
 
     /// Converts this object to a skia `SkPaint`.
-    pub fn to_sk_paint(&self, bounds: Rect) -> sk::Paint {
-        match self {
+    pub fn to_sk_paint(&self, bounds: Rect, style: skia_safe::PaintStyle) -> sk::Paint {
+        let mut paint = match self {
             Paint::Color(color) => {
                 let mut paint = sk::Paint::new(color.to_skia(), None);
                 paint.set_anti_alias(true);
                 paint
             }
-            Paint::LinearGradient(linear_gradient) => {
-                linear_gradient.to_skia_paint(bounds)
-            }
+            Paint::LinearGradient(linear_gradient) => linear_gradient.to_skia_paint(bounds),
             Paint::Image {
                 image,
                 repeat_x,
@@ -199,7 +197,9 @@ impl Paint {
                 paint.set_shader(shader);
                 paint
             }
-        }
+        };
+        paint.set_style(style);
+        paint
     }
 }
 

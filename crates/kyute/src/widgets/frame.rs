@@ -1,14 +1,13 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, LayoutCtx, MeasureCtx, WindowCtx};
+use crate::element::{
+    Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WindowCtx,
+};
 use crate::event::Event;
-use crate::layout::flex::{flex_layout, FlexLayoutParams};
-use crate::layout::{Axis, LayoutInput, LayoutMode, LayoutOutput, LengthOrPercentage, SizeConstraint, SizeValue};
-use crate::{drawing, layout, Color, ElementState, Notifier, PaintCtx};
+use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
+use crate::{drawing, Color, ElementState, Notifier, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
-use smallvec::SmallVec;
-use tracing::{trace, trace_span};
-use crate::application::run_queued;
+use tracing::trace_span;
 
 #[derive(Clone, Default)]
 pub struct FrameStyleOverride {
@@ -178,7 +177,6 @@ impl Frame {
         self
     }
 
-
     /// Specifies the padding (along all four sides) around the content placed inside the frame.
     #[must_use]
     pub fn padding(mut self: ElementBuilder<Self>, value: f64) -> ElementBuilder<Self> {
@@ -241,7 +239,6 @@ impl Frame {
         self.style_changed = true;
         self.ctx.mark_needs_paint();
     }
-
 
     fn resolve_style(&mut self) {
         if self.style_changed {
@@ -309,10 +306,10 @@ impl Frame {
             ?parent_width,
             ?parent_height
         )
-            .entered();
+        .entered();
 
         //
-        let mut eval_width = |size: SizeValue| -> Option<f64> {
+        let eval_width = |size: SizeValue| -> Option<f64> {
             match size {
                 // Fixed size: use the specified size
                 SizeValue::Fixed(s) => Some(s),
@@ -352,7 +349,7 @@ impl Frame {
         // updated width constraint due to clamping min/max width
         let updated_width_constraint = SizeConstraint::Available(width);
 
-        let mut eval_height = |size: SizeValue| -> Option<f64> {
+        let eval_height = |size: SizeValue| -> Option<f64> {
             match size {
                 SizeValue::Fixed(s) => Some(s),
                 SizeValue::Percentage(percent) => Some(parent_height? * percent),
@@ -454,8 +451,7 @@ impl Element for Frame {
             }
 
             // fill
-            let mut paint = Paint::Color(s.background_color).to_sk_paint(rect);
-            paint.set_style(skia_safe::paint::Style::Fill);
+            let paint = Paint::Color(s.background_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
             canvas.draw_rrect(inner_shape.to_skia(), &paint);
 
             // draw inset shadows
@@ -467,8 +463,7 @@ impl Element for Frame {
 
             // paint border
             if s.border_color.alpha() != 0.0 && s.border_size != Insets::ZERO {
-                let mut paint = Paint::Color(s.border_color).to_sk_paint(rect);
-                paint.set_style(skia_safe::paint::Style::Fill);
+                let paint = Paint::Color(s.border_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
                 canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
             }
         });

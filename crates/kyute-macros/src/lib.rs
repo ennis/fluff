@@ -1,13 +1,9 @@
 extern crate proc_macro;
 
-
-use kyute_dsl::Template;
 use proc_macro::TokenStream;
 
-
+// TODO: placeholder
 #[proc_macro]
-pub fn control(input: TokenStream) -> TokenStream {
-    let control = syn::parse_macro_input!(input as Template);
-
+pub fn control(_input: TokenStream) -> TokenStream {
     todo!()
 }

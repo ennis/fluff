@@ -37,7 +37,7 @@ macro_rules! __text {
     };
 
     (@style($s:ident) size ($f:expr) ) => {
-        $s.font_size = $f;
+        $s.font_size = $f.into();
     };
 
     (@style($s:ident) weight ($f:expr) ) => {

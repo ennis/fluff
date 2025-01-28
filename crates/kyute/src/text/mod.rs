@@ -1,15 +1,15 @@
-use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::fmt;
 use kurbo::{Point, Size};
 use skia_safe::textlayout::FontCollection;
 use skia_safe::FontMgr;
+use std::borrow::Cow;
+use std::cell::OnceCell;
+use std::fmt;
 
 pub use selection::Selection;
 pub use style::{FontStretch, FontStyle, FontWeight, TextStyle};
 pub use text_run::TextRun;
 
-use crate::drawing::{ToSkia};
+use crate::drawing::ToSkia;
 
 mod selection;
 mod skia;
@@ -37,7 +37,7 @@ pub(crate) fn get_font_collection() -> FontCollection {
             font_collection.set_default_font_manager(FontMgr::new(), None);
             font_collection
         })
-            .clone()
+        .clone()
     })
 }
 
@@ -111,7 +111,6 @@ impl TextLayout {
         self.inner.alphabetic_baseline() as f64
     }
 }
-
 
 // `text!` macro support
 #[doc(hidden)]

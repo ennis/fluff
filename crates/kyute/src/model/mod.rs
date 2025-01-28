@@ -1,20 +1,74 @@
 use crate::application::run_queued;
+use color_print::cprintln;
 use scoped_tls::scoped_thread_local;
 use slotmap::{new_key_type, Key, KeyData, SlotMap};
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::panic::Location;
 use std::rc::{Rc, Weak};
-use color_print::cprintln;
-/*
- collection models:
- - Model<Container<T>> where Container is a vec, btreemap, etc.
- - Has additional methods for manipulating the container
 
-*/
+// New
+pub trait EventSource: Any {
+    fn as_weak(&self) -> Weak<dyn Any>;
+
+    fn from_rc(rc: Rc<dyn Any>) -> Self;
+
+    fn subscribe(&self, mut callback: impl FnMut(Self) -> bool + 'static) -> SubscriptionKey
+    where
+        Self: Sized,
+    {
+        subscribe_inner(
+            [self.as_weak()],
+            TypeId::of::<DataChanged>(),
+            Box::new(move |source, _e| callback(Self::from_rc(source))),
+            Location::caller(),
+        )
+    }
+}
+
+/// `Weak<dyn Any>` with pointer-based equality and ordering.
+pub struct OrdWeak(pub Weak<dyn Any>);
+
+impl Clone for OrdWeak {
+    fn clone(&self) -> Self {
+        Self(Weak::clone(&self.0))
+    }
+}
+
+impl fmt::Debug for OrdWeak {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WeakAny#{:08x}", Weak::as_ptr(&self.0) as *const () as usize as u32)
+    }
+}
+
+impl PartialEq for OrdWeak {
+    fn eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for OrdWeak {}
+
+impl Ord for OrdWeak {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.0.as_ptr() as *const ()).cmp(&(other.0.as_ptr() as *const ()))
+    }
+}
+
+impl PartialOrd for OrdWeak {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Hash for OrdWeak {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.0.as_ptr() as *const ()).hash(state);
+    }
+}
 
 new_key_type! {
     /// Uniquely identifies a subscription to events emitted by one or more `Model` instances.
@@ -34,9 +88,21 @@ impl SubscriptionKey {
 ///
 /// `Model` instances have reference semantics similar to `Rc`. They can be cheaply cloned, and clones
 /// refer to the same underlying data. The weak reference counterpart is [`WeakModel`].
-///
 pub struct Model<T: Any + ?Sized> {
     inner: Rc<ModelInner<T>>,
+}
+
+impl<T: Any> EventSource for Model<T> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        let weak = Rc::downgrade(&self.inner);
+        let weak: Weak<dyn Any> = weak;
+        weak
+    }
+
+    fn from_rc(rc: Rc<dyn Any>) -> Self {
+        let inner: Rc<ModelInner<T>> = rc.downcast().unwrap();
+        Model { inner }
+    }
 }
 
 impl<T: Any + ?Sized> Clone for Model<T> {
@@ -78,7 +144,7 @@ impl<T: Any> Model<T> {
     where
         T: Clone,
     {
-        track_read(self.downgrade().as_dyn());
+        track_read(self.as_weak());
         self.inner.data.borrow().clone()
     }
 
@@ -87,7 +153,7 @@ impl<T: Any> Model<T> {
     /// Within a tracking scope, this will mark the model as both read and written to.
     #[track_caller]
     pub fn replace(&self, data: T) -> T {
-        let weak = self.downgrade().as_dyn();
+        let weak = self.as_weak();
         track_read(weak.clone());
         track_write(weak);
         let old = self.inner.data.replace(data);
@@ -100,7 +166,7 @@ impl<T: Any> Model<T> {
     /// If this is called within a tracking scope (see `with_tracking_scope`), the model will be
     /// marked as accessed within the scope.
     pub fn borrow(&self) -> Ref<T> {
-        track_read(self.downgrade().as_dyn());
+        track_read(self.as_weak());
         self.inner.data.borrow()
     }
 
@@ -110,7 +176,7 @@ impl<T: Any> Model<T> {
     /// marked as written to within the scope.
     #[track_caller]
     pub fn update(&self, f: impl FnOnce(&mut T)) {
-        track_write(self.downgrade().as_dyn());
+        track_write(self.as_weak());
         f(&mut *self.inner.data.borrow_mut());
         self.emit(DataChanged);
     }
@@ -131,9 +197,9 @@ impl<T: Any> Model<T> {
     #[track_caller]
     pub fn watch(&self, mut callback: impl FnMut(Model<T>) -> bool + 'static) -> SubscriptionKey {
         subscribe_inner(
-            [self.downgrade().as_dyn()],
+            [self.as_weak()],
             TypeId::of::<DataChanged>(),
-            Box::new(move |source, _e| callback(source.downcast().unwrap())),
+            Box::new(move |source, _e| callback(Self::from_rc(source))),
             Location::caller(),
         )
     }
@@ -145,10 +211,11 @@ impl<T: Any> Model<T> {
         T: EventEmitter<Event>,
     {
         let event: Box<dyn Any> = Box::new(event);
-        emit_inner(self.as_dyn(), event);
+        emit_inner(self.as_weak(), event);
     }
 }
 
+/*
 impl ModelAny {
     pub fn downcast<T: Any>(self) -> Option<Model<T>> {
         // FIXME: it's unfortunate that we need to borrow the RefCell here
@@ -161,7 +228,7 @@ impl ModelAny {
             None
         }
     }
-}
+}*/
 
 /// Type alias for a type-erased `Model`, i.e. `Model<dyn Any>`.
 pub type ModelAny = Model<dyn Any>;
@@ -271,15 +338,15 @@ struct ModelHeader {
 #[track_caller]
 #[inline]
 pub fn watch_multi(
-    models: impl IntoIterator<Item=WeakModelAny>,
-    callback: impl FnMut(ModelAny) -> bool + 'static,
+    models: impl IntoIterator<Item = Weak<dyn Any>>,
+    callback: impl FnMut(Rc<dyn Any>) -> bool + 'static,
 ) -> SubscriptionKey {
     watch_multi_with_location(models, callback, Location::caller())
 }
 
 pub fn watch_multi_with_location(
-    models: impl IntoIterator<Item=WeakModelAny>,
-    mut callback: impl FnMut(ModelAny) -> bool + 'static,
+    models: impl IntoIterator<Item = Weak<dyn Any>>,
+    mut callback: impl FnMut(Rc<dyn Any>) -> bool + 'static,
     location: &'static Location<'static>,
 ) -> SubscriptionKey {
     subscribe_inner(
@@ -294,22 +361,26 @@ pub fn watch_multi_with_location(
 #[track_caller]
 #[inline]
 pub fn watch_multi_once(
-    models: impl IntoIterator<Item=WeakModelAny>,
-    callback: impl FnOnce(ModelAny) + 'static,
+    models: impl IntoIterator<Item = Weak<dyn Any>>,
+    callback: impl FnOnce(Rc<dyn Any>) + 'static,
 ) -> SubscriptionKey {
     watch_multi_once_with_location(models, callback, Location::caller())
 }
 
 pub fn watch_multi_once_with_location(
-    models: impl IntoIterator<Item=WeakModelAny>,
-    callback: impl FnOnce(ModelAny) + 'static,
+    models: impl IntoIterator<Item = Weak<dyn Any>>,
+    callback: impl FnOnce(Rc<dyn Any>) + 'static,
     location: &'static Location<'static>,
 ) -> SubscriptionKey {
     let mut callback = Some(callback);
-    watch_multi_with_location(models, move |source| {
-        callback.take().unwrap()(source);
-        false
-    }, location)
+    watch_multi_with_location(
+        models,
+        move |source| {
+            callback.take().unwrap()(source);
+            false
+        },
+        location,
+    )
 }
 
 /// Trait implemented by data model types (the `T` in `Model<T>`) that can emit events of a
@@ -330,9 +401,10 @@ impl<T> EventEmitter<DataChanged> for T {}
 /// Tracks accesses to models within a scope.
 pub struct TrackingScope {
     /// List of models accessed (read from or written to) within the scope.
-    pub reads: BTreeSet<WeakModelAny>,
+    /// TODO: WeakAny set
+    pub reads: BTreeSet<OrdWeak>,
     /// List of models written to within the scope.
-    pub writes: BTreeSet<WeakModelAny>,
+    pub writes: BTreeSet<OrdWeak>,
 }
 
 impl TrackingScope {
@@ -346,10 +418,10 @@ impl TrackingScope {
     /// Adds a subscription to the accessed models.
     pub fn watch_once<F>(&self, callback: F) -> SubscriptionKey
     where
-        F: FnOnce(ModelAny) -> bool + 'static,
+        F: FnOnce(Rc<dyn Any>) -> bool + 'static,
     {
         let mut callback = Some(callback);
-        watch_multi(self.reads.iter().cloned(), move |source| {
+        watch_multi(self.reads.iter().map(|w| w.0.clone()), move |source| {
             let callback = callback.take().unwrap();
             callback(source);
             false
@@ -369,20 +441,20 @@ where
 }
 
 /// Registers a read access to the specified model within the current tracking scope.
-pub(crate) fn track_read(model: WeakModelAny) {
+pub(crate) fn track_read(model: Weak<dyn Any>) {
     if TRACKING_SCOPE.is_set() {
         TRACKING_SCOPE.with(move |s| {
-            s.borrow_mut().reads.insert(model);
+            s.borrow_mut().reads.insert(OrdWeak(model));
         });
     }
 }
 
 /// Registers a write access to the specified model within the current tracking scope.
-pub(crate) fn track_write(model: WeakModelAny) {
+pub(crate) fn track_write(model: Weak<dyn Any>) {
     if TRACKING_SCOPE.is_set() {
         TRACKING_SCOPE.with(move |s| {
-            s.borrow_mut().reads.insert(model.clone());
-            s.borrow_mut().writes.insert(model);
+            s.borrow_mut().reads.insert(OrdWeak(model.clone()));
+            s.borrow_mut().writes.insert(OrdWeak(model));
         });
     }
 }
@@ -393,7 +465,7 @@ pub(crate) fn track_write(model: WeakModelAny) {
 type SubscriptionKeyU64 = u64;
 
 /// Closure type of subscription callbacks.
-type Callback = Box<dyn FnMut(ModelAny, &dyn Any) -> bool>;
+type Callback = Box<dyn FnMut(Rc<dyn Any>, &dyn Any) -> bool>;
 
 /// Represents a subscription to an event emitted by one or more `Model` instances.
 struct Subscription {
@@ -424,14 +496,13 @@ impl Subscription {
 /// Holds the table of subscriptions.
 struct SubscriptionMap {
     /// Subscriptions ordered by source model and event type. Used when emitting events.
-    by_emitter: BTreeSet<(WeakModelAny, Option<TypeId>, SubscriptionKeyU64)>,
+    by_emitter: BTreeSet<(OrdWeak, Option<TypeId>, SubscriptionKeyU64)>,
     /// Callbacks for each subscription.
     subs: SlotMap<SubscriptionKey, Subscription>,
 }
 
-
 fn subscribe_inner(
-    sources: impl IntoIterator<Item=WeakModelAny>,
+    sources: impl IntoIterator<Item = Weak<dyn Any>>,
     event_type_id: TypeId,
     callback: Callback,
     location: &'static Location<'static>,
@@ -444,19 +515,19 @@ fn subscribe_inner(
     SUBSCRIPTION_MAP.with_borrow_mut(|s| {
         let key = s.subs.insert(sub);
         for source in sources {
-            s.by_emitter.insert((source, Some(event_type_id), key.data().as_ffi()));
+            s.by_emitter
+                .insert((OrdWeak(source), Some(event_type_id), key.data().as_ffi()));
         }
         key
     })
 }
 
 #[track_caller]
-fn emit_inner(source: ModelAny, payload: Box<dyn Any>) {
+fn emit_inner(weak_source: Weak<dyn Any>, payload: Box<dyn Any>) {
     let location = Location::caller();
-
     let type_id = (*payload).type_id();
-    let targets = SUBSCRIPTION_MAP.with_borrow_mut(|s| s.event_targets(&source, type_id));
-    let weak_source = source.downgrade();
+    let targets = SUBSCRIPTION_MAP.with_borrow_mut(|s| s.event_targets(&weak_source, type_id));
+    let weak_source = OrdWeak(weak_source);
 
     if !targets.is_empty() {
         // TODO: why don't we queue one callback per target?
@@ -465,7 +536,7 @@ fn emit_inner(source: ModelAny, payload: Box<dyn Any>) {
             #[cfg(debug_assertions)]
             {
                 println!();
-                cprintln!("<yellow,bold>event</>: from {source:?}");
+                cprintln!("<yellow,bold>event</>: from {weak_source:?}");
                 println!("   --> {location}");
             }
 
@@ -493,7 +564,7 @@ fn emit_inner(source: ModelAny, payload: Box<dyn Any>) {
 
                 // It's possible that the model was dropped between the moment the event was emitted
                 // and the moment the callback is called.
-                let Some(source) = weak_source.upgrade() else {
+                let Some(source) = weak_source.0.upgrade() else {
                     continue;
                 };
 
@@ -529,12 +600,15 @@ impl SubscriptionMap {
     }
 
     /// Returns the set of subscriptions interested in the event from the specified source.
-    fn event_targets(&mut self, source: &ModelAny, event_type_id: TypeId) -> Vec<SubscriptionKey> {
-        // FIXME avoid downgrade / cloning models
-        let weak_source = source.downgrade();
+    fn event_targets(&mut self, source: &Weak<dyn Any>, event_type_id: TypeId) -> Vec<SubscriptionKey> {
+        // FIXME avoid cloning models
+        //let weak_source = source;
         //eprintln!("looking for targets for {source:?} type_id {event_type_id:?}");
         self.by_emitter
-            .range((weak_source.clone(), Some(event_type_id), 0)..(weak_source.clone(), Some(event_type_id), u64::MAX))
+            .range(
+                (OrdWeak(source.clone()), Some(event_type_id), 0)
+                    ..(OrdWeak(source.clone()), Some(event_type_id), u64::MAX),
+            )
             .map(|(_, _, key)| SubscriptionKey::from(KeyData::from_ffi(*key)))
             .collect()
     }
@@ -565,7 +639,7 @@ impl SubscriptionMap {
     /// Removes expired subscriptions and dropped models.
     fn cleanup(&mut self) {
         self.by_emitter
-            .retain(|k| k.0.upgrade().is_some() && self.subs.contains_key(KeyData::from_ffi(k.2).into()));
+            .retain(|k| k.0 .0.upgrade().is_some() && self.subs.contains_key(KeyData::from_ffi(k.2).into()));
         // TODO cleanup orphan subscriptions (subscriptions without a model)
     }
 }

@@ -1,8 +1,5 @@
-use crate::{
-    drawing,
-    drawing::{BorderStyle, BoxShadow, Paint, ToSkia},
-    Color,
-};
+use crate::drawing::{BorderStyle, BoxShadow, Paint, ToSkia};
+use crate::{drawing, Color};
 use kurbo::{Insets, PathEl, Rect, RoundedRect, Shape};
 use smallvec::SmallVec;
 use tracing::warn;
@@ -76,9 +73,7 @@ impl ShapeBorder for RoundedRectBorder {
             return;
         }
 
-        let mut paint = Paint::Color(self.color).to_sk_paint(rect);
-        paint.set_style(skia_safe::paint::Style::Fill);
-
+        let paint = Paint::Color(self.color).to_sk_paint(rect, skia_safe::paint::Style::Fill);
         let outer_rrect = self.outer_shape(rect).to_skia();
         let inner_rrect = self.inner_shape(rect).to_skia();
         canvas.draw_drrect(outer_rrect, inner_rrect, &paint);
@@ -95,8 +90,8 @@ pub struct CompoundBorder<Inner, Outer> {
 impl<Inner, Outer, S> ShapeBorder for CompoundBorder<Inner, Outer>
 where
     S: Shape,
-    Inner: ShapeBorder<Shape=S>,
-    Outer: ShapeBorder<Shape=S>,
+    Inner: ShapeBorder<Shape = S>,
+    Outer: ShapeBorder<Shape = S>,
 {
     type Shape = S;
 
@@ -198,8 +193,7 @@ impl<B: ShapeBorder> Decoration for ShapeDecoration<B> {
         }
 
         // fill
-        let mut paint = self.fill.to_sk_paint(rect);
-        paint.set_style(skia_safe::paint::Style::Fill);
+        let paint = self.fill.to_sk_paint(rect, skia_safe::paint::Style::Fill);
         if let Some(rect) = inner_shape.as_rect() {
             canvas.draw_rect(rect.to_skia(), &paint);
         } else if let Some(rrect) = inner_shape.as_rounded_rect() {

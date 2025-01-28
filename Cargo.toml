@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge", "crates/kyute", "crates/kyute-text", "crates/kyute-common", "crates/kyute-dsl", "crates/kyute-macros"]
+members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge", "crates/kyute", "crates/kyute-common"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -9,10 +9,9 @@ shader-bridge = { path = "crates/shader-bridge" }
 curve-fit-nd-sys = { path = "crates/curve-fit-nd-sys" }
 curve-fit-nd = { path = "crates/curve-fit-nd" }
 kyute = { path = "crates/kyute" }
-kyute-text = { path = "crates/kyute-text" }
+#kyute-text = { path = "crates/kyute-text" }
 kyute-common = { path = "crates/kyute-common" }
-kyute-dsl = { path = "crates/kyute-dsl" }
-kyute-macros = { path = "crates/kyute-macros" }
+#kyute-macros = { path = "crates/kyute-macros" }
 
 [profile.release]
 debug = true

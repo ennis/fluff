@@ -1,12 +1,10 @@
-use crate::element::{ElementAny, LayoutCtx, WindowCtx};
+use crate::element::ElementAny;
+use crate::layout::{
+    Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue, SpacingAfter,
+    SpacingBefore,
+};
 use kurbo::{Size, Vec2};
 use tracing::trace;
-//use crate::element::{AttachedProperty};
-use crate::layout;
-use crate::layout::{
-    Alignment, Axis, AxisSizeHelper, HorizontalAlignment, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint,
-    SizeValue, SpacingAfter, SpacingBefore,
-};
 
 /*
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
@@ -29,7 +27,6 @@ pub enum CrossAxisAlignment {
     Stretch,
     Baseline,
 }
-
 
 pub struct FlexLayoutParams {
     /// The direction of the main axis of the flex container (vertical or horizontal).
@@ -66,7 +63,6 @@ impl FlexChild {
     }
 }
 
-
 pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
@@ -90,7 +86,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
     // ======
 
     let mut non_flex_main_total = 0.0; // total size of non-flex children + min size of spacers
-    // main_axis_max - non_flex_main_total = remaining space available for growing flex children
+                                       // main_axis_max - non_flex_main_total = remaining space available for growing flex children
     let mut flex_sum = 0.0; // sum of flex factors
 
     #[derive(Copy, Clone, Default)]
@@ -150,8 +146,8 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
         // add margin contributions
         let margin_before = child.margin_before; // child.get(SpacingBefore).unwrap_or_default();
         let margin_after = child.margin_after; // get(SpacingAfter).unwrap_or_default();
-        //let min_margin_before = child.get(SpacingAfter).unwrap_or_default();
-        //let min_margin_after = child.get(SpacingAfter).unwrap_or_default();
+                                               //let min_margin_before = child.get(SpacingAfter).unwrap_or_default();
+                                               //let min_margin_after = child.get(SpacingAfter).unwrap_or_default();
 
         let margin_before = margin_before.into();
         let margin_after = margin_after.into();
@@ -353,7 +349,6 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
     // TODO baseline may be wrong here?
     LayoutOutput::from_main_cross_sizes(main_axis, main_size, cross_size, Some(max_baseline))
 }
-
 
 /// Size value with a flex growth factor. Helper for `flex_layout`.
 #[derive(Copy, Clone, Debug, PartialEq, Default)]

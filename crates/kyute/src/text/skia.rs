@@ -58,10 +58,14 @@ impl ToSkia for TextStyle<'_> {
     type Target = skia_safe::textlayout::TextStyle;
 
     fn to_skia(&self) -> Self::Target {
-        let font_style = skia_safe::font_style::FontStyle::new(self.font_weight.to_skia(), self.font_stretch.to_skia(), self.font_style.to_skia());
+        let font_style = skia_safe::font_style::FontStyle::new(
+            self.font_weight.to_skia(),
+            self.font_stretch.to_skia(),
+            self.font_style.to_skia(),
+        );
         let mut style = skia_safe::textlayout::TextStyle::new();
         style.set_font_families(&[self.font_family.as_ref()]);
-        style.set_font_size(self.font_size);
+        style.set_font_size(self.font_size as f32);
         style.set_font_style(font_style);
         style.set_color(self.color.to_skia().to_color());
         style

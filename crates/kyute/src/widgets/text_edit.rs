@@ -1,15 +1,13 @@
-use std::time::Duration;
 use keyboard_types::Key;
 use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
-use tracing::{info, trace_span, warn};
+use std::time::Duration;
+use tracing::{info, trace_span};
 use unicode_segmentation::GraphemeCursor;
 
-use crate::application::{spawn, wait_for};
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
+use crate::element::{Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
 use crate::event::Event;
-use crate::handler::Handler;
 use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
 use crate::{AppGlobals, Color, Notifier, PaintCtx};
@@ -629,7 +627,7 @@ impl Element for TextEdit {
                 RectHeightStyle::Tight,
                 RectWidthStyle::Tight,
             );
-            let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds);
+            let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
             for text_box in selection_rects {
                 canvas.draw_rect(text_box.rect, &selection_paint);
             }
@@ -641,7 +639,7 @@ impl Element for TextEdit {
                         Size::new(1.0, info.bounds.height() as f64),
                     );
                     //eprintln!("caret_rect: {:?}", caret_rect);
-                    let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds);
+                    let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
                     canvas.draw_rect(caret_rect.to_skia(), &caret_paint);
                 }
             }

@@ -1,4 +1,9 @@
+use kurbo::Insets;
 pub use kurbo::{self, Size};
+use kyute::compositor::ColorType;
+use kyute::drawing::InterpolationColorSpace::Oklab;
+use kyute::drawing::{ColorStop, DrawCtx, InterpolationColorSpace, LinearGradient, Paint, StaticImage};
+use kyute::element::IntoElementAny;
 use kyute::model::Model;
 use kyute::text::TextStyle;
 use kyute::widgets::button::button;
@@ -6,14 +11,31 @@ use kyute::widgets::draw::Draw;
 use kyute::widgets::flex::Flex;
 use kyute::widgets::frame::Frame;
 use kyute::widgets::text_edit::TextEdit;
-use kyute::{application, linear_gradient, text, Color, Window, WindowOptions};
+use kyute::{application, text, Color, Window, WindowOptions};
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 use tracing_tree::HierarchicalLayer;
-use kyute::drawing::StaticImage;
 
-pub const ALIGN_CENTER: StaticImage = StaticImage::new(include_bytes!("../../../data/ui/align_center.png"));
+pub const TEST_IMAGE: StaticImage = StaticImage::new(include_bytes!("../../../data/ui/align_center.png"));
+
+fn myframe(content: impl IntoElementAny) -> impl IntoElementAny {
+    Frame::new()
+        .border_color(Color::from_hex("5f5637"))
+        .border_radius(8.0)
+        .background_color(Color::from_hex("211e13"))
+}
+
+fn button_visual(cx: &mut DrawCtx, label: &str) {
+    use kyute::drawing::prelude::*;
+
+    const FILL: Color = rgb(37, 37, 37);
+
+    let r = cx.rect.to_rounded_rect(4.);
+    cx.fill_rrect(r, rgb(37, 37, 37));
+    cx.draw_border(r, Insets::uniform(1.), Inside, rgb(37, 37, 37));
+    cx.draw_text(Baseline, text![size(14) "{label}"])
+}
 
 fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
@@ -33,15 +55,15 @@ fn main() {
         text_edit2.set_wrap_mode(WrapMode::NoWrap);*/
 
         let counter_value = Model::new(0i32);
-        let counter_display = Frame::new().height(20).content(
+        let counter_display = Frame::new().height(32).content(
             Draw::new({
                 let counter_value = counter_value.clone();
                 move |cx| {
-                    use kyute::widgets::draw::prelude::*;
+                    use kyute::drawing::prelude::*;
                     let value = counter_value.get();
-                    //cx.fill(rgb(255, 255, 255));
-                    cx.fill(linear_gradient!(in Oklab; 0.0; rgb(0, 0, 255), rgb(255, 255, 255)));
-                    cx.draw_text(Right, Top, text!["Counter value is " b "{value}"]);
+                    cx.fill_rect(cx.rect, linear_gradient(Oklab, 90, [rgb(0, 0, 255), rgb(255, 255, 255)]));
+                    cx.draw_text(BaselineRight, text![rgb(0,0,0) "Counter value is " b "{value}"]);
+                    cx.draw_image(Left, &TEST_IMAGE);
                 }
             }));
 

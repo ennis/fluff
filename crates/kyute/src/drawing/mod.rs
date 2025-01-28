@@ -18,11 +18,15 @@ mod decoration;
 mod image;
 mod linear_gradient;
 mod paint;
+mod context;
 //mod path;
 //#[cfg(feature = "svg")]
 //mod svg_path;
 //#[cfg(feature = "svg")]
 //pub mod vector_icon;
+
+pub use context::{DrawCtx};
+pub use context::prelude;
 
 /// Types that can be converted to their skia equivalent.
 pub trait ToSkia {

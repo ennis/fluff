@@ -2,7 +2,6 @@
 use std::fmt;
 use crate::element::AttachedProperty;
 use kurbo::{Size, Vec2};
-use kyute_dsl::PropertyExpr;
 
 pub mod flex;
 mod cache;
@@ -201,25 +200,6 @@ impl From<f64> for SizeValue {
 impl From<i32> for SizeValue {
     fn from(size: i32) -> Self {
         SizeValue::Fixed(size as f64)
-    }
-}
-
-/// Conversion of SizeValue from DSL expressions.
-impl TryFrom<PropertyExpr> for SizeValue {
-    type Error = &'static str;
-
-    fn try_from(value: PropertyExpr) -> Result<Self, Self::Error> {
-        match value {
-            PropertyExpr::String(s) => match s.as_str() {
-                "auto" => Ok(SizeValue::Auto),
-                "min-content" => Ok(SizeValue::MinContent),
-                "max-content" => Ok(SizeValue::MaxContent),
-                _ => Err("invalid size value"),
-            },
-            PropertyExpr::Px(px) => Ok(SizeValue::Fixed(px as f64)),
-            PropertyExpr::Fr(_fr) => Ok(SizeValue::Stretch),    // TODO fractional units
-            _ => Err("invalid size value"),
-        }
     }
 }
 

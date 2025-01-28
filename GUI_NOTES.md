@@ -1278,6 +1278,17 @@ Declarations:
 }
 
 
+{
+
+    rect(id=RECT, align=top_left, anchor=top_left, bounds, fill=FILL_COLOR);
+    
+    border(1, inside, rgb(255, 0, 255));
+    
+    group(opacity=0.5) {
+        
+    }
+}
+
 
 ```
 
@@ -1321,7 +1332,75 @@ fn draw(cx: &mut DrawCtx) {
 
     // gradients:
     let g = gradient(cx.h_midline(), [rgb(...), rgb(...)]);
+
+    for i in 0..1 {
+        cx.draw(vg! {
+            rect(align=top_left, 
+                 anchor=top_left,
+                 radius=3, 
+                 baseline=10, 
+                 fill={g},
+                 border=(1, inside, rgb(...)),
+            )
+            [
+                text(align=baseline, anchor=baseline, ["OK"])
+            ]
+            
+            grid(
+                rows=[1,1fr,1],
+                columns=[1,1fr,1],
+            )
+            area(1,1) {
+            
+            }
+            
+        });
+    }
+
+
+    // Expands to:
+    // 
+    [Item::Rect {
+        align: Anchor::TopLeft,
+        anchor: Anchor::TopLeft,
+        radius: 3,
+        baseline: 10,
+        fill: &g,
+        border: (1, Border::Inside,),
+        content: &[
+            Item::Text {
+                align: Anchor::Baseline,
+                text: text!["OK"],
+                ..Default::default()
+            }
+        ],
+        ..Default::default()
+    },
+        Item::Grid {
+            rows: ...,
+            columns: ...,
+            content: &[
+                GridArea {
+                    row_span: ...,
+                    col_span: ...,
+                    content: &[],
+                }
+            ],
+        }
+    ]
+
+    // Issues: this borrows stuff from the surrounding scope, it must be used immediately, 
+    // and cannot be stored in a variable unless serialized
+
+
+    // Expands to a serialized drawing, or at least a block of code that draws the thing
 }
 
 ```
 
+Considerations:
+
+- making a procedural drawing DSL is far too complicated and requires too much maintenance
+- an attainable goal would be to make a macro for more concisely specifying shapes and fills and groups, like SVG
+    - basically, a macro to produce an inline representation of SVG, with parameters interpolated from the surrounding
+      context

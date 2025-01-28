@@ -46,15 +46,13 @@ fn button_style() -> FrameStyle {
         };
     }
     BUTTON_STYLE.with(|s| s.clone())
-
-    // Alternative:
 }
 
 pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
     let label = label.into();
     let theme = &DARK_THEME;
     let text_style = TextStyle::new()
-        .font_size(theme.font_size as f32)
+        .font_size(theme.font_size)
         .font_family(theme.font_family)
         .color(Color::from_hex("ffe580"));
 

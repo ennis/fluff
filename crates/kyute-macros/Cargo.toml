@@ -7,9 +7,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-kyute-dsl = { workspace = true }
 syn = "2.0.86"
-
 
 [dev-dependencies]
 kyute = { workspace = true }

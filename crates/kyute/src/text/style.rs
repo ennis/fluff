@@ -7,7 +7,7 @@ use std::str::FromStr;
 #[derive(Clone)]
 pub struct TextStyle<'a> {
     pub font_family: Cow<'a, str>,
-    pub font_size: f32,
+    pub font_size: f64,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub font_stretch: FontStretch,
@@ -19,7 +19,6 @@ impl Default for TextStyle<'static> {
         TextStyle::new().into_static()
     }
 }
-
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct FontWeight(pub u16);
@@ -58,7 +57,7 @@ impl FromStr for FontWeight {
             "bold" => Ok(Self::BOLD),
             "extra-bold" => Ok(Self::EXTRA_BOLD),
             "black" => Ok(Self::BLACK),
-            s => s.parse::<u16>().map(FontWeight)
+            s => s.parse::<u16>().map(FontWeight),
         }
     }
 }
@@ -113,7 +112,7 @@ impl<'a> TextStyle<'a> {
         self.font_family = font_family.into();
         self
     }
-    pub fn font_size(mut self, font_size: f32) -> Self {
+    pub fn font_size(mut self, font_size: f64) -> Self {
         self.font_size = font_size;
         self
     }

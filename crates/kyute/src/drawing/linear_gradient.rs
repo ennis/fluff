@@ -16,18 +16,16 @@ pub struct ColorStop {
     pub color: Color,
 }
 
-impl From<(f64, Color)> for ColorStop
-{
+impl From<(f64, Color)> for ColorStop {
     fn from((position, color): (f64, Color)) -> Self {
         ColorStop {
             position: Some(position),
-            color: color,
+            color,
         }
     }
 }
 
-impl From<Color> for ColorStop
-{
+impl From<Color> for ColorStop {
     fn from(color: Color) -> Self {
         ColorStop {
             position: None,
@@ -48,9 +46,9 @@ pub enum InterpolationColorSpace {
 /// Describes a linear color gradient.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearGradient {
-    /// Direction of the gradient line.
+    /// Direction of the gradient line in degrees.
     //#[serde(deserialize_with = "deserialize_angle")]
-    pub angle: f64,
+    pub angle_degrees: f64,
     /// List of color stops.
     pub stops: Vec<ColorStop>,
     /// Color space for interpolation. The stop colors are converted to this space before interpolation.
@@ -61,15 +59,15 @@ impl LinearGradient {
     /// Creates a new `LinearGradient`, with no stops.
     pub fn new() -> LinearGradient {
         LinearGradient {
-            angle: Default::default(),
+            angle_degrees: Default::default(),
             stops: vec![],
             color_space: InterpolationColorSpace::SrgbLinear,
         }
     }
 
-    /// Sets the gradient angle.
-    pub fn angle(mut self, angle: f64) -> Self {
-        self.angle = angle;
+    /// Sets the gradient angle in degrees.
+    pub fn angle(mut self, angle_degrees: f64) -> Self {
+        self.angle_degrees = angle_degrees;
         self
     }
 
@@ -87,7 +85,7 @@ impl LinearGradient {
         let w = bounds.width();
         let h = bounds.height();
 
-        let angle = self.angle;
+        let angle = self.angle_degrees.to_radians();
         let tan_th = angle.tan();
         let (x, y) = if tan_th > h / w {
             (h / (2.0 * tan_th), 0.5 * h)
@@ -132,7 +130,7 @@ impl LinearGradient {
             interpolation,
             None,
         )
-            .unwrap();
+        .unwrap();
 
         let mut paint = sk::Paint::default();
         paint.set_shader(shader);
