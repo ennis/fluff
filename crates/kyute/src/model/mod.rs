@@ -12,18 +12,23 @@ use std::rc::{Rc, Weak};
 
 // New
 pub trait EventSource: Any {
+    /// Returns this object as a weak reference.
     fn as_weak(&self) -> Weak<dyn Any>;
 
-    fn from_rc(rc: Rc<dyn Any>) -> Self;
-
-    fn subscribe(&self, mut callback: impl FnMut(Self) -> bool + 'static) -> SubscriptionKey
+    fn subscribe<E: 'static>(
+        &self,
+        mut callback: impl FnMut(Weak<dyn Any>, &dyn Any) -> bool + 'static,
+    ) -> SubscriptionKey
     where
         Self: Sized,
     {
         subscribe_inner(
             [self.as_weak()],
-            TypeId::of::<DataChanged>(),
-            Box::new(move |source, _e| callback(Self::from_rc(source))),
+            TypeId::of::<E>(),
+            Box::new(move |source, e| {
+                let e = e.downcast_ref::<E>().unwrap();
+                callback(source, e)
+            }),
             Location::caller(),
         )
     }
@@ -97,11 +102,6 @@ impl<T: Any> EventSource for Model<T> {
         let weak = Rc::downgrade(&self.inner);
         let weak: Weak<dyn Any> = weak;
         weak
-    }
-
-    fn from_rc(rc: Rc<dyn Any>) -> Self {
-        let inner: Rc<ModelInner<T>> = rc.downcast().unwrap();
-        Model { inner }
     }
 }
 
@@ -195,11 +195,11 @@ impl<T: Any> Model<T> {
     /// A `SubscriptionKey` identifying the resulting subscription to the model, that can be used
     /// to remove the subscription later.
     #[track_caller]
-    pub fn watch(&self, mut callback: impl FnMut(Model<T>) -> bool + 'static) -> SubscriptionKey {
+    pub fn watch(&self, mut callback: impl FnMut() -> bool + 'static) -> SubscriptionKey {
         subscribe_inner(
             [self.as_weak()],
             TypeId::of::<DataChanged>(),
-            Box::new(move |source, _e| callback(Self::from_rc(source))),
+            Box::new(move |_source, _e| callback()),
             Location::caller(),
         )
     }
@@ -339,14 +339,14 @@ struct ModelHeader {
 #[inline]
 pub fn watch_multi(
     models: impl IntoIterator<Item = Weak<dyn Any>>,
-    callback: impl FnMut(Rc<dyn Any>) -> bool + 'static,
+    callback: impl FnMut(Weak<dyn Any>) -> bool + 'static,
 ) -> SubscriptionKey {
     watch_multi_with_location(models, callback, Location::caller())
 }
 
 pub fn watch_multi_with_location(
     models: impl IntoIterator<Item = Weak<dyn Any>>,
-    mut callback: impl FnMut(Rc<dyn Any>) -> bool + 'static,
+    mut callback: impl FnMut(Weak<dyn Any>) -> bool + 'static,
     location: &'static Location<'static>,
 ) -> SubscriptionKey {
     subscribe_inner(
@@ -362,14 +362,14 @@ pub fn watch_multi_with_location(
 #[inline]
 pub fn watch_multi_once(
     models: impl IntoIterator<Item = Weak<dyn Any>>,
-    callback: impl FnOnce(Rc<dyn Any>) + 'static,
+    callback: impl FnOnce(Weak<dyn Any>) + 'static,
 ) -> SubscriptionKey {
     watch_multi_once_with_location(models, callback, Location::caller())
 }
 
 pub fn watch_multi_once_with_location(
     models: impl IntoIterator<Item = Weak<dyn Any>>,
-    callback: impl FnOnce(Rc<dyn Any>) + 'static,
+    callback: impl FnOnce(Weak<dyn Any>) + 'static,
     location: &'static Location<'static>,
 ) -> SubscriptionKey {
     let mut callback = Some(callback);
@@ -418,7 +418,7 @@ impl TrackingScope {
     /// Adds a subscription to the accessed models.
     pub fn watch_once<F>(&self, callback: F) -> SubscriptionKey
     where
-        F: FnOnce(Rc<dyn Any>) -> bool + 'static,
+        F: FnOnce(Weak<dyn Any>) -> bool + 'static,
     {
         let mut callback = Some(callback);
         watch_multi(self.reads.iter().map(|w| w.0.clone()), move |source| {
@@ -465,7 +465,7 @@ pub(crate) fn track_write(model: Weak<dyn Any>) {
 type SubscriptionKeyU64 = u64;
 
 /// Closure type of subscription callbacks.
-type Callback = Box<dyn FnMut(Rc<dyn Any>, &dyn Any) -> bool>;
+type Callback = Box<dyn FnMut(Weak<dyn Any>, &dyn Any) -> bool>;
 
 /// Represents a subscription to an event emitted by one or more `Model` instances.
 struct Subscription {
@@ -564,11 +564,12 @@ fn emit_inner(weak_source: Weak<dyn Any>, payload: Box<dyn Any>) {
 
                 // It's possible that the model was dropped between the moment the event was emitted
                 // and the moment the callback is called.
-                let Some(source) = weak_source.0.upgrade() else {
-                    continue;
-                };
+                // The event should still be sent in this case.
+                //let Some(source) = weak_source.0.upgrade() else {
+                //    continue;
+                //};
 
-                let keep_sub = cb(source, &*payload);
+                let keep_sub = cb(weak_source.0.clone(), &*payload);
 
                 // put the callback back if it wasn't consumed
                 SUBSCRIPTION_MAP.with_borrow_mut(|s| {

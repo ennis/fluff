@@ -3,8 +3,8 @@ use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
-    watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, ModelAny, SubscriptionKey,
-    WeakModelAny,
+    watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, EventSource, ModelAny,
+    SubscriptionKey, WeakModelAny,
 };
 use crate::window::WeakWindow;
 use crate::PaintCtx;
@@ -770,7 +770,7 @@ impl<T: 'static> ElementCtx<T> {
     pub fn watch_once(
         &mut self,
         models: impl IntoIterator<Item = Weak<dyn Any>>,
-        on_changed: impl FnOnce(&mut T, Rc<dyn Any>) + 'static,
+        on_changed: impl FnOnce(&mut T, Weak<dyn Any>) + 'static,
     ) -> SubscriptionKey {
         let weak_this = self.weak_this.clone();
         watch_multi_once(models, move |source| {
@@ -790,7 +790,7 @@ impl<T: 'static> ElementCtx<T> {
     ) -> R {
         let weak_this = self.weak_this.clone();
         let (r, tracking_scope) = with_tracking_scope(scope);
-        tracking_scope.watch_once(move |source| {
+        tracking_scope.watch_once(move |_| {
             Self::invoke_helper(weak_this, on_changed);
             false
         });
@@ -823,6 +823,12 @@ pub struct ElementBuilder<T>(UniqueRc<RefCell<T>>);
 impl<T: Default + Element> Default for ElementBuilder<T> {
     fn default() -> Self {
         ElementBuilder::new(Default::default())
+    }
+}
+
+impl<T: Element> EventSource for ElementBuilder<T> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.weak().0
     }
 }
 
