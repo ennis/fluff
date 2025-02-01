@@ -6,20 +6,16 @@ use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
     watch_multi_once, watch_multi_once_with_location, with_tracking_scope, EventSource, SubscriptionKey,
 };
-use crate::util::rc_cell::{RcCell, RcRef, RcRefMut};
 use crate::window::WeakWindow;
 use crate::{ElementState, PaintCtx};
 use bitflags::bitflags;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
-use rc_borrow::RcBorrow;
-use std::any::{Any, TypeId};
-use std::cell::{BorrowMutError, Cell, Ref, RefCell, RefMut, UnsafeCell};
+use std::any::{type_name, Any, TypeId};
+use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
-use std::ptr::NonNull;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::time::Duration;
 use std::{fmt, mem, ptr};
@@ -81,12 +77,12 @@ pub fn set_keyboard_focus(target: ElementAny) {
             }
 
             // Send a FocusLost event to the previously focused element.
-            prev_focus.element.borrow_mut().ctx_mut().focused = false;
+            prev_focus.element.borrow_mut().ctx.focused = false;
             prev_focus.element.send_event(&mut WindowCtx {}, &mut Event::FocusLost);
         }
 
         // Send a FocusGained event to the newly focused element.
-        target.borrow_mut().ctx_mut().focused = true;
+        target.borrow_mut().ctx.focused = true;
         target.send_event(&mut WindowCtx {}, &mut Event::FocusGained);
 
         // If necessary, activate the target window.
@@ -108,6 +104,7 @@ pub struct WindowCtx {}
 
 pub struct HitTestCtx {
     pub hits: Vec<WeakElementAny>,
+    pub rect: Rect,
     transform: Affine,
 }
 
@@ -115,6 +112,7 @@ impl HitTestCtx {
     pub fn new() -> HitTestCtx {
         HitTestCtx {
             hits: Vec::new(),
+            rect: Rect::ZERO,
             transform: Affine::default(),
         }
     }
@@ -143,28 +141,24 @@ pub trait Element: Any {
     ///
     /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
     /// in ElementCtx.
-    fn layout(&mut self, size: Size) -> LayoutOutput;
+    fn layout(&mut self, size: Size) -> LayoutOutput {
+        LayoutOutput {
+            width: size.width,
+            height: size.height,
+            baseline: None,
+        }
+    }
 
     /// Called to perform hit-testing on the bounds of this element.
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool;
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
     #[allow(unused_variables)]
-    fn paint(&mut self, ctx: &mut PaintCtx);
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {}
-}
-
-/// Exposes the child elements of container elements.
-pub trait Container<Item>: Element {
-    /// The type of the internal container for child elements.
-    type Elements;
-    // FIXME: the container can't react to individual changes (e.g. to create or invalidate associated elements)
-    // => when this method is called, the container must invalidate any data associated with its
-    // children
-    fn elements(&mut self) -> &mut Self::Elements;
+    fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {}
 }
 
 impl dyn Element + 'static {
@@ -201,12 +195,107 @@ pub struct ElemBox<T: ?Sized> {
     pub element: T,
 }
 
-impl<T> ElemBox<T> {
-    fn new(element: T) -> ElemBox<T> {
-        ElemBox {
+impl ElemBox<dyn Element> {
+    /// Downcasts the element to a concrete type.
+    pub fn downcast<T: 'static>(&self) -> Option<&ElemBox<T>> {
+        if self.element.type_id() == TypeId::of::<T>() {
+            unsafe {
+                // SAFETY: we just checked that the type matches
+                let raw = self as *const ElemBox<dyn Element> as *const ElemBox<T>;
+                Some(&*raw)
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Downcasts the element to a concrete type.
+    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut ElemBox<T>> {
+        // (*self) because of https://users.rust-lang.org/t/calling-the-any-traits-type-id-on-a-mutable-reference-causes-a-weird-compiler-error/84658/2
+        if self.element.type_id() == TypeId::of::<T>() {
+            unsafe {
+                // SAFETY: we just checked that the type matches
+                let raw = self as *mut ElemBox<dyn Element> as *mut ElemBox<T>;
+                Some(&mut *raw)
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Element> ElemBox<T> {
+    fn new(element: T) -> UniqueRc<RefCell<ElemBox<T>>> {
+        let mut rc = UniqueRc::new(RefCell::new(ElemBox {
             ctx: ElementCtxAny::new(),
             element,
+        }));
+        let weak = UniqueRc::downgrade(&rc);
+        rc.get_mut().ctx.weak_this = WeakElement(weak.clone());
+        rc.get_mut().ctx.weak_this_any = weak.clone();
+        rc
+    }
+
+    fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut ElemBox<T>)) {
+        if let Some(this) = weak_this.upgrade() {
+            this.invoke(move |this| {
+                let this = this.downcast_mut().expect("unexpected type of element");
+                f(this);
+            });
         }
+    }
+
+    pub fn run_later(&mut self, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
+        let weak_this = self.ctx.weak_this.clone();
+        run_queued(move || {
+            Self::invoke_helper(weak_this, f);
+        })
+    }
+
+    pub fn run_after(&mut self, duration: Duration, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
+        let weak_this = self.ctx.weak_this.clone();
+        run_after(duration, move || {
+            Self::invoke_helper(weak_this, f);
+        })
+    }
+
+    #[track_caller]
+    pub fn watch_once(
+        &mut self,
+        models: impl IntoIterator<Item = Weak<dyn Any>>,
+        on_changed: impl FnOnce(&mut ElemBox<T>, Weak<dyn Any>) + 'static,
+    ) -> SubscriptionKey {
+        let weak_this = self.ctx.weak_this.clone();
+        watch_multi_once(models, move |source| {
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(move |this| {
+                    let this = this.downcast_mut().expect("unexpected type of element");
+                    on_changed(this, source);
+                });
+            }
+        })
+    }
+
+    pub fn with_tracking_scope<R>(
+        &mut self,
+        scope: impl FnOnce() -> R,
+        on_changed: impl FnOnce(&mut ElemBox<T>) + 'static,
+    ) -> R {
+        let weak_this = self.ctx.weak_this.clone();
+        let (r, tracking_scope) = with_tracking_scope(scope);
+        tracking_scope.watch_once(move |_| {
+            Self::invoke_helper(weak_this, on_changed);
+            false
+        });
+        r
+    }
+}
+
+impl<T: 'static> ElemBox<T> {
+    pub fn weak(&self) -> WeakElement<T> {
+        // SAFETY: by construction (in `ElemBox::new()`), we know that `weak_this`
+        // has type `WeakElement<T>`.
+        unsafe { self.ctx.weak_this.clone().downcast_unchecked() }
     }
 }
 
@@ -224,44 +313,10 @@ impl<T: ?Sized> DerefMut for ElemBox<T> {
     }
 }
 
-pub struct ElementRef<'a, T: ?Sized>(RcRef<'a, ElemBox<T>>);
-
-impl<'a, T: ?Sized> Deref for ElementRef<'a, T> {
-    type Target = ElemBox<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-// Don't newtype the thing because it won't work correctly with reborrows
-pub type ElementMut<'a, T: ?Sized> = RcRefMut<'a, ElemBox<T>>;
-
-/*
-impl<'a, T: ?Sized> ElementMut<'a, T> {
-    pub fn reborrow(&self) -> ElementMut<T> {
-        ElementMut(self.0.reborrow())
-    }
-}
-
-impl<'a, T: ?Sized> Deref for ElementMut<'a, T> {
-    type Target = ElemBox<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-impl<'a, T: ?Sized> DerefMut for ElementMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.deref_mut()
-    }
-}*/
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Weak reference to an element in the element tree.
-pub struct WeakElement<T: ?Sized>(Weak<RcCell<ElemBox<T>>>);
+pub struct WeakElement<T: ?Sized>(Weak<RefCell<ElemBox<T>>>);
 
 pub type WeakElementAny = WeakElement<dyn Element>;
 
@@ -274,6 +329,15 @@ impl<T: ?Sized> Clone for WeakElement<T> {
 impl<T: ?Sized> WeakElement<T> {
     pub fn upgrade(&self) -> Option<ElementRc<T>> {
         self.0.upgrade().map(ElementRc)
+    }
+}
+
+impl WeakElementAny {
+    pub unsafe fn downcast_unchecked<T: 'static>(self) -> WeakElement<T> {
+        unsafe {
+            let ptr = self.0.into_raw() as *const RefCell<ElemBox<T>>;
+            WeakElement(Weak::from_raw(ptr))
+        }
     }
 }
 
@@ -295,11 +359,11 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
 
-            fn paint(&mut self, _ctx: &mut PaintCtx) {
+            fn paint(self: &mut ElemBox<Self>, _ctx: &mut PaintCtx) {
                 unimplemented!()
             }
         }
-        let weak = Weak::<RefCell<Dummy>>::new();
+        let weak = Weak::<RefCell<ElemBox<Dummy>>>::new();
         WeakElement(weak)
     }
 }
@@ -336,7 +400,7 @@ impl PartialOrd for WeakElementAny {
 /// Strong reference to an element in the element tree.
 // Yes it's a big fat Rc<RefCell>, deal with it.
 // We don't publicly allow mut access.
-pub struct ElementRc<T: ?Sized>(Rc<RcCell<ElemBox<T>>>);
+pub struct ElementRc<T: ?Sized>(Rc<RefCell<ElemBox<T>>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
     fn clone(&self) -> Self {
@@ -356,17 +420,13 @@ impl<T: ?Sized> ElementRc<T> {
     //}
 
     /// Borrows the inner element.
-    pub(crate) fn borrow(&self) -> RcRef<ElemBox<T>> {
+    pub(crate) fn borrow(&self) -> Ref<ElemBox<T>> {
         self.0.borrow()
     }
 
     /// Borrows the inner element mutably.
-    pub(crate) fn borrow_mut(&self) -> RcRefMut<ElemBox<T>> {
+    pub(crate) fn borrow_mut(&self) -> RefMut<ElemBox<T>> {
         self.0.borrow_mut()
-    }
-
-    pub fn lock_mut(&self) -> ElementMut<T> {
-        ElementMut(self.borrow_mut())
     }
 }
 
@@ -430,7 +490,7 @@ impl<T: Element> ElementRc<T> {
     }
 
     /// Invokes a method on this widget.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(ElementMut<T>) -> R) -> R {
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<T>) -> R) -> R {
         // TODO don't go through dyn
         self.as_dyn().invoke(move |this| {
             let this = this.downcast_mut().expect("unexpected type of element");
@@ -457,8 +517,8 @@ impl ElementAny {
     /// Invokes a method on this widget.
     ///
     /// Propagates the dirty flags up the tree.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(ElementMut<dyn Element>) -> R) -> R {
-        let mut inner = ElementMut(self.borrow_mut());
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<dyn Element>) -> R) -> R {
+        let ref mut inner = *self.borrow_mut();
         let r = f(inner);
         inner.ctx.propagate_dirty_flags();
         r
@@ -515,10 +575,13 @@ impl ElementAny {
         let transform = ctx.transform * inner.ctx.transform;
         let local_point = transform.inverse() * point;
         let prev_transform = mem::replace(&mut ctx.transform, transform);
+        let prev_rect = ctx.rect;
+        ctx.rect = inner.ctx.rect();
         let hit = inner.hit_test(ctx, local_point);
         if hit {
             ctx.hits.push(self.downgrade());
         }
+        ctx.rect = prev_rect;
         ctx.transform = prev_transform;
         hit
     }
@@ -561,20 +624,16 @@ pub trait IntoElementAny {
     fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny;
 }
 
-/*
 impl<T> IntoElementAny for T
 where
     T: Element,
 {
     fn into_element(self, parent: WeakElementAny, _index_in_parent: usize) -> ElementAny {
-        let mut urc = UniqueRc::new(RefCell::new(self));
-        let weak = UniqueRc::downgrade(&urc);
-        let state = urc.get_mut().ctx_mut();
-        state.parent = parent;
-        state.weak_this = WeakElement(weak);
+        let mut urc = ElemBox::new(self);
+        urc.get_mut().ctx.parent = parent;
         ElementRc(UniqueRc::into_rc(urc))
     }
-}*/
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -767,60 +826,6 @@ impl<T: 'static> ElementCtx<T> {
         ctx.inner.parent = parent;
         ctx
     }
-
-    fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut T)) {
-        if let Some(this) = weak_this.upgrade() {
-            this.invoke(move |this| {
-                let this = this.downcast_mut().expect("unexpected type of element");
-                f(this);
-            });
-        }
-    }
-
-    pub fn run_later(&mut self, f: impl FnOnce(&mut T) + 'static) {
-        let weak_this = self.weak_this.clone();
-        run_queued(move || {
-            Self::invoke_helper(weak_this, f);
-        })
-    }
-
-    pub fn run_after(&mut self, duration: Duration, f: impl FnOnce(&mut T) + 'static) {
-        let weak_this = self.weak_this.clone();
-        run_after(duration, move || {
-            Self::invoke_helper(weak_this, f);
-        })
-    }
-
-    #[track_caller]
-    pub fn watch_once(
-        &mut self,
-        models: impl IntoIterator<Item = Weak<dyn Any>>,
-        on_changed: impl FnOnce(&mut T, Weak<dyn Any>) + 'static,
-    ) -> SubscriptionKey {
-        let weak_this = self.weak_this.clone();
-        watch_multi_once(models, move |source| {
-            if let Some(this) = weak_this.upgrade() {
-                this.invoke(move |this| {
-                    let this = this.downcast_mut().expect("unexpected type of element");
-                    on_changed(this, source);
-                });
-            }
-        })
-    }
-
-    pub fn with_tracking_scope<R>(
-        &mut self,
-        scope: impl FnOnce() -> R,
-        on_changed: impl FnOnce(&mut T) + 'static,
-    ) -> R {
-        let weak_this = self.weak_this.clone();
-        let (r, tracking_scope) = with_tracking_scope(scope);
-        tracking_scope.watch_once(move |_| {
-            Self::invoke_helper(weak_this, on_changed);
-            false
-        });
-        r
-    }
 }
 
 impl<T> Deref for ElementCtx<T> {
@@ -843,7 +848,7 @@ impl<T> DerefMut for ElementCtx<T> {
 ///
 /// Basically this is a wrapper around Rc that provides a `DerefMut` impl since we know it's the
 /// only strong reference to it.
-pub struct ElementBuilder<T>(UniqueRc<RcCell<ElemBox<T>>>);
+pub struct ElementBuilder<T>(UniqueRc<RefCell<ElemBox<T>>>);
 
 impl<T: Default + Element> Default for ElementBuilder<T> {
     fn default() -> Self {
@@ -860,26 +865,8 @@ impl<T: Element> EventSource for ElementBuilder<T> {
 impl<T: Element> ElementBuilder<T> {
     /// Creates a new `ElementBuilder` instance.
     pub fn new(inner: T) -> ElementBuilder<T> {
-        let mut urc = UniqueRc::new(RcCell::new(ElemBox::new(inner)));
-        let weak = UniqueRc::downgrade(&urc);
-        urc.get_mut().ctx.weak_this = WeakElement(weak.clone());
-        urc.get_mut().ctx.weak_this_any = weak;
-        ElementBuilder(urc)
+        ElementBuilder(ElemBox::new(inner))
     }
-
-    /*
-    pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
-        let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit())); // UniqueRc<RefCell<MaybeUninit<T>>>
-                                                                          // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
-                                                                          // because the resulting weak pointer can't be upgraded anyway.
-        let weak: Weak<RefCell<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
-        let weak = WeakElement(weak);
-        urc.get_mut().write(f(weak.clone()));
-        // SAFETY: the value is now initialized
-        let mut urc: UniqueRc<RefCell<T>> = unsafe { mem::transmute(urc) };
-        urc.get_mut().ctx_mut().weak_this = WeakElement(weak.0);
-        ElementBuilder(urc)
-    }*/
 
     pub fn weak(&self) -> WeakElement<T> {
         let weak = UniqueRc::downgrade(&self.0);
@@ -903,11 +890,11 @@ impl<T: Element> ElementBuilder<T> {
 
     /// Runs the specified function when the element emits the specified event.
     #[track_caller]
-    pub fn on<Event: 'static>(self, mut f: impl FnMut(ElementMut, &Event) + 'static) -> Self {
+    pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut ElemBox<T>, &Event) + 'static) -> Self {
         let weak = self.weak();
         self.subscribe(move |_, e| {
             if let Some(this) = weak.upgrade() {
-                this.lock_mut().this.invoke(|this| {
+                this.invoke(|this| {
                     f(this, e);
                 });
                 true
@@ -920,11 +907,11 @@ impl<T: Element> ElementBuilder<T> {
 
     /// Runs the specified function on the widget, and runs it again when it changes.
     #[track_caller]
-    pub fn dynamic(mut self, func: impl FnMut(ElementMut<T>) + 'static) -> Self {
+    pub fn dynamic(mut self, func: impl FnMut(&mut ElemBox<T>) + 'static) -> Self {
         fn dynamic_helper<T: Element>(
-            this: ElementMut<T>,
+            this: &mut ElemBox<T>,
             weak: WeakElement<T>,
-            mut func: impl FnMut(ElementMut<T>) + 'static,
+            mut func: impl FnMut(&mut ElemBox<T>) + 'static,
             caller: &'static Location<'static>,
         ) {
             let (_, deps) = with_tracking_scope(|| func(this));
@@ -952,7 +939,7 @@ impl<T: Element> ElementBuilder<T> {
     pub fn with_tracking_scope<R>(
         &mut self,
         scope: impl FnOnce() -> R,
-        on_changed: impl FnOnce(&mut T) + 'static,
+        on_changed: impl FnOnce(&mut ElemBox<T>) + 'static,
     ) -> R {
         let weak_this = self.weak();
         let (r, tracking_scope) = with_tracking_scope(scope);
@@ -969,7 +956,7 @@ impl<T: Element> ElementBuilder<T> {
 }
 
 impl<T> Deref for ElementBuilder<T> {
-    type Target = T;
+    type Target = ElemBox<T>;
 
     fn deref(&self) -> &Self::Target {
         unsafe {
@@ -992,8 +979,7 @@ impl<T> DerefMut for ElementBuilder<T> {
 
 impl<T: Element> IntoElementAny for ElementBuilder<T> {
     fn into_element(mut self, parent: WeakElementAny, _index_in_parent: usize) -> ElementAny {
-        //let weak = UniqueRc::downgrade(&self.0);
-        self.0.get_mut().ctx_mut().parent = parent;
+        self.0.get_mut().ctx.parent = parent;
         ElementRc(UniqueRc::into_rc(self.0))
     }
 }

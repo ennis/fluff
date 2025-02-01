@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun};
@@ -43,14 +43,6 @@ impl Text {
 }
 
 impl Element for Text {
-    fn ctx(&self) -> &ElementCtxAny {
-        &self.ctx
-    }
-
-    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
-        &mut self.ctx
-    }
-
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Text::measure").entered();
 
@@ -76,9 +68,9 @@ impl Element for Text {
         self.ctx.rect().contains(point)
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx) {
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(&mut self, _ctx: &mut WindowCtx, _event: &mut Event) {}
+    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {}
 }

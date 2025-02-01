@@ -1,5 +1,6 @@
 //! Immediate drawing widget.
 use crate::element::prelude::*;
+use crate::element::ElemBox;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{with_tracking_scope, SubscriptionKey};
 use crate::{Event, PaintCtx};
@@ -30,19 +31,8 @@ pub trait Visual {
     fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {}
 }
 
-// Blanket impl for visuals
-impl<V> IntoElementAny for V
-where
-    V: Visual + 'static,
-{
-    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny {
-        Draw::new(self).into_element(parent, index_in_parent)
-    }
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 pub struct Draw<V> {
-    ctx: ElementCtx<Self>,
     draw_subscription: SubscriptionKey,
     width: Option<f64>,
     height: Option<f64>,
@@ -57,7 +47,6 @@ where
     /// Creates a new draw element with the specified visual.
     pub fn new(visual: V) -> ElementBuilder<Self> {
         ElementBuilder::new(Self {
-            ctx: ElementCtx::new(),
             draw_subscription: Default::default(),
             width: None,
             height: None,
@@ -89,14 +78,6 @@ impl<V> Element for Draw<V>
 where
     V: Visual + 'static,
 {
-    fn ctx(&self) -> &ElementCtxAny {
-        &self.ctx
-    }
-
-    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
-        &mut self.ctx
-    }
-
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         self.visual.layout(layout_input)
     }
@@ -115,11 +96,11 @@ where
         }
     }
 
-    fn hit_test(&self, _ctx: &mut HitTestCtx, point: Point) -> bool {
-        self.ctx.rect().contains(point)
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        ctx.rect.contains(point)
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx) {
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
         self.draw_subscription.unsubscribe();
@@ -131,12 +112,13 @@ where
         });
 
         // subscribe again to changes
-        self.draw_subscription = self.ctx.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
+        self.draw_subscription = self.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
             this.ctx.mark_needs_paint();
         });
     }
 
-    fn event(&mut self, _ctx: &mut WindowCtx, event: &mut Event) {
-        self.visual.event(&mut self.ctx, event);
+    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+        // TODO
+        //self.visual.event(&mut self.ctx, event);
     }
 }

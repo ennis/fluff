@@ -1,7 +1,7 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{
-    Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WindowCtx,
+    ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WindowCtx,
 };
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
@@ -239,7 +239,7 @@ impl Frame {
     }
 
     /// Sets the background color.
-    pub fn set_background_color(&mut self, color: Color) {
+    pub fn set_background_color(self: &mut ElemBox<Self>, color: Color) {
         self.style.background_color = color;
         self.style_changed = true;
         self.ctx.mark_needs_paint();
@@ -385,7 +385,7 @@ impl Element for Frame {
         self.content.clone().into_iter().collect()
     }
 
-    fn measure(self: ElementMut<Self>, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let output = self.measure_inner(
@@ -397,7 +397,7 @@ impl Element for Frame {
         output
     }
 
-    fn layout(self: ElementMut<Self>, size: Size) -> LayoutOutput {
+    fn layout(&mut self, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
         let content_area = size - self.padding.size();
 
@@ -419,10 +419,10 @@ impl Element for Frame {
         if let Some(content) = &self.content {
             content.hit_test(ctx, point);
         }
-        self.ctx.rect().contains(point)
+        ctx.rect.contains(point)
     }
 
-    fn paint(self: ElementMut<Self>, ctx: &mut PaintCtx) {
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         self.resolve_style();
 
         let rect = ctx.bounds();
@@ -464,8 +464,8 @@ impl Element for Frame {
         }
     }
 
-    fn event(self: ElementMut<Self>, ctx: &mut WindowCtx, event: &mut Event) {
-        fn update_state(this: &mut Frame, _ctx: &mut WindowCtx, state: ElementState) {
+    fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {
+        fn update_state(this: &mut ElemBox<Frame>, _ctx: &mut WindowCtx, state: ElementState) {
             this.state = state;
             this.ctx.emit(ElementStateChanged(state));
             if this.state_affects_style {

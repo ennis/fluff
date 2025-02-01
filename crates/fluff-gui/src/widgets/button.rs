@@ -1,10 +1,11 @@
 use crate::colors;
 use kyute::drawing::{BASELINE_CENTER, BorderPosition, vec2};
+use kyute::element::ElemBox;
 use kyute::element::prelude::*;
 use kyute::elements::Visual;
 use kyute::kurbo::Insets;
 use kyute::text::TextLayout;
-use kyute::{ElementState, Event, IntoElementAny, PaintCtx, Size, text};
+use kyute::{ElementState, Event, IntoElementAny, PaintCtx, Point, Size, text};
 use std::ops::{Add, Sub};
 
 const BUTTON_RADIUS: f64 = 4.;
@@ -22,8 +23,8 @@ pub fn button(label: impl Into<String>) -> impl IntoElementAny {
         state: ElementState,
     }
 
-    impl Visual for ButtonVisual {
-        fn layout(&mut self, input: &LayoutInput) -> Size {
+    impl Element for ButtonVisual {
+        fn measure(&mut self, input: &LayoutInput) -> Size {
             self.label.layout(input.width.available().unwrap_or_default());
             let label_width = self.label.size().width + 20.;
             let w = label_width.max(BUTTON_MIN_WIDTH);
@@ -31,7 +32,11 @@ pub fn button(label: impl Into<String>) -> impl IntoElementAny {
             Size::new(w, h)
         }
 
-        fn paint(&mut self, ctx: &mut PaintCtx) {
+        fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+            ctx.rect.contains(point)
+        }
+
+        fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
             ctx.set_baseline(BUTTON_BASELINE);
             let mut rect = ctx.bounds();
             rect.y1 -= 1.;
@@ -62,9 +67,9 @@ pub fn button(label: impl Into<String>) -> impl IntoElementAny {
             ctx.draw_text_layout(BASELINE_CENTER, &self.label);
         }
 
-        fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {
-            if ctx.update_element_state(&mut self.state, event) {
-                ctx.mark_needs_paint();
+        fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+            if self.ctx.update_element_state(&mut self.element.state, event) {
+                self.ctx.mark_needs_paint();
             }
         }
     }

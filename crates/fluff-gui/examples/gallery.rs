@@ -1,10 +1,8 @@
 use fluff_gui::colors;
 use fluff_gui::widgets::button::button;
 use fluff_gui::widgets::spinner::spinner_buttons;
-use kyute::elements::{Flex, Frame, TextEdit};
-use kyute::model::Model;
-use kyute::text::TextStyle;
-use kyute::{Color, Size, Window, WindowOptions, application, select, text};
+use kyute::elements::Flex;
+use kyute::{Size, Window, WindowOptions, application, select};
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_tree::HierarchicalLayer;

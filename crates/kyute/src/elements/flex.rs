@@ -1,5 +1,5 @@
 use crate::element::{
-    ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
+    ElemBox, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
 };
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
@@ -58,7 +58,6 @@ pub trait DynamicFlexChildren {
 }
 
 pub struct Flex {
-    ctx: ElementCtx<Self>,
     direction: Axis,
     /// Default gap between children.
     gap: SizeValue,
@@ -72,7 +71,6 @@ pub struct Flex {
 impl Flex {
     pub fn new() -> ElementBuilder<Self> {
         ElementBuilder::new(Flex {
-            ctx: ElementCtx::new(),
             direction: Axis::Vertical,
             gap: SizeValue::Fixed(0.0),
             initial_gap: SizeValue::Fixed(0.0),
@@ -89,14 +87,13 @@ impl Flex {
         Self::new().direction(Axis::Vertical)
     }
 
-    fn update_dynamic_children(&mut self, mut children: impl DynamicFlexChildren + 'static) {
+    fn update_dynamic_children(self: &mut ElemBox<Self>, mut children: impl DynamicFlexChildren + 'static) {
         let (_, deps) = with_tracking_scope(|| children.update(self.ctx.weak_any(), &mut self.children));
         self.ctx.mark_needs_layout();
         if !deps.reads.is_empty() {
-            self.ctx
-                .watch_once(deps.reads.into_iter().map(|w| w.0), move |this, _| {
-                    this.update_dynamic_children(children);
-                });
+            self.watch_once(deps.reads.into_iter().map(|w| w.0), move |this, _| {
+                this.update_dynamic_children(children);
+            });
         }
     }
 
@@ -193,14 +190,6 @@ impl Flex {
 }
 
 impl Element for Flex {
-    fn ctx(&self) -> &ElementCtxAny {
-        &self.ctx
-    }
-
-    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
-        &mut self.ctx
-    }
-
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
@@ -255,10 +244,10 @@ impl Element for Flex {
         for child in self.children.iter() {
             child.element.hit_test(ctx, point);
         }
-        self.ctx.rect().contains(point)
+        ctx.rect.contains(point)
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx) {
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
             child.element.paint(ctx);
         }

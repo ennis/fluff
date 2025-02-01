@@ -1,10 +1,11 @@
 use crate::colors;
 use kyute::drawing::point;
+use kyute::element::ElemBox;
 use kyute::element::prelude::*;
 use kyute::elements::draw::Visual;
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::model::EventSource;
-use kyute::{IntoElementAny, Rect, Size};
+use kyute::{IntoElementAny, Point, Rect, Size};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -15,12 +16,16 @@ pub struct SpinnerDownButtonEvent;
 /// Two spinner buttons (up & down), standard input widget height.
 pub fn spinner_buttons() -> impl IntoElementAny {
     struct SpinnerButtons;
-    impl Visual for SpinnerButtons {
-        fn layout(&mut self, _input: &LayoutInput) -> Size {
+    impl Element for SpinnerButtons {
+        fn measure(&mut self, layout_input: &LayoutInput) -> Size {
             Size::new(13., 16.)
         }
 
-        fn paint(&mut self, ctx: &mut PaintCtx) {
+        fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+            ctx.rect.contains(point)
+        }
+
+        fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
             // Upper chevron
             ctx.stroke_path(
                 [MoveTo(point(2., 6.)), LineTo(point(6.5, 1.5)), LineTo(point(11., 6.))],
@@ -39,15 +44,15 @@ pub fn spinner_buttons() -> impl IntoElementAny {
             );
         }
 
-        fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {
+        fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {
             if event.is_pointer_up() {
                 // Upper click region
                 if event.is_inside(Rect::new(0., 0., 13., 8.)) {
-                    ctx.emit(SpinnerUpButtonEvent);
+                    self.ctx.emit(SpinnerUpButtonEvent);
                 }
                 // Lower click region
                 if event.is_inside(Rect::new(0., 8., 13., 8.)) {
-                    ctx.emit(SpinnerDownButtonEvent);
+                    self.ctx.emit(SpinnerDownButtonEvent);
                 }
             }
         }
