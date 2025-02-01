@@ -1,22 +1,9 @@
 use crate::element::ElementAny;
 use crate::layout::{
-    Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue, SpacingAfter,
-    SpacingBefore,
+    Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue,
 };
 use kurbo::{Size, Vec2};
 use tracing::trace;
-
-/*
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
-pub enum MainAxisAlignment {
-    #[default]
-    Start,
-    End,
-    Center,
-    SpaceBetween,
-    SpaceAround,
-    SpaceEvenly,
-}*/
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum CrossAxisAlignment {
@@ -93,7 +80,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
     struct ItemMeasure {
         main: f64,
         cross: f64,
-        max: f64,
+        _max: f64,
         flex: f64,
     }
     let mut measures = vec![ItemMeasure::default(); child_count]; // box measurements of children along the main axis
@@ -139,7 +126,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
         measures[i] = ItemMeasure {
             main: item_main,
             cross: item_cross,
-            max: max_item_main,
+            _max: max_item_main,
             flex: 0.0,
         };
 

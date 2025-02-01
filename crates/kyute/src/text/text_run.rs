@@ -1,8 +1,8 @@
 //! Macro to create styled text runs.
 
 use crate::element::{ElementAny, IntoElementAny, WeakElementAny};
+use crate::elements::text::Text;
 use crate::text::TextStyle;
-use crate::widgets::text::Text;
 
 /// String slice with associated style attributes.
 #[derive(Copy, Clone)]
@@ -11,13 +11,16 @@ pub struct TextRun<'a> {
     pub style: &'a TextStyle<'a>,
 }
 
-
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __text {
     // Parse styles
     (@style($s:ident) rgb ($($p:expr),*) ) => {
         $s.color = $crate::Color::from_rgb_u8($($p),*);
+    };
+
+    (@style($s:ident) color ($f:expr) ) => {
+        $s.color = $f;
     };
 
     (@style($s:ident) hexcolor ($f:expr) ) => {

@@ -1,27 +1,36 @@
 use crate::application::{run_after, run_queued};
 use crate::compositor::DrawableSurface;
+use crate::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
-    watch_multi_once, watch_multi_once_with_location, with_tracking_scope, DataChanged, EventSource, ModelAny,
-    SubscriptionKey, WeakModelAny,
+    watch_multi_once, watch_multi_once_with_location, with_tracking_scope, EventSource, SubscriptionKey,
 };
 use crate::window::WeakWindow;
-use crate::PaintCtx;
+use crate::{ElementState, PaintCtx};
 use bitflags::bitflags;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
+use rc_borrow::RcBorrow;
 use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::time::Duration;
 use std::{fmt, mem, ptr};
 use tracing::warn;
+
+pub mod prelude {
+    pub use crate::element::{
+        Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
+        WindowCtx,
+    };
+    pub use crate::event::Event;
+    pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
+    pub use crate::PaintCtx;
+}
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -78,7 +87,7 @@ pub fn set_keyboard_focus(target: ElementAny) {
         target.send_event(&mut WindowCtx {}, &mut Event::FocusGained);
 
         // If necessary, activate the target window.
-        if let Some(parent_window) = parent_window.shared.upgrade() {
+        if let Some(_parent_window) = parent_window.shared.upgrade() {
             //parent_window.
             //war!("activate window")
         }
@@ -92,39 +101,6 @@ pub fn set_keyboard_focus(target: ElementAny) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-pub trait AttachedProperty: Any {
-    type Value: Clone;
-
-    /*fn set(self, item: &Node, value: Self::Value)
-    where
-        Self: Sized,
-    {
-        item.set(self, value);
-    }
-
-    fn get(self, item: &Node) -> Option<Self::Value>
-    where
-        Self: Sized,
-    {
-        item.get(self)
-    }
-
-    /// Returns a reference to the attached property.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the nothing mutates the value of the attached property
-    /// while the returned reference is alive.
-    unsafe fn get_ref(self, item: &Node) -> &Self::Value
-    where
-        Self: Sized,
-    {
-        item.get_ref(self)
-    }*/
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub struct WindowCtx {}
 
 pub struct HitTestCtx {
@@ -140,12 +116,6 @@ impl HitTestCtx {
         }
     }
 }
-
-/// Context passed to `Element::measure`.
-pub struct MeasureCtx {}
-
-// Context passed to `Element::layout`.
-pub struct LayoutCtx {}
 
 /// Methods of elements in the element tree.
 pub trait Element: Any {
@@ -231,6 +201,24 @@ impl dyn Element + 'static {
         }
     }
 }
+
+/*
+pub struct ElemBox<T: Element> {
+    pub element: T,
+    pub ctx: ElementCtxAny,
+}
+
+pub struct ElementMut<'a, T: Element> {
+    element_rc: RcBorrow<'a, RefCell<ElemBox<T>>>,
+}
+
+impl<'a, T: Element> Deref for ElementMut<'a, T> {
+    type Target = ElemBox<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.element_rc.try_borrow_unguarded()
+    }
+}*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -332,10 +320,10 @@ impl<T: ?Sized> ElementRc<T> {
         WeakElement(Rc::downgrade(&self.0))
     }
 
-    /// Sets the parent of this element.
-    pub fn set_parent(&self, parent: WeakElementAny) {
-        todo!()
-    }
+    // Sets the parent of this element.
+    //pub fn set_parent(&self, parent: WeakElementAny) {
+    //    todo!()
+    //}
 
     /// Borrows the inner element.
     pub(crate) fn borrow(&self) -> Ref<T> {
@@ -511,28 +499,18 @@ impl ElementAny {
         let ref mut inner = *self.borrow_mut();
         let ctx = inner.ctx();
         let transform = ctx.transform;
-        let size = ctx.geometry;
 
-        let mut ctx = PaintCtx {
-            surface: parent_ctx.surface,
-            window_transform: parent_ctx.window_transform,
-            scale_factor: parent_ctx.scale_factor,
-            size,
-        };
+        parent_ctx.save();
+        // TODO baseline
+        parent_ctx.transform(&transform, ctx.geometry.to_rect(), 0.0);
+        inner.paint(parent_ctx);
+        parent_ctx.restore();
 
-        ctx.with_transform(&transform, |ctx| {
-            inner.paint(ctx);
-        });
         inner.ctx_mut().change_flags.remove(ChangeFlags::PAINT);
     }
 
     pub(crate) fn paint_on_surface(&self, surface: &DrawableSurface, scale_factor: f64) {
-        let mut ctx = PaintCtx {
-            surface,
-            window_transform: Affine::default(),
-            scale_factor,
-            size: Size::ZERO,
-        };
+        let mut ctx = PaintCtx::new(surface, scale_factor);
         self.paint(&mut ctx);
     }
 
@@ -543,50 +521,14 @@ impl ElementAny {
     pub fn set_offset(&self, offset: Vec2) {
         self.borrow_mut().ctx_mut().set_offset(offset);
     }
-
-    /// Returns a reference to the specified attached property.
-    ///
-    /// # Panics
-    /// Panics if the attached property is not set.
-    ///
-    /// # Safety
-    ///
-    /// This function unsafely borrows the value of the attached property.
-    /// The caller must ensure that the value isn't mutated (via `set`) while the reference is alive.
-    ///
-    /// In most cases you should prefer `get` over this function.
-    pub unsafe fn get_ref<A: AttachedProperty>(&self, property: A) -> &A::Value {
-        todo!("get_ref")
-        //self.try_get_ref::<T>(property).expect("attached property not set")
-    }
-
-    pub fn get<A: AttachedProperty>(&self, property: A) -> Option<A::Value> {
-        //todo!("get")
-        None
-    }
-
-    /// Returns a reference to the specified attached property, or `None` if it is not set.
-    ///
-    /// # Safety
-    ///
-    /// Same contract as `get_ref`.
-    pub unsafe fn try_get_ref<A: AttachedProperty>(&self, _property: A) -> Option<&A::Value> {
-        //todo!("try_get_ref")
-        //let attached_properties = unsafe { &*self.attached_properties.get() };
-        //attached_properties
-        //    .get(&TypeId::of::<T>())
-        //    .map(|v| v.downcast_ref::<T::Value>().expect("invalid type of attached property"))
-        None
-    }
 }
 
 /// Trait for elements that can be converted into a `ElementAny`.
-///
-/// This is implemented for all types that implement `Element`.
 pub trait IntoElementAny {
     fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny;
 }
 
+/*
 impl<T> IntoElementAny for T
 where
     T: Element,
@@ -599,14 +541,18 @@ where
         state.weak_this = WeakElement(weak);
         ElementRc(UniqueRc::into_rc(urc))
     }
-}
+}*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct ElementCtxAny {
     parent: WeakElementAny,
-    // Weak pointer to this element.
+    /// Weak pointer to this element (~= `Weak<RefCell<dyn Element>>`)
     weak_this: WeakElementAny,
+    /// Weak pointer to this element (~= `Weak<dyn Any>`)
+    /// This is used for event and subscription functions which expect a `Weak<dyn Any>`
+    /// we can't use `weak_this` because it can't coerce dyn Any, even with trait upcasting.
+    weak_this_any: Weak<dyn Any>,
     change_flags: ChangeFlags,
     /// Pointer to the parent owner window. Valid only for the root element the window.
     pub(crate) window: WeakWindow,
@@ -620,8 +566,6 @@ pub struct ElementCtxAny {
     focusable: bool,
     /// Whether this element currently has focus.
     focused: bool,
-    /// Map of attached properties.
-    attached_properties: BTreeMap<TypeId, Box<dyn Any>>,
 }
 
 impl ElementCtxAny {
@@ -629,6 +573,7 @@ impl ElementCtxAny {
         ElementCtxAny {
             parent: WeakElementAny::default(),
             weak_this: WeakElementAny::default(),
+            weak_this_any: Weak::<()>::default(),
             change_flags: ChangeFlags::NONE,
             window: WeakWindow::default(),
             transform: Affine::default(),
@@ -636,7 +581,6 @@ impl ElementCtxAny {
             name: String::new(),
             focusable: false,
             focused: false,
-            attached_properties: BTreeMap::new(),
         }
     }
 
@@ -675,6 +619,43 @@ impl ElementCtxAny {
 
     pub fn mark_structure_changed(&mut self) {
         self.change_flags |= ChangeFlags::STRUCTURE;
+    }
+
+    /// Handles standard input events for activation, hovering, and clicks.
+    ///
+    /// Emits the corresponding events (ActivatedEvent, HoveredEvent, ClickedEvent)
+    /// when the state changed.
+    ///
+    /// Returns whether the state changed.
+    pub fn update_element_state(&mut self, state: &mut ElementState, event: &Event) -> bool {
+        match event {
+            Event::PointerDown(_) => {
+                state.set_active(true);
+                self.emit(ActivatedEvent(true));
+                true
+            }
+            Event::PointerUp(_) => {
+                if state.is_active() {
+                    state.set_active(false);
+                    self.emit(ActivatedEvent(false));
+                    self.emit(ClickedEvent);
+                    true
+                } else {
+                    false
+                }
+            }
+            Event::PointerEnter(_) => {
+                state.set_hovered(true);
+                self.emit(HoveredEvent(true));
+                true
+            }
+            Event::PointerLeave(_) => {
+                state.set_hovered(false);
+                self.emit(HoveredEvent(false));
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
@@ -724,9 +705,21 @@ impl ElementCtxAny {
     }
 }
 
+impl EventSource for ElementCtxAny {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.weak_this_any.clone()
+    }
+}
+
 pub struct ElementCtx<T> {
     inner: ElementCtxAny,
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: 'static> EventSource for ElementCtx<T> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.inner.weak_this_any.clone()
+    }
 }
 
 impl<T: 'static> ElementCtx<T> {
@@ -837,10 +830,12 @@ impl<T: Element> ElementBuilder<T> {
     pub fn new(inner: T) -> ElementBuilder<T> {
         let mut urc = UniqueRc::new(RefCell::new(inner));
         let weak = UniqueRc::downgrade(&urc);
-        urc.get_mut().ctx_mut().weak_this = WeakElement(weak);
+        urc.get_mut().ctx_mut().weak_this = WeakElement(weak.clone());
+        urc.get_mut().ctx_mut().weak_this_any = weak;
         ElementBuilder(urc)
     }
 
+    /*
     pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
         let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit())); // UniqueRc<RefCell<MaybeUninit<T>>>
                                                                           // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
@@ -852,7 +847,7 @@ impl<T: Element> ElementBuilder<T> {
         let mut urc: UniqueRc<RefCell<T>> = unsafe { mem::transmute(urc) };
         urc.get_mut().ctx_mut().weak_this = WeakElement(weak.0);
         ElementBuilder(urc)
-    }
+    }*/
 
     pub fn weak(&self) -> WeakElement<T> {
         let weak = UniqueRc::downgrade(&self.0);
@@ -871,6 +866,23 @@ impl<T: Element> ElementBuilder<T> {
     /// Assigns a name to the element, for debugging purposes.
     pub fn debug_name(mut self, name: impl Into<String>) -> Self {
         self.ctx_mut().name = name.into();
+        self
+    }
+
+    /// Runs the specified function when the element emits the specified event.
+    #[track_caller]
+    pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut T, &Event) + 'static) -> Self {
+        let weak = self.weak();
+        self.subscribe(move |_, e| {
+            if let Some(this) = weak.upgrade() {
+                this.invoke(|this| {
+                    f(this, e);
+                });
+                true
+            } else {
+                false
+            }
+        });
         self
     }
 
@@ -912,7 +924,7 @@ impl<T: Element> ElementBuilder<T> {
     ) -> R {
         let weak_this = self.weak();
         let (r, tracking_scope) = with_tracking_scope(scope);
-        tracking_scope.watch_once(move |source| {
+        tracking_scope.watch_once(move |_source| {
             if let Some(this) = weak_this.upgrade() {
                 this.invoke(move |this| {
                     on_changed(this);
@@ -959,7 +971,7 @@ impl<T: Element> IntoElementAny for ElementBuilder<T> {
 /// It will first invoke the event handler of the target element.
 /// If the event is "bubbling", it will invoke the event handler of the parent element,
 /// and so on until the root element is reached.
-pub fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bool) {
+pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bool) {
     // get dispatch chain
     let chain = target.ancestors_and_self();
 

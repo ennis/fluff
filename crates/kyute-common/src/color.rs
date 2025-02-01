@@ -1,5 +1,6 @@
 //! Color type
 use palette::convert::FromColorUnclamped;
+use palette::{Darken, Lighten};
 use std::error::Error;
 use std::fmt;
 use std::marker::PhantomData;
@@ -132,15 +133,15 @@ impl Color {
         )
     }
 
-    /*/// TODO documentation
+    /// TODO documentation
     pub fn lighten(&self, amount: f32) -> Color {
-        Color(Shade::lighten(&self.0.into_linear(), amount).into_encoding())
+        Color(self.0.lighten(amount))
     }
 
     /// TODO documentation
     pub fn darken(&self, amount: f32) -> Color {
-        Color(Shade::darken(&self.0.into_linear(), amount).into_encoding())
-    }*/
+        Color(self.0.darken(amount))
+    }
 
     /// TODO documentation
     pub fn to_hex(&self) -> String {
@@ -192,9 +193,7 @@ impl Color {
             }
             // #RGB, RGB
             &[b'#', r, g, b] | &[r, g, b] => match (nibble_from_ascii(r), nibble_from_ascii(g), nibble_from_ascii(b)) {
-                (Ok(rr), Ok(gg), Ok(bb)) => {
-                    Ok(Color::from_rgb_u8((rr << 4) + rr, (gg << 4) + gg, (bb << 4) + bb))
-                }
+                (Ok(rr), Ok(gg), Ok(bb)) => Ok(Color::from_rgb_u8((rr << 4) + rr, (gg << 4) + gg, (bb << 4) + bb)),
                 _ => Err(ColorParseError),
             },
             // #RGBA, RGBA

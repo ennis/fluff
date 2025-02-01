@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge", "crates/kyute", "crates/kyute-common"]
+members = ["crates/curve-fit-nd", "crates/curve-fit-nd-sys", "crates/fluff", "crates/houdinio", "crates/shader-bridge", "crates/kyute", "crates/kyute-common", "crates/fluff-gui"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,14 +1,15 @@
 use kurbo::{Insets, Vec2};
 
 use crate::drawing::BoxShadow;
-use crate::element::{ElementBuilder, IntoElementAny};
-use crate::layout::{Axis, SizeValue};
+use crate::element::ElementBuilder;
+use crate::element_state::ElementState;
+use crate::elements::flex::Flex;
+use crate::elements::frame::{Frame, FrameStyle, FrameStyleOverride};
+use crate::elements::HoveredEvent;
+use crate::layout::SizeValue;
 use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
-use crate::widgets::flex::Flex;
-use crate::widgets::frame::{Frame, FrameStyle, FrameStyleOverride};
-use crate::widgets::text::Text;
-use crate::{text, Color, ElementState};
+use crate::{text, Color};
 
 fn button_style() -> FrameStyle {
     thread_local! {
@@ -66,22 +67,11 @@ pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
                 .gaps(SizeValue::Stretch, 0, SizeValue::Stretch)
                 .child(text!( style(text_style) "{label}" )),
         )
-
-    /*let frame_weak = RcElement::downgrade(frame.clone());
-    frame.state_changed.watch(move |state| {
-        if let Some(frame) = frame_weak.upgrade() {
-            if state.is_hovered() {
-                frame.set_background_color(Color::from_hex("474029"));
-            } else if state.is_active() {
-                frame.set_background_color(Color::from_hex("4c3e0a"));
+        .on(|button, HoveredEvent(hovered)| {
+            if *hovered {
+                button.set_background_color(Color::from_hex("474029"));
             } else {
-                frame.set_background_color(Color::from_hex("211e13"));
+                button.set_background_color(Color::from_hex("211e13"));
             }
-            if state.is_focused() {
-                frame.set_border_color(DARK_THEME.accent_color);
-            } else {
-                frame.set_border_color(Color::from_hex("4c3e0a"));
-            }
-        }
-    });*/
+        })
 }

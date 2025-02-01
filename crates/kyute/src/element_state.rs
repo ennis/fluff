@@ -1,8 +1,10 @@
+use crate::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
+use crate::Event;
 use bitflags::bitflags;
 
 bitflags! {
     /// Flags describing the state of an interactive element.
-    #[derive(Copy, Clone, Debug, Default)]
+    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
     pub struct ElementState: u8 {
         /// The element is active (e.g. pressed).
         const ACTIVE = 0b0001;

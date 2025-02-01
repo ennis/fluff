@@ -1,13 +1,12 @@
 //! Types and functions used for layouting widgets.
+use kurbo::Size;
 use std::fmt;
-use crate::element::AttachedProperty;
-use kurbo::{Size, Vec2};
 
-pub mod flex;
 mod cache;
+pub mod flex;
 //pub mod grid;
 
-pub use cache::{LayoutCacheEntry, LayoutCache};
+pub use cache::{LayoutCache, LayoutCacheEntry};
 
 #[derive(Copy, Clone, PartialEq)]
 //#[cfg_attr(feature = "serializing", derive(serde::Deserialize))]
@@ -113,20 +112,6 @@ impl AxisSizeHelper for Size {
     }
 }
 
-trait AxisOffsetHelper {
-    fn set_axis(&mut self, axis: Axis, offset: f64);
-}
-
-impl AxisOffsetHelper for Vec2 {
-    fn set_axis(&mut self, axis: Axis, offset: f64) {
-        match axis {
-            Axis::Horizontal => self.x = offset,
-            Axis::Vertical => self.y = offset,
-        }
-    }
-}
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Alignment
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -190,7 +175,6 @@ impl SizeValue {
     }
 }
 
-
 impl From<f64> for SizeValue {
     fn from(size: f64) -> Self {
         SizeValue::Fixed(size)
@@ -202,7 +186,6 @@ impl From<i32> for SizeValue {
         SizeValue::Fixed(size as f64)
     }
 }
-
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LayoutMode {
@@ -296,7 +279,13 @@ impl fmt::Debug for LayoutInput {
 }
 
 impl LayoutInput {
-    pub fn from_logical(main_axis: Axis, main: SizeConstraint, cross: SizeConstraint, parent_main: Option<f64>, parent_cross: Option<f64>) -> Self {
+    pub fn from_logical(
+        main_axis: Axis,
+        main: SizeConstraint,
+        cross: SizeConstraint,
+        parent_main: Option<f64>,
+        parent_cross: Option<f64>,
+    ) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
                 width: main,
@@ -420,100 +409,3 @@ impl Default for LayoutOutput {
         LayoutOutput::NULL
     }
 }
-
-macro_rules! attached_properties {
-    (
-        $(
-            $(#[$meta:meta])*
-            $name:ident: $ty:ty;
-        )*
-    ) => {
-        $(
-            $(#[$meta])*
-            #[derive(Copy, Clone, Debug)]
-            pub struct $name;
-
-            impl AttachedProperty for $name {
-                type Value = $ty;
-            }
-        )*
-    };
-}
-
-attached_properties! {
-    /// Spacing before the element in a sequential layout.
-    SpacingBefore: SizeValue;
-    /// Spacing after the element in a sequential layout.
-    SpacingAfter: SizeValue;
-    /// Minimum spacing before the element in a sequential layout.
-    MinSpacingBefore: SizeValue;
-    /// Minimum spacing after the element in a sequential layout.
-    MinSpacingAfter: SizeValue;
-    HorizontalAlignment: Alignment;
-    VerticalAlignment: Alignment;
-}
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Positioning
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
-#[derive(Copy, Clone, Debug)]
-pub enum Positioning {
-    /// Position the start edge of the box at the specified offset relative to the start of the parent box.
-    Start(f64),
-    /// Position the end edge of the box at the specified offset relative to the end of the parent box.
-    End(f64),
-    /// Position both the start and edges of the box relative to the start and edges of the parent box.
-    ///
-    /// Note that this needs the size of the box to be flexible in order to accommodate both constraints.
-    Both { start: f64, end: f64 },
-    /// Center the box in the parent.
-    Center,
-    /// Align the baseline of the box with the baseline of the parent.
-    Baseline,
-}
-
-pub(crate) fn position_box(
-    parent_container_size: f64,
-    parent_container_baseline: f64,
-    box_size: FlexSize,
-    positioning: Positioning,
-) -> (f64, f64) {
-    let offset;
-    let actual_size;
-
-    match positioning {
-        Positioning::Start(start) => {
-            offset = start;
-            actual_size = box_size.grow(parent_container_size - start);
-        }
-        Positioning::End(offset) => {
-            offset = parent_container_size - box_size.size - offset;
-            actual_size = box_size.grow(offset);
-        }
-        Positioning::Both { start, end } => {
-            let space = parent_container_size - box_size.size;
-            start.max(0.0).min(space) + end.max(0.0).min(space)
-        }
-        Positioning::Center => (parent_container_size - box_size.size) / 2.0,
-        Positioning::Baseline => 0.0,
-    }
-}
-
-impl Positioning {
-    pub fn resolve(&self, parent_container_size: f64, parent_container_baseline: f64, box_size: FlexSize) -> f64 {
-        match self {
-            Positioning::Start(offset) => *offset,
-            Positioning::End(offset) => parent_container_size - box_size - offset,
-            Positioning::Both { start, end } => {
-                let space = parent_container_size - box_size;
-                start.max(0.0).min(space) + end.max(0.0).min(space)
-            }
-            Positioning::Center => (parent_container_size - box_size) / 2.0,
-            Positioning::Baseline => 0.0,
-        }
-    }
-}
-*/

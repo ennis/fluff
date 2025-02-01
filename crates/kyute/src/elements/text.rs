@@ -1,9 +1,9 @@
 use kurbo::{Point, Size};
 use skia_safe::textlayout;
-use tracing::{trace, trace_span, warn};
+use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementAny, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
+use crate::element::{Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun};
@@ -11,12 +11,9 @@ use crate::PaintCtx;
 
 /// A run of styled text.
 pub struct Text {
-    ctx: ElementCtxAny,
-    relayout: bool,
-    intrinsic_size: Option<Size>,
+    ctx: ElementCtx<Self>,
     paragraph: textlayout::Paragraph,
 }
-
 
 impl Text {
     /// Creates a new text element with the specified text.
@@ -25,28 +22,24 @@ impl Text {
     ///
     /// ```
     /// use kyute::text;
-    /// use kyute::widgets::text::Text;
+    /// use kyute::elements::text::Text;
     /// use kyute::text::TextRun;
     ///
     /// let text = Text::new(text![size(20.0) "Hello, " { b "world!" }]);
     /// ```
-    pub fn new(text: &[TextRun]) -> Text {
-        let paragraph = TextLayout::new(text).inner;
-        Text {
-            ctx: ElementCtxAny::new(),
-            relayout: true,
-            intrinsic_size: None,
+    pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
+        let paragraph = text.into().inner;
+        ElementBuilder::new(Text {
+            ctx: ElementCtx::new(),
             paragraph,
-        }
+        })
     }
 
-    /*pub fn set_text(&self, text: &[TextRun]) {
+    pub fn set_text(&mut self, text: &[TextRun]) {
         let paragraph = TextLayout::new(text).inner;
-        self.paragraph.replace(paragraph);
-        self.intrinsic_size.set(None);
-        self.relayout.set(true);
-        self.mark_needs_relayout();
-    }*/
+        self.paragraph = paragraph;
+        self.ctx.mark_needs_layout();
+    }
 }
 
 impl Element for Text {
@@ -84,11 +77,8 @@ impl Element for Text {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        ctx.with_canvas(|canvas| {
-            self.paragraph.paint(canvas, Point::ZERO.to_skia());
-        })
+        self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(&mut self, _ctx: &mut WindowCtx, _event: &mut Event)
-    {}
+    fn event(&mut self, _ctx: &mut WindowCtx, _event: &mut Event) {}
 }

@@ -2,7 +2,7 @@ use crate::application::run_queued;
 use color_print::cprintln;
 use scoped_tls::scoped_thread_local;
 use slotmap::{new_key_type, Key, KeyData, SlotMap};
-use std::any::{Any, TypeId};
+use std::any::{type_name, Any, TypeId};
 use std::cell::{Ref, RefCell};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -15,10 +15,8 @@ pub trait EventSource: Any {
     /// Returns this object as a weak reference.
     fn as_weak(&self) -> Weak<dyn Any>;
 
-    fn subscribe<E: 'static>(
-        &self,
-        mut callback: impl FnMut(Weak<dyn Any>, &dyn Any) -> bool + 'static,
-    ) -> SubscriptionKey
+    #[track_caller]
+    fn subscribe<E: 'static>(&self, mut callback: impl FnMut(Weak<dyn Any>, &E) -> bool + 'static) -> SubscriptionKey
     where
         Self: Sized,
     {
@@ -31,6 +29,11 @@ pub trait EventSource: Any {
             }),
             Location::caller(),
         )
+    }
+
+    #[track_caller]
+    fn emit<E: 'static>(&self, event: E) {
+        emit_inner(self.as_weak(), Box::new(event), type_name::<E>())
     }
 }
 
@@ -119,10 +122,6 @@ impl<T: Any + ?Sized> Model<T> {
             inner: Rc::downgrade(&self.inner),
         }
     }
-
-    fn as_ptr(&self) -> *const ModelHeader {
-        &self.inner.header as *const ModelHeader
-    }
 }
 
 impl<T: Any> Model<T> {
@@ -130,7 +129,7 @@ impl<T: Any> Model<T> {
     pub fn new(initial_data: T) -> Self {
         let inner = Rc::new(ModelInner {
             header: ModelHeader {
-                type_id: TypeId::of::<T>(),
+                _type_id: TypeId::of::<T>(),
             },
             data: RefCell::new(initial_data),
         });
@@ -211,7 +210,7 @@ impl<T: Any> Model<T> {
         T: EventEmitter<Event>,
     {
         let event: Box<dyn Any> = Box::new(event);
-        emit_inner(self.as_weak(), event);
+        emit_inner(self.as_weak(), event, type_name::<Event>());
     }
 }
 
@@ -323,7 +322,7 @@ struct ModelInner<T: ?Sized> {
 // TODO: this is useless since we carry around type information as `dyn Any`. This is a relic
 // of trying to make a thin pointer to a type-erased `Model` instance.
 struct ModelHeader {
-    type_id: TypeId,
+    _type_id: TypeId,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -523,7 +522,7 @@ fn subscribe_inner(
 }
 
 #[track_caller]
-fn emit_inner(weak_source: Weak<dyn Any>, payload: Box<dyn Any>) {
+fn emit_inner(weak_source: Weak<dyn Any>, payload: Box<dyn Any>, type_name: &str) {
     let location = Location::caller();
     let type_id = (*payload).type_id();
     let targets = SUBSCRIPTION_MAP.with_borrow_mut(|s| s.event_targets(&weak_source, type_id));
@@ -531,12 +530,16 @@ fn emit_inner(weak_source: Weak<dyn Any>, payload: Box<dyn Any>) {
 
     if !targets.is_empty() {
         // TODO: why don't we queue one callback per target?
+        let type_name = type_name.to_owned();
 
         run_queued(move || {
             #[cfg(debug_assertions)]
             {
                 println!();
-                cprintln!("<yellow,bold>event</>: from {weak_source:?}");
+                let strong_count = weak_source.0.strong_count();
+                let weak_count = weak_source.0.weak_count();
+                cprintln!("<yellow,bold>event</>: {type_name}");
+                cprintln!("   <dim>from {weak_source:?} ({strong_count} strong ref(s), {weak_count} weak ref(s))</>");
                 println!("   --> {location}");
             }
 

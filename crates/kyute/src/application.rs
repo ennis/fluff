@@ -1,23 +1,23 @@
 //use crate::app_globals::AppGlobals;
 use crate::app_globals::AppGlobals;
+use crate::model::maintain_subscription_map;
 use anyhow::Context;
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
-use futures::task::{LocalSpawnExt};
+use futures::task::LocalSpawnExt;
 use scoped_tls::scoped_thread_local;
 use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::{poll_fn, Future};
 use std::rc::{Rc, Weak};
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 use tracy_client::set_thread_name;
 use winit::event::{Event, StartCause};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use winit::window::WindowId;
-use crate::model::maintain_subscription_map;
 
 /// Event loop user event.
 #[derive(Clone, Debug)]
@@ -51,11 +51,10 @@ struct AppState {
     queued_callbacks: RefCell<Vec<Box<dyn FnOnce()>>>,
 }
 
-
 scoped_thread_local!(static APP_STATE: AppState);
 
 /// Spawns a task on the main-thread executor.
-pub fn spawn(fut: impl Future<Output=()> + 'static) -> AbortHandle {
+pub fn spawn(fut: impl Future<Output = ()> + 'static) -> AbortHandle {
     APP_STATE.with(|state| {
         let (fut, abort_handle) = abortable(fut);
         state
@@ -67,7 +66,6 @@ pub fn spawn(fut: impl Future<Output=()> + 'static) -> AbortHandle {
         abort_handle
     })
 }
-
 
 /// Registers a closure to run during the next iteration of the event loop, and wakes the event loop.
 pub fn run_queued(f: impl FnOnce() + 'static) {
@@ -87,7 +85,6 @@ pub fn run_after(after: Duration, f: impl FnOnce() + 'static) {
         run_queued(f);
     });
 }
-
 
 /// Handler for window events.
 pub trait WindowHandler {
@@ -130,7 +127,7 @@ pub async fn wait_until(deadline: Instant) {
             Poll::Pending
         })
     })
-        .await
+    .await
 }
 
 /// Waits for the specified duration.
@@ -139,7 +136,7 @@ pub async fn wait_for(duration: Duration) {
     wait_until(deadline).await;
 }
 
-pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::Error> {
+pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow::Error> {
     set_thread_name!("UI thread");
     let event_loop: EventLoop<ExtEvent> = EventLoopBuilder::with_user_event()
         .build()
@@ -201,10 +198,12 @@ pub fn run(root_future: impl Future<Output=()> + 'static) -> Result<(), anyhow::
 
                         // USER WAKEUP /////////////////////////////////////////////////////////////
                         Event::UserEvent(ExtEvent::UpdateUi) => {
-                            // run queued callbacks
-                            let ref mut queued_callbacks = *state.queued_callbacks.borrow_mut();
-                            for callback in queued_callbacks.drain(..) {
-                                callback();
+                            // run queued callbacks, repeat until no new callbacks are added
+                            while !state.queued_callbacks.borrow_mut().is_empty() {
+                                let mut queued_callbacks = state.queued_callbacks.take();
+                                for callback in queued_callbacks.drain(..) {
+                                    callback();
+                                }
                             }
                         }
 

@@ -23,7 +23,7 @@ use crate::application::{with_event_loop_window_target, WindowHandler};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
 use crate::element::{
-    dispatch_event, get_keyboard_focus, Element, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
+    dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
 };
 use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
 use crate::layout::{LayoutInput, SizeConstraint};
@@ -320,20 +320,20 @@ impl WindowInner {
         // determine the repeat count (double-click, triple-click, etc.) for button down event
         let repeat_count = match &mut input_state.last_click {
             Some(ref mut last)
-            if last.device_id == device_id
-                && last.button == button
-                && last.position == self.cursor_pos.get()
-                && (click_time - last.time) < AppGlobals::get().double_click_time() =>
-                {
-                    // same device, button, position, and within the platform specified double-click time
-                    if state.is_pressed() {
-                        last.repeat_count += 1;
-                        last.repeat_count
-                    } else {
-                        // no repeat for release events (although that could be possible?)
-                        1
-                    }
+                if last.device_id == device_id
+                    && last.button == button
+                    && last.position == self.cursor_pos.get()
+                    && (click_time - last.time) < AppGlobals::get().double_click_time() =>
+            {
+                // same device, button, position, and within the platform specified double-click time
+                if state.is_pressed() {
+                    last.repeat_count += 1;
+                    last.repeat_count
+                } else {
+                    // no repeat for release events (although that could be possible?)
+                    1
                 }
+            }
             other => {
                 // no match, reset
                 if state.is_pressed() {
@@ -578,7 +578,7 @@ impl WindowInner {
 
         // FIXME: only clear and flip invalid regions
         {
-            let mut skia_surface = surface.surface();
+            let mut skia_surface = surface.skia();
             skia_surface.canvas().clear(self.background.get().to_skia());
 
             self.root.paint_on_surface(&surface, scale_factor);

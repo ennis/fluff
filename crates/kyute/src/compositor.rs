@@ -2,8 +2,8 @@
 use raw_window_handle::RawWindowHandle;
 use skia_safe as sk;
 
-use crate::{backend, Size};
 use crate::app_globals::AppGlobals;
+use crate::{backend, Size};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -14,8 +14,14 @@ pub struct DrawableSurface {
 
 impl DrawableSurface {
     /// Returns the underlying skia surface.
-    pub fn surface(&self) -> sk::Surface {
+    pub fn skia(&self) -> sk::Surface {
         self.backend.surface()
+    }
+
+    /// Returns the size of the surface in physical pixels.
+    pub fn physical_size(&self) -> Size {
+        let surface = self.backend.surface();
+        Size::new(surface.width() as f64, surface.height() as f64)
     }
 }
 
@@ -122,5 +128,3 @@ impl Layer {
         Layer(AppGlobals::get().backend.create_surface_layer(size, format))
     }
 }
-
-

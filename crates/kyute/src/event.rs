@@ -1,10 +1,8 @@
 //! Events sent to elements.
 use std::fmt;
 
-pub use keyboard_types::KeyboardEvent;
-pub use keyboard_types::Modifiers;
-use kurbo::Vec2;
-use kurbo::{Affine, Point};
+pub use keyboard_types::{KeyboardEvent, Modifiers};
+use kurbo::{Affine, Point, Rect, Vec2};
 
 mod key_code;
 
@@ -179,47 +177,18 @@ pub enum Event {
 
 impl Event {
     pub fn append_transform(&mut self, transform: &Affine) -> Option<Affine> {
-        match self {
-            Event::PointerMove(ref mut pe)
-            | Event::PointerUp(ref mut pe)
-            | Event::PointerDown(ref mut pe)
-            | Event::PointerOver(ref mut pe)
-            | Event::PointerOut(ref mut pe)
-            | Event::PointerEnter(ref mut pe)
-            | Event::PointerLeave(ref mut pe) => {
-                let prev = pe.transform;
-                pe.transform *= *transform;
-                Some(prev)
-            }
-            _ => None,
+        if let Some(p) = self.pointer_event_mut() {
+            let prev = p.transform;
+            p.transform *= *transform;
+            Some(prev)
+        } else {
+            None
         }
     }
 
     pub fn set_transform(&mut self, transform: &Affine) {
-        match self {
-            Event::PointerMove(ref mut pe)
-            | Event::PointerUp(ref mut pe)
-            | Event::PointerDown(ref mut pe)
-            | Event::PointerOver(ref mut pe)
-            | Event::PointerOut(ref mut pe)
-            | Event::PointerEnter(ref mut pe)
-            | Event::PointerLeave(ref mut pe) => {
-                pe.transform = *transform;
-            }
-            _ => {}
-        }
-    }
-
-    pub fn capture_requested(&mut self) -> bool {
-        match self {
-            Event::PointerMove(ref mut pe)
-            | Event::PointerUp(ref mut pe)
-            | Event::PointerDown(ref mut pe)
-            | Event::PointerOver(ref mut pe)
-            | Event::PointerOut(ref mut pe)
-            | Event::PointerEnter(ref mut pe)
-            | Event::PointerLeave(ref mut pe) => pe.request_capture,
-            _ => false,
+        if let Some(p) = self.pointer_event_mut() {
+            p.transform = *transform;
         }
     }
 
@@ -235,5 +204,60 @@ impl Event {
         }
         r
     }
-}
 
+    /// Returns the pointer event if this is a pointer event.
+    pub fn pointer_event(&self) -> Option<&PointerEvent> {
+        match self {
+            Event::PointerMove(ref pe)
+            | Event::PointerUp(ref pe)
+            | Event::PointerDown(ref pe)
+            | Event::PointerOver(ref pe)
+            | Event::PointerOut(ref pe)
+            | Event::PointerEnter(ref pe)
+            | Event::PointerLeave(ref pe) => Some(pe),
+            _ => None,
+        }
+    }
+    /// Returns the pointer event if this is a pointer event.
+    pub fn pointer_event_mut(&mut self) -> Option<&mut PointerEvent> {
+        match self {
+            Event::PointerMove(ref mut pe)
+            | Event::PointerUp(ref mut pe)
+            | Event::PointerDown(ref mut pe)
+            | Event::PointerOver(ref mut pe)
+            | Event::PointerOut(ref mut pe)
+            | Event::PointerEnter(ref mut pe)
+            | Event::PointerLeave(ref mut pe) => Some(pe),
+            _ => None,
+        }
+    }
+
+    /// Returns whether the event coordinates fall inside the specified bounds.
+    ///
+    /// Returns false if the event is not a pointer event.
+    pub fn is_inside(&self, bounds: Rect) -> bool {
+        if let Some(p) = self.pointer_event() {
+            bounds.contains(p.local_position())
+        } else {
+            false
+        }
+    }
+
+    /// Checks whether this is a pointer up event.
+    pub fn is_pointer_up(&self) -> bool {
+        matches!(self, Event::PointerUp(_))
+    }
+
+    /// Checks whether this is a pointer down event.
+    pub fn is_pointer_down(&self) -> bool {
+        matches!(self, Event::PointerDown(_))
+    }
+
+    pub fn is_pointer_over(&self) -> bool {
+        matches!(self, Event::PointerOver(_))
+    }
+
+    pub fn is_pointer_out(&self) -> bool {
+        matches!(self, Event::PointerOut(_))
+    }
+}

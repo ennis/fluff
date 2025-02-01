@@ -4,7 +4,7 @@ use crate::Size;
 use skia_safe::image::CachingHint;
 use std::io;
 use std::ops::Deref;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::OnceLock;
 
 /// An image. Paper-thin wrapper around skia images.
 #[derive(Clone, Debug)]
@@ -101,7 +101,7 @@ impl Deref for StaticImage {
 /// This produces a constant of type `StaticImage`.
 #[macro_export]
 macro_rules! static_image {
-   ($path:literal) => {
-         $crate::drawing::image::StaticImage::new(include_bytes!($path), Some($path))
+    ($path:literal) => {
+        $crate::drawing::image::StaticImage::new(include_bytes!($path), Some($path))
     };
 }

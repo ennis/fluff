@@ -4,26 +4,22 @@ use std::ffi::OsString;
 use std::rc::Rc;
 use std::time::Duration;
 
+pub(crate) use compositor::{DrawableSurface, Layer};
 use skia_safe::gpu::Protected;
 use threadbound::ThreadBound;
-use windows::core::{Interface, IUnknown, Owned};
+use windows::core::{IUnknown, Interface, Owned};
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Graphics::Direct3D12::{
-    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_FENCE_FLAG_NONE, D3D12CreateDevice, ID3D12CommandAllocator,
-    ID3D12CommandQueue, ID3D12Device, ID3D12Fence,
-};
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
-use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, IDCompositionDesktopDevice};
-use windows::Win32::Graphics::DirectWrite::{DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory};
-use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGIGetDebugInterface1, IDXGIAdapter1,
-    IDXGIFactory3,
+use windows::Win32::Graphics::Direct3D12::{
+    D3D12CreateDevice, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Device, ID3D12Fence,
+    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_FENCE_FLAG_NONE,
 };
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, IDCompositionDesktopDevice};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, IDXGIAdapter1, IDXGIFactory3, DXGI_CREATE_FACTORY_FLAGS};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
-pub(crate) use compositor::{DrawableSurface, Layer};
 
 mod compositor;
 
@@ -79,7 +75,7 @@ macro_rules! send_com_ptr_wrapper {
 sync_com_ptr_wrapper! { D3D12Device(ID3D12Device) }
 sync_com_ptr_wrapper! { DXGIFactory3(IDXGIFactory3) }
 sync_com_ptr_wrapper! { D3D12CommandQueue(ID3D12CommandQueue) }
-sync_com_ptr_wrapper! { DWriteFactory(IDWriteFactory) }
+//sync_com_ptr_wrapper! { DWriteFactory(IDWriteFactory) }
 //sync_com_ptr_wrapper! { D3D12Fence(ID3D12Fence) }
 //sync_com_ptr_wrapper! { D3D11Device(ID3D11Device5) }
 //sync_com_ptr_wrapper! { WICImagingFactory2(IWICImagingFactory2) }
@@ -100,7 +96,7 @@ struct GpuFenceData {
 struct BackendInner {
     //pub(crate) dispatcher_queue_controller: DispatcherQueueController,
     adapter: IDXGIAdapter1,
-    d3d12_device: D3D12Device,              // thread safe
+    d3d12_device: D3D12Device,        // thread safe
     command_queue: D3D12CommandQueue, // thread safe
     command_allocator: ThreadBound<ID3D12CommandAllocator>,
     dxgi_factory: DXGIFactory3,
@@ -113,7 +109,6 @@ struct BackendInner {
     direct_context: RefCell<skia_safe::gpu::DirectContext>,
     pub(crate) composition_device: IDCompositionDesktopDevice,
 }
-
 
 impl BackendInner {
     /// Waits for submitted GPU commands to complete.
@@ -152,10 +147,10 @@ impl ApplicationBackend {
         unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).unwrap() };
 
         // DirectWrite factory
-        let dwrite_factory = unsafe {
-            let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
-            DWriteFactory(dwrite)
-        };
+        //let dwrite_factory = unsafe {
+        //    let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
+        //    DWriteFactory(dwrite)
+        //};
 
         //=========================================================
         // DXGI Factory and adapter enumeration
@@ -215,7 +210,7 @@ impl ApplicationBackend {
                 // ppDevice:
                 &mut d3d12_device,
             )
-                .expect("D3D12CreateDevice failed");
+            .expect("D3D12CreateDevice failed");
             D3D12Device(d3d12_device.unwrap())
         };
 
@@ -256,12 +251,13 @@ impl ApplicationBackend {
                 },
                 None,
             )
-                .expect("failed to create skia context")
+            .expect("failed to create skia context")
         };
 
         //let compositor = Compositor::new().expect("failed to create compositor");
 
-        let composition_device = unsafe { DCompositionCreateDevice3(None).expect("failed to create composition device") };
+        let composition_device =
+            unsafe { DCompositionCreateDevice3(None).expect("failed to create composition device") };
 
         let sync = {
             let fence = unsafe {
@@ -289,7 +285,6 @@ impl ApplicationBackend {
             direct_context: RefCell::new(direct_context),
         }))
     }
-
 
     /// Returns the system double click time in milliseconds.
     pub(crate) fn double_click_time(&self) -> Duration {

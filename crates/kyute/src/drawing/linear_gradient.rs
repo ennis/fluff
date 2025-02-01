@@ -2,7 +2,7 @@ use crate::drawing::ToSkia;
 use kurbo::{Rect, Vec2};
 use kyute_common::Color;
 use skia_safe as sk;
-use skia_safe::gradient_shader::{GradientShaderColors, Interpolation};
+use skia_safe::gradient_shader::Interpolation;
 use tracing::warn;
 
 /// Represents a color stop of a gradient.

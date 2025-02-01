@@ -3,9 +3,12 @@ use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{
     Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WindowCtx,
 };
+use crate::element_state::ElementState;
+use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
 use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
-use crate::{drawing, Color, ElementState, Notifier, PaintCtx};
+use crate::model::EventSource;
+use crate::{drawing, Color, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
 use tracing::trace_span;
 
@@ -78,11 +81,6 @@ impl FrameStyle {
 /// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
     ctx: ElementCtx<Self>,
-    pub clicked: Notifier<()>,
-    pub hovered: Notifier<bool>,
-    pub active: Notifier<bool>,
-    pub focused: Notifier<bool>,
-    pub state_changed: Notifier<ElementState>,
 
     width: SizeValue,
     height: SizeValue,
@@ -106,11 +104,6 @@ impl Frame {
     pub fn new() -> ElementBuilder<Frame> {
         ElementBuilder::new(Frame {
             ctx: ElementCtx::new(),
-            clicked: Default::default(),
-            hovered: Default::default(),
-            active: Default::default(),
-            focused: Default::default(),
-            state_changed: Default::default(),
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -129,8 +122,23 @@ impl Frame {
 
     /// Specifies a closure to be called when the frame is clicked.
     #[must_use]
-    pub fn on_click(mut self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
-        self.clicked.watch(move |_| func());
+    #[track_caller]
+    pub fn on_click(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
+        self.subscribe::<ClickedEvent>(move |_, _| {
+            func();
+            true
+        });
+        self
+    }
+
+    /// Specifies a closure to be called when the frame is hovered.
+    #[must_use]
+    #[track_caller]
+    pub fn on_hover(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
+        self.subscribe::<HoveredEvent>(move |_, _| {
+            func();
+            false
+        });
         self
     }
 
@@ -247,12 +255,6 @@ impl Frame {
             self.state_affects_style = self.style.affected_by_state();
         }
     }
-}
-
-struct BoxSizingParams<'a> {
-    /// Main axis direction (direction of the text). For now, it's always horizontal.
-    axis: Axis,
-    children: &'a [ElementAny],
 }
 
 impl Frame {
@@ -434,7 +436,7 @@ impl Element for Frame {
     fn paint(&mut self, ctx: &mut PaintCtx) {
         self.resolve_style();
 
-        let rect = ctx.size.to_rect();
+        let rect = ctx.bounds();
         let s = &self.resolved_style;
 
         let border_radius = s.border_radius;
@@ -442,31 +444,30 @@ impl Element for Frame {
         let inner_shape = RoundedRect::from_rect(rect - s.border_size, border_radius - 0.5 * s.border_size.x_value());
         let outer_shape = RoundedRect::from_rect(rect, border_radius);
 
-        ctx.with_canvas(|canvas| {
-            // draw drop shadows
-            for shadow in &s.shadows {
-                if !shadow.inset {
-                    drawing::draw_box_shadow(canvas, &outer_shape, shadow);
-                }
+        let canvas = ctx.canvas();
+        // draw drop shadows
+        for shadow in &s.shadows {
+            if !shadow.inset {
+                drawing::draw_box_shadow(canvas, &outer_shape, shadow);
             }
+        }
 
-            // fill
-            let paint = Paint::Color(s.background_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
-            canvas.draw_rrect(inner_shape.to_skia(), &paint);
+        // fill
+        let paint = Paint::Color(s.background_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
+        canvas.draw_rrect(inner_shape.to_skia(), &paint);
 
-            // draw inset shadows
-            for shadow in &s.shadows {
-                if shadow.inset {
-                    drawing::draw_box_shadow(canvas, &inner_shape, shadow);
-                }
+        // draw inset shadows
+        for shadow in &s.shadows {
+            if shadow.inset {
+                drawing::draw_box_shadow(canvas, &inner_shape, shadow);
             }
+        }
 
-            // paint border
-            if s.border_color.alpha() != 0.0 && s.border_size != Insets::ZERO {
-                let paint = Paint::Color(s.border_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
-                canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
-            }
-        });
+        // paint border
+        if s.border_color.alpha() != 0.0 && s.border_size != Insets::ZERO {
+            let paint = Paint::Color(s.border_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
+            canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
+        }
 
         // paint children
         if let Some(content) = &self.content {
@@ -475,9 +476,9 @@ impl Element for Frame {
     }
 
     fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {
-        fn update_state(this: &mut Frame, ctx: &mut WindowCtx, state: ElementState) {
+        fn update_state(this: &mut Frame, _ctx: &mut WindowCtx, state: ElementState) {
             this.state = state;
-            this.state_changed.invoke(state);
+            this.ctx.emit(ElementStateChanged(state));
             if this.state_affects_style {
                 this.style_changed = true;
                 this.ctx.mark_needs_paint();
@@ -488,24 +489,24 @@ impl Element for Frame {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
                 update_state(self, ctx, self.state);
-                self.active.invoke(true);
+                self.ctx.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
-                    self.state.set_active(false);
+                    self.ctx.emit(ActivatedEvent(false));
                     update_state(self, ctx, self.state);
-                    self.clicked.invoke(());
+                    self.ctx.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
                 update_state(self, ctx, self.state);
-                self.hovered.invoke(true);
+                self.ctx.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
                 update_state(self, ctx, self.state);
-                self.hovered.invoke(false);
+                self.ctx.emit(HoveredEvent(false));
             }
             _ => {}
         }

@@ -112,6 +112,12 @@ impl TextLayout {
     }
 }
 
+impl<'a, const N: usize> From<&'a [TextRun<'a>; N]> for TextLayout {
+    fn from(runs: &'a [TextRun; N]) -> Self {
+        TextLayout::new(runs)
+    }
+}
+
 // `text!` macro support
 #[doc(hidden)]
 pub fn cow_format_args(args: fmt::Arguments) -> Cow<str> {

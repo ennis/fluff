@@ -6,9 +6,9 @@ use tracing::{info, trace_span};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, LayoutCtx, WindowCtx};
+use crate::element::{Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
 use crate::event::Event;
-use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint};
+use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
 use crate::{AppGlobals, Color, Notifier, PaintCtx};
 
@@ -226,7 +226,6 @@ impl TextEditState {
 }
 
 const CARET_BLINK_INITIAL_DELAY: Duration = Duration::from_secs(1);
-const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 fn next_word_boundary(text: &str, offset: usize) -> usize {
     let mut pos = offset;
@@ -550,7 +549,7 @@ impl TextEdit {
     }
 
     /// Selects the line under the cursor.
-    pub fn select_line_under_cursor(&mut self, ctx: &mut ElementCtxAny) {
+    pub fn select_line_under_cursor(&mut self) {
         if self.state.select_line_under_cursor() {
             self.ctx.mark_needs_paint();
         }
@@ -608,44 +607,38 @@ impl Element for TextEdit {
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
         let this = &mut self.state;
-        let bounds = ctx.size.to_rect();
+        let bounds = ctx.bounds();
 
-        ctx.with_canvas(|canvas| {
-            // draw rect around bounds
-            //let paint = Paint::from(Color::from_rgba_u8(255, 0, 0, 80)).to_sk_paint(bounds.to_rect());
-            //canvas.draw_rect(bounds.to_rect().to_skia(), &paint);
+        ctx.save();
+        ctx.canvas().translate(-this.scroll_offset.to_skia());
 
-            canvas.save();
-            canvas.translate(-this.scroll_offset.to_skia());
+        // paint the paragraph
+        this.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
 
-            // paint the paragraph
-            this.paragraph.paint(canvas, Point::ZERO.to_skia());
+        // paint the selection rectangles
+        let selection_rects = this.paragraph.get_rects_for_range(
+            this.selection.min()..this.selection.max(),
+            RectHeightStyle::Tight,
+            RectWidthStyle::Tight,
+        );
+        let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
+        for text_box in selection_rects {
+            ctx.canvas().draw_rect(text_box.rect, &selection_paint);
+        }
 
-            // paint the selection rectangles
-            let selection_rects = this.paragraph.get_rects_for_range(
-                this.selection.min()..this.selection.max(),
-                RectHeightStyle::Tight,
-                RectWidthStyle::Tight,
-            );
-            let selection_paint = Paint::from(this.selection_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
-            for text_box in selection_rects {
-                canvas.draw_rect(text_box.rect, &selection_paint);
+        if self.ctx.has_focus() && (self.blink_phase || self.blink_pending_reset) {
+            if let Some(info) = this.paragraph.get_glyph_cluster_at(this.selection.end) {
+                let caret_rect = Rect::from_origin_size(
+                    Point::new((info.bounds.left as f64).round(), (info.bounds.top as f64).round()),
+                    Size::new(1.0, info.bounds.height() as f64),
+                );
+                //eprintln!("caret_rect: {:?}", caret_rect);
+                let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
+                ctx.canvas().draw_rect(caret_rect.to_skia(), &caret_paint);
             }
+        }
 
-            if self.ctx.has_focus() && (self.blink_phase || self.blink_pending_reset) {
-                if let Some(info) = this.paragraph.get_glyph_cluster_at(this.selection.end) {
-                    let caret_rect = Rect::from_origin_size(
-                        Point::new((info.bounds.left as f64).round(), (info.bounds.top as f64).round()),
-                        Size::new(1.0, info.bounds.height() as f64),
-                    );
-                    //eprintln!("caret_rect: {:?}", caret_rect);
-                    let caret_paint = Paint::from(this.caret_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
-                    canvas.draw_rect(caret_rect.to_skia(), &caret_paint);
-                }
-            }
-
-            canvas.restore();
-        });
+        ctx.restore();
     }
 
     fn event(&mut self, _ctx: &mut WindowCtx, event: &mut Event) {

@@ -34,8 +34,8 @@ impl<T: 'static> Notifier<T> {
 
     /// Asynchronously waits for the event to be notified.
     pub async fn wait(&self) -> T {
-        let mut result = UnsafeCell::new(None);
-        let mut waker = UnsafeCell::new(None);
+        let result = UnsafeCell::new(None);
+        let waker = UnsafeCell::new(None);
 
         let result_ptr = result.get();
         let waker_ptr: *mut Option<Waker> = waker.get();
@@ -48,6 +48,10 @@ impl<T: 'static> Notifier<T> {
                 // and we end up with a dangling reference to the result.
                 // We also can't use a guard to unwatch because we can `mem::forget` the future
                 // which won't call destructors.
+                //   XXX: is that true? I don't think it's possible to mem::forget a future that's being polled, because
+                //        it's pinned => destructors MUST run
+                // See https://internals.rust-lang.org/t/forgetting-futures-with-borrowed-data/10824/10
+                // for more details
 
                 // ALTERNATIVE: allocate result and waker on the heap
 
@@ -69,7 +73,8 @@ impl<T: 'static> Notifier<T> {
                     Poll::Pending
                 }
             }
-        }).await;
+        })
+        .await;
 
         // FIXME: this is unsound because the future returned by wait can be dropped before it is
         // polled to completion: we end up with

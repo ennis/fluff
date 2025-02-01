@@ -1,16 +1,21 @@
 pub use kurbo::{self, Size};
 use kyute::element::RcElement;
-use kyute::layout::{Axis, SpacingAfter, SpacingBefore};
-use kyute::layout::SizeValue;
-use kyute::widgets::frame::{Frame, FrameStyle};
-use kyute::widgets::text::Text;
+use kyute::elements::frame::{Frame, FrameStyle};
+use kyute::elements::text::Text;
+use kyute::layout::{Axis, SizeValue, SpacingAfter, SpacingBefore};
 use kyute::{application, text, Color, Window, WindowOptions};
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 
-fn frame(direction: Axis, text: &str, content: Vec<RcElement<Frame>>, margin_before: SizeValue, margin_after: SizeValue) -> RcElement<Frame> {
+fn frame(
+    direction: Axis,
+    text: &str,
+    content: Vec<RcElement<Frame>>,
+    margin_before: SizeValue,
+    margin_after: SizeValue,
+) -> RcElement<Frame> {
     let frame = Frame::new();
 
     frame.set_border(1.0);
@@ -53,53 +58,102 @@ fn min_flex_frame(direction: Axis, color: Color, min: f64, flex: f64) -> RcEleme
 }
 
 fn main() {
-    let subscriber = Registry::default().with(HierarchicalLayer::new(4)).with(EnvFilter::from_default_env());
+    let subscriber = Registry::default()
+        .with(HierarchicalLayer::new(4))
+        .with(EnvFilter::from_default_env());
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     application::run(async {
         let no_margin = SizeValue::Fixed(0.0);
         let flex_expand = SizeValue::Stretch;
 
-        let frame_root = frame(Axis::Horizontal, "", vec![
-            flex_frame(Axis::Vertical, 1.0, vec![
-                // items aligned on top
-                frame(Axis::Horizontal, "Content", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content", vec![], no_margin, flex_expand),
-            ]),
-            flex_frame(Axis::Vertical, 2.0, vec![
-                // two items on top, last on the bottom
-                frame(Axis::Horizontal, "Content Top", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content Top", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content Bottom", vec![], flex_expand, no_margin),
-            ]),
-            flex_frame(Axis::Vertical, 1.0, vec![
-                // items aligned on bottom
-                frame(Axis::Horizontal, "Content Bottom", vec![], flex_expand, no_margin),
-                frame(Axis::Horizontal, "Content Bottom", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content Bottom", vec![], no_margin, no_margin),
-            ]),
-            flex_frame(Axis::Vertical, 1.0, vec![
-                // centered items
-                frame(Axis::Horizontal, "Content Centered", vec![], flex_expand, no_margin),
-                frame(Axis::Horizontal, "Content Centered", vec![], no_margin, no_margin),
-                frame(Axis::Horizontal, "Content Centered", vec![], no_margin, flex_expand),
-            ]),
-            flex_frame(Axis::Vertical, 1.0, vec![
-                // items with space between
-                frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
-                frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
-                frame(Axis::Horizontal, "Content Regularly Spaced", vec![], flex_expand, flex_expand),
-            ]),
-            flex_frame(Axis::Vertical, 1.0, vec![
-                // boxes of color with various flex heights
-                min_flex_frame(Axis::Horizontal, Color::from_hex("f0f"), 100.0, 2.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("ff0"), 100.0, 1.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("f00"), 100.0, 1.0),
-                min_flex_frame(Axis::Horizontal, Color::from_hex("0f0"), 100.0, 1.0),
-            ]),
-        ], no_margin, no_margin);
-
+        let frame_root = frame(
+            Axis::Horizontal,
+            "",
+            vec![
+                flex_frame(
+                    Axis::Vertical,
+                    1.0,
+                    vec![
+                        // items aligned on top
+                        frame(Axis::Horizontal, "Content", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content", vec![], no_margin, flex_expand),
+                    ],
+                ),
+                flex_frame(
+                    Axis::Vertical,
+                    2.0,
+                    vec![
+                        // two items on top, last on the bottom
+                        frame(Axis::Horizontal, "Content Top", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content Top", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content Bottom", vec![], flex_expand, no_margin),
+                    ],
+                ),
+                flex_frame(
+                    Axis::Vertical,
+                    1.0,
+                    vec![
+                        // items aligned on bottom
+                        frame(Axis::Horizontal, "Content Bottom", vec![], flex_expand, no_margin),
+                        frame(Axis::Horizontal, "Content Bottom", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content Bottom", vec![], no_margin, no_margin),
+                    ],
+                ),
+                flex_frame(
+                    Axis::Vertical,
+                    1.0,
+                    vec![
+                        // centered items
+                        frame(Axis::Horizontal, "Content Centered", vec![], flex_expand, no_margin),
+                        frame(Axis::Horizontal, "Content Centered", vec![], no_margin, no_margin),
+                        frame(Axis::Horizontal, "Content Centered", vec![], no_margin, flex_expand),
+                    ],
+                ),
+                flex_frame(
+                    Axis::Vertical,
+                    1.0,
+                    vec![
+                        // items with space between
+                        frame(
+                            Axis::Horizontal,
+                            "Content Regularly Spaced",
+                            vec![],
+                            flex_expand,
+                            flex_expand,
+                        ),
+                        frame(
+                            Axis::Horizontal,
+                            "Content Regularly Spaced",
+                            vec![],
+                            flex_expand,
+                            flex_expand,
+                        ),
+                        frame(
+                            Axis::Horizontal,
+                            "Content Regularly Spaced",
+                            vec![],
+                            flex_expand,
+                            flex_expand,
+                        ),
+                    ],
+                ),
+                flex_frame(
+                    Axis::Vertical,
+                    1.0,
+                    vec![
+                        // boxes of color with various flex heights
+                        min_flex_frame(Axis::Horizontal, Color::from_hex("f0f"), 100.0, 2.0),
+                        min_flex_frame(Axis::Horizontal, Color::from_hex("ff0"), 100.0, 1.0),
+                        min_flex_frame(Axis::Horizontal, Color::from_hex("f00"), 100.0, 1.0),
+                        min_flex_frame(Axis::Horizontal, Color::from_hex("0f0"), 100.0, 1.0),
+                    ],
+                ),
+            ],
+            no_margin,
+            no_margin,
+        );
 
         ////////////////////////////////////////////////////////////////////
         let window_options = WindowOptions {
@@ -122,5 +176,6 @@ fn main() {
         }
 
         //application::quit();
-    }).unwrap()
+    })
+    .unwrap()
 }

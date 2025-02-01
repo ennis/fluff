@@ -1,8 +1,6 @@
 //! Description of paints.
-use kurbo::{Rect, Vec2};
+use kurbo::Rect;
 use skia_safe as sk;
-use skia_safe::gradient_shader::GradientShaderColors;
-use tracing::warn;
 
 use crate::drawing::{Image, LinearGradient, ToSkia};
 use crate::Color;
@@ -65,15 +63,6 @@ macro_rules! shader {
             })
             .clone()
         })
-
-        /*static SHADER: std::sync::OnceLock<$crate::ThreadBound<$crate::skia::RuntimeEffect>> =
-            std::sync::OnceLock::new();
-        SHADER
-            .get_or_init(|| {
-                $crate::skia::RuntimeEffect::make_for_shader($source, None).expect("failed to compile shader")
-            })
-            .get_ref()
-            .expect("shader accessed from another thread")*/
     }};
 }
 

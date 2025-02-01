@@ -1,32 +1,42 @@
 //! Drawing-related wrappers and helpers for use with skia.
 // re-export kurbo types
-use kurbo::{Affine, Point, Rect, Vec2};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Vec2};
 pub use kurbo::{RoundedRect, RoundedRectRadii, Shape};
 use skia_safe as sk;
 
 use crate::Color;
-pub use border::BorderStyle;
 pub use box_shadow::{draw_box_shadow, BoxShadow};
-pub use decoration::{CompoundBorder, Decoration, RoundedRectBorder, ShapeBorder, ShapeDecoration};
 pub use image::{Image, StaticImage};
 pub use linear_gradient::{ColorStop, InterpolationColorSpace, LinearGradient};
 pub use paint::Paint;
+pub use placement::{
+    align, place, place_rect_into, Anchor, Placement, BASELINE_CENTER, BASELINE_LEFT, BASELINE_RIGHT, BOTTOM_CENTER,
+    BOTTOM_LEFT, BOTTOM_RIGHT, CENTER, LEFT_CENTER, RIGHT_CENTER, TOP_CENTER, TOP_LEFT, TOP_RIGHT,
+};
 
-mod border;
 mod box_shadow;
-mod decoration;
 mod image;
 mod linear_gradient;
 mod paint;
-mod context;
-//mod path;
-//#[cfg(feature = "svg")]
-//mod svg_path;
-//#[cfg(feature = "svg")]
-//pub mod vector_icon;
+mod placement;
 
-pub use context::{DrawCtx};
-pub use context::prelude;
+/// Represents either a size in logical pixels, or the size of the parent container.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Length {
+    /// Specifies in pixel.
+    Pixels(f64),
+    /// Specifies the size of the parent container, width or height, depending on context.
+    Stretch,
+}
+
+impl Length {
+    pub fn resolve(self, container_size: f64) -> f64 {
+        match self {
+            Length::Pixels(x) => x,
+            Length::Stretch => container_size,
+        }
+    }
+}
 
 /// Types that can be converted to their skia equivalent.
 pub trait ToSkia {
@@ -132,6 +142,34 @@ impl ToSkia for Affine {
     }
 }
 
+impl ToSkia for BezPath {
+    type Target = sk::Path;
+
+    fn to_skia(&self) -> Self::Target {
+        let mut path = sk::Path::new();
+        for el in self.iter() {
+            match el {
+                PathEl::MoveTo(p) => {
+                    path.move_to(p.to_skia());
+                }
+                PathEl::LineTo(p) => {
+                    path.line_to(p.to_skia());
+                }
+                PathEl::QuadTo(p1, p2) => {
+                    path.quad_to(p1.to_skia(), p2.to_skia());
+                }
+                PathEl::CurveTo(p1, p2, p3) => {
+                    path.cubic_to(p1.to_skia(), p2.to_skia(), p3.to_skia());
+                }
+                PathEl::ClosePath => {
+                    path.close();
+                }
+            }
+        }
+        path
+    }
+}
+
 //--------------------------------------------------------------------------------------------------
 
 /// Describes a blending mode.
@@ -207,10 +245,6 @@ impl ToSkia for BlendMode {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Shapes
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 fn radii_to_skia(radii: &RoundedRectRadii) -> [sk::Vector; 4] {
     let tl = radii.top_left as sk::scalar;
     let tr = radii.top_right as sk::scalar;
@@ -233,5 +267,55 @@ impl ToSkia for RoundedRect {
         } else {
             sk::RRect::new_rect_radii(self.rect().to_skia(), &radii_to_skia(&self.radii()))
         }
+    }
+}
+
+/// Position of a border relative to the shape boundary.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BorderPosition {
+    /// Draw the border inside the shape boundary.
+    Inside,
+    /// Draw the border outside the shape boundary.
+    Outside,
+}
+
+/// Creates a new color from the specified RGB values.
+pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
+    Color::from_rgba_u8(r, g, b, 255)
+}
+
+/// Creates a new color from the specified RGBA values.
+pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
+    Color::from_rgba_u8(r, g, b, a)
+}
+
+/// Short-hand for [`Point::new`].
+pub const fn point(x: f64, y: f64) -> Point {
+    Point::new(x, y)
+}
+
+/// Short-hand for [`Vec2::new`].
+pub const fn vec2(x: f64, y: f64) -> Vec2 {
+    Vec2::new(x, y)
+}
+
+/// Rounds a logical px value to the nearest physical pixel.
+pub fn round_to_px(logical: f64, scale_factor: f64) -> f64 {
+    (logical * scale_factor).round() / scale_factor
+}
+
+pub fn linear_gradient<I, C>(
+    color_space: InterpolationColorSpace,
+    angle_degrees: impl Into<f64>,
+    stops: I,
+) -> LinearGradient
+where
+    I: IntoIterator<Item = C>,
+    C: Into<ColorStop>,
+{
+    LinearGradient {
+        color_space,
+        angle_degrees: angle_degrees.into(),
+        stops: stops.into_iter().map(Into::into).collect(),
     }
 }
