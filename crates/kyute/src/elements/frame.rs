@@ -80,8 +80,6 @@ impl FrameStyle {
 
 /// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
-    ctx: ElementCtx<Self>,
-
     width: SizeValue,
     height: SizeValue,
     min_width: SizeValue,
@@ -103,7 +101,6 @@ impl Frame {
     /// Creates a new `Frame` with the default styles.
     pub fn new() -> ElementBuilder<Frame> {
         ElementBuilder::new(Frame {
-            ctx: ElementCtx::new(),
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -384,19 +381,11 @@ impl Frame {
 }
 
 impl Element for Frame {
-    fn ctx(&self) -> &ElementCtxAny {
-        &self.ctx
-    }
-
-    fn ctx_mut(&mut self) -> &mut ElementCtxAny {
-        &mut self.ctx
-    }
-
     fn children(&self) -> Vec<ElementAny> {
         self.content.clone().into_iter().collect()
     }
 
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(self: ElementMut<Self>, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let output = self.measure_inner(
@@ -408,7 +397,7 @@ impl Element for Frame {
         output
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(self: ElementMut<Self>, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
         let content_area = size - self.padding.size();
 
@@ -433,7 +422,7 @@ impl Element for Frame {
         self.ctx.rect().contains(point)
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx) {
+    fn paint(self: ElementMut<Self>, ctx: &mut PaintCtx) {
         self.resolve_style();
 
         let rect = ctx.bounds();
@@ -475,7 +464,7 @@ impl Element for Frame {
         }
     }
 
-    fn event(&mut self, ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(self: ElementMut<Self>, ctx: &mut WindowCtx, event: &mut Event) {
         fn update_state(this: &mut Frame, _ctx: &mut WindowCtx, state: ElementState) {
             this.state = state;
             this.ctx.emit(ElementStateChanged(state));

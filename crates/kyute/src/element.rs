@@ -6,17 +6,20 @@ use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
     watch_multi_once, watch_multi_once_with_location, with_tracking_scope, EventSource, SubscriptionKey,
 };
+use crate::util::rc_cell::{RcCell, RcRef, RcRefMut};
 use crate::window::WeakWindow;
 use crate::{ElementState, PaintCtx};
 use bitflags::bitflags;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
 use rc_borrow::RcBorrow;
 use std::any::{Any, TypeId};
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{BorrowMutError, Cell, Ref, RefCell, RefMut, UnsafeCell};
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
+use std::ptr::NonNull;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::time::Duration;
 use std::{fmt, mem, ptr};
@@ -119,15 +122,6 @@ impl HitTestCtx {
 
 /// Methods of elements in the element tree.
 pub trait Element: Any {
-    /// Returns a reference to the element internal state.
-    // TODO: this could be moved to a supertrait and derived with a macro
-    // TODO: there should be a method to get the typed element context
-    fn ctx(&self) -> &ElementCtxAny;
-
-    /// Returns a mutable reference to the element's internal state.
-    // TODO: this could be moved to a supertrait and derived with a macro
-    fn ctx_mut(&mut self) -> &mut ElementCtxAny;
-
     /// Returns the list of children of this element.
     fn children(&self) -> Vec<ElementAny> {
         Vec::new()
@@ -202,28 +196,72 @@ impl dyn Element + 'static {
     }
 }
 
-/*
-pub struct ElemBox<T: Element> {
-    pub element: T,
+pub struct ElemBox<T: ?Sized> {
     pub ctx: ElementCtxAny,
+    pub element: T,
 }
 
-pub struct ElementMut<'a, T: Element> {
-    element_rc: RcBorrow<'a, RefCell<ElemBox<T>>>,
+impl<T> ElemBox<T> {
+    fn new(element: T) -> ElemBox<T> {
+        ElemBox {
+            ctx: ElementCtxAny::new(),
+            element,
+        }
+    }
 }
 
-impl<'a, T: Element> Deref for ElementMut<'a, T> {
+impl<T: ?Sized> Deref for ElemBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.element
+    }
+}
+
+impl<T: ?Sized> DerefMut for ElemBox<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.element
+    }
+}
+
+pub struct ElementRef<'a, T: ?Sized>(RcRef<'a, ElemBox<T>>);
+
+impl<'a, T: ?Sized> Deref for ElementRef<'a, T> {
     type Target = ElemBox<T>;
 
     fn deref(&self) -> &Self::Target {
-        &self.element_rc.try_borrow_unguarded()
+        self.0.deref()
+    }
+}
+
+// Don't newtype the thing because it won't work correctly with reborrows
+pub type ElementMut<'a, T: ?Sized> = RcRefMut<'a, ElemBox<T>>;
+
+/*
+impl<'a, T: ?Sized> ElementMut<'a, T> {
+    pub fn reborrow(&self) -> ElementMut<T> {
+        ElementMut(self.0.reborrow())
+    }
+}
+
+impl<'a, T: ?Sized> Deref for ElementMut<'a, T> {
+    type Target = ElemBox<T>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl<'a, T: ?Sized> DerefMut for ElementMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.deref_mut()
     }
 }*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Weak reference to an element in the element tree.
-pub struct WeakElement<T: ?Sized>(Weak<RefCell<T>>);
+pub struct WeakElement<T: ?Sized>(Weak<RcCell<ElemBox<T>>>);
 
 pub type WeakElementAny = WeakElement<dyn Element>;
 
@@ -245,14 +283,6 @@ impl Default for WeakElementAny {
         // this is never instantiated, so it's fine
         struct Dummy;
         impl Element for Dummy {
-            fn ctx(&self) -> &ElementCtxAny {
-                unimplemented!()
-            }
-
-            fn ctx_mut(&mut self) -> &mut ElementCtxAny {
-                unimplemented!()
-            }
-
             fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
                 unimplemented!()
             }
@@ -306,11 +336,11 @@ impl PartialOrd for WeakElementAny {
 /// Strong reference to an element in the element tree.
 // Yes it's a big fat Rc<RefCell>, deal with it.
 // We don't publicly allow mut access.
-pub struct ElementRc<T: ?Sized>(Rc<RefCell<T>>);
+pub struct ElementRc<T: ?Sized>(Rc<RcCell<ElemBox<T>>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
     fn clone(&self) -> Self {
-        ElementRc(Rc::clone(&self.0))
+        ElementRc(self.0.clone())
     }
 }
 
@@ -326,13 +356,17 @@ impl<T: ?Sized> ElementRc<T> {
     //}
 
     /// Borrows the inner element.
-    pub(crate) fn borrow(&self) -> Ref<T> {
+    pub(crate) fn borrow(&self) -> RcRef<ElemBox<T>> {
         self.0.borrow()
     }
 
     /// Borrows the inner element mutably.
-    pub(crate) fn borrow_mut(&self) -> RefMut<T> {
+    pub(crate) fn borrow_mut(&self) -> RcRefMut<ElemBox<T>> {
         self.0.borrow_mut()
+    }
+
+    pub fn lock_mut(&self) -> ElementMut<T> {
+        ElementMut(self.borrow_mut())
     }
 }
 
@@ -345,7 +379,7 @@ impl<T: Element + ?Sized> ElementRc<T> {
 
     /// Returns the parent of this element, if it has one.
     pub fn parent(&self) -> Option<ElementAny> {
-        self.borrow().ctx().parent.upgrade()
+        self.borrow().ctx.parent.upgrade()
     }
 }
 
@@ -396,7 +430,7 @@ impl<T: Element> ElementRc<T> {
     }
 
     /// Invokes a method on this widget.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(ElementMut<T>) -> R) -> R {
         // TODO don't go through dyn
         self.as_dyn().invoke(move |this| {
             let this = this.downcast_mut().expect("unexpected type of element");
@@ -423,10 +457,10 @@ impl ElementAny {
     /// Invokes a method on this widget.
     ///
     /// Propagates the dirty flags up the tree.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut dyn Element) -> R) -> R {
-        let ref mut inner = *self.borrow_mut();
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(ElementMut<dyn Element>) -> R) -> R {
+        let mut inner = ElementMut(self.borrow_mut());
         let r = f(inner);
-        inner.ctx_mut().propagate_dirty_flags();
+        inner.ctx.propagate_dirty_flags();
         r
     }
 
@@ -434,7 +468,7 @@ impl ElementAny {
     ///
     /// This is called on the root widget of each window.
     pub(crate) fn set_parent_window(&self, window: WeakWindow) {
-        self.borrow_mut().ctx_mut().window = window;
+        self.borrow_mut().ctx.window = window;
     }
 
     /// Returns the parent window of this element.
@@ -448,12 +482,12 @@ impl ElementAny {
             current = parent;
         }
         let current = current.borrow();
-        current.ctx().window.clone()
+        current.ctx.window.clone()
     }
 
     /// Returns the transform of this element.
     pub fn transform(&self) -> Affine {
-        self.borrow().ctx().transform
+        self.borrow().ctx.transform
     }
 
     pub fn measure(&self, layout_input: &LayoutInput) -> Size {
@@ -464,9 +498,9 @@ impl ElementAny {
     /// Invokes layout on this element and its children, recursively.
     pub fn layout(&self, size: Size) -> LayoutOutput {
         let ref mut inner = *self.borrow_mut();
-        inner.ctx_mut().geometry = size;
+        inner.ctx.geometry = size;
         let output = inner.layout(size);
-        inner.ctx_mut().change_flags.remove(ChangeFlags::LAYOUT);
+        inner.ctx.change_flags.remove(ChangeFlags::LAYOUT);
         output
     }
 
@@ -478,7 +512,7 @@ impl ElementAny {
     /// Hit-tests this element and its children.
     pub fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
         let ref mut inner = *self.borrow_mut();
-        let transform = ctx.transform * inner.ctx().transform;
+        let transform = ctx.transform * inner.ctx.transform;
         let local_point = transform.inverse() * point;
         let prev_transform = mem::replace(&mut ctx.transform, transform);
         let hit = inner.hit_test(ctx, local_point);
@@ -492,21 +526,20 @@ impl ElementAny {
     pub fn send_event(&self, ctx: &mut WindowCtx, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
         inner.event(ctx, event);
-        inner.ctx_mut().propagate_dirty_flags();
+        inner.ctx.propagate_dirty_flags();
     }
 
     pub fn paint(&self, parent_ctx: &mut PaintCtx) {
         let ref mut inner = *self.borrow_mut();
-        let ctx = inner.ctx();
-        let transform = ctx.transform;
+        let transform = inner.ctx.transform;
 
         parent_ctx.save();
         // TODO baseline
-        parent_ctx.transform(&transform, ctx.geometry.to_rect(), 0.0);
+        parent_ctx.transform(&transform, inner.ctx.geometry.to_rect(), 0.0);
         inner.paint(parent_ctx);
         parent_ctx.restore();
 
-        inner.ctx_mut().change_flags.remove(ChangeFlags::PAINT);
+        inner.ctx.change_flags.remove(ChangeFlags::PAINT);
     }
 
     pub(crate) fn paint_on_surface(&self, surface: &DrawableSurface, scale_factor: f64) {
@@ -515,11 +548,11 @@ impl ElementAny {
     }
 
     pub fn add_offset(&self, offset: Vec2) {
-        self.borrow_mut().ctx_mut().add_offset(offset);
+        self.borrow_mut().ctx.add_offset(offset);
     }
 
     pub fn set_offset(&self, offset: Vec2) {
-        self.borrow_mut().ctx_mut().set_offset(offset);
+        self.borrow_mut().ctx.set_offset(offset);
     }
 }
 
@@ -686,13 +719,12 @@ impl ElementCtxAny {
     fn propagate_dirty_flags(&mut self) {
         if let Some(parent) = self.parent.upgrade() {
             let mut parent = parent.borrow_mut();
-            let parent_ctx = parent.ctx_mut();
-            if parent_ctx.change_flags.contains(self.change_flags) {
+            if parent.ctx.change_flags.contains(self.change_flags) {
                 // the parent already has the flags, no need to propagate
                 return;
             }
-            parent_ctx.change_flags |= self.change_flags;
-            parent_ctx.propagate_dirty_flags();
+            parent.ctx.change_flags |= self.change_flags;
+            parent.ctx.propagate_dirty_flags();
         }
 
         if let Some(window) = self.window.upgrade() {
@@ -811,7 +843,7 @@ impl<T> DerefMut for ElementCtx<T> {
 ///
 /// Basically this is a wrapper around Rc that provides a `DerefMut` impl since we know it's the
 /// only strong reference to it.
-pub struct ElementBuilder<T>(UniqueRc<RefCell<T>>);
+pub struct ElementBuilder<T>(UniqueRc<RcCell<ElemBox<T>>>);
 
 impl<T: Default + Element> Default for ElementBuilder<T> {
     fn default() -> Self {
@@ -828,10 +860,10 @@ impl<T: Element> EventSource for ElementBuilder<T> {
 impl<T: Element> ElementBuilder<T> {
     /// Creates a new `ElementBuilder` instance.
     pub fn new(inner: T) -> ElementBuilder<T> {
-        let mut urc = UniqueRc::new(RefCell::new(inner));
+        let mut urc = UniqueRc::new(RcCell::new(ElemBox::new(inner)));
         let weak = UniqueRc::downgrade(&urc);
-        urc.get_mut().ctx_mut().weak_this = WeakElement(weak.clone());
-        urc.get_mut().ctx_mut().weak_this_any = weak;
+        urc.get_mut().ctx.weak_this = WeakElement(weak.clone());
+        urc.get_mut().ctx.weak_this_any = weak;
         ElementBuilder(urc)
     }
 
@@ -865,17 +897,17 @@ impl<T: Element> ElementBuilder<T> {
 
     /// Assigns a name to the element, for debugging purposes.
     pub fn debug_name(mut self, name: impl Into<String>) -> Self {
-        self.ctx_mut().name = name.into();
+        self.ctx.name = name.into();
         self
     }
 
     /// Runs the specified function when the element emits the specified event.
     #[track_caller]
-    pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut T, &Event) + 'static) -> Self {
+    pub fn on<Event: 'static>(self, mut f: impl FnMut(ElementMut, &Event) + 'static) -> Self {
         let weak = self.weak();
         self.subscribe(move |_, e| {
             if let Some(this) = weak.upgrade() {
-                this.invoke(|this| {
+                this.lock_mut().this.invoke(|this| {
                     f(this, e);
                 });
                 true
@@ -888,11 +920,11 @@ impl<T: Element> ElementBuilder<T> {
 
     /// Runs the specified function on the widget, and runs it again when it changes.
     #[track_caller]
-    pub fn dynamic(mut self, func: impl FnMut(&mut T) + 'static) -> Self {
+    pub fn dynamic(mut self, func: impl FnMut(ElementMut<T>) + 'static) -> Self {
         fn dynamic_helper<T: Element>(
-            this: &mut T,
+            this: ElementMut<T>,
             weak: WeakElement<T>,
-            mut func: impl FnMut(&mut T) + 'static,
+            mut func: impl FnMut(ElementMut<T>) + 'static,
             caller: &'static Location<'static>,
         ) {
             let (_, deps) = with_tracking_scope(|| func(this));

@@ -17,6 +17,7 @@ pub mod notifier;
 mod paint_ctx;
 pub mod text;
 pub mod theme;
+mod util;
 pub mod window;
 
 // reexports
