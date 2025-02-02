@@ -10,10 +10,11 @@ use crate::window::WeakWindow;
 use crate::{ElementState, PaintCtx};
 use bitflags::bitflags;
 use kurbo::{Affine, Point, Rect, Size, Vec2};
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
@@ -234,6 +235,22 @@ impl<T: Element> ElemBox<T> {
         rc.get_mut().ctx.weak_this = WeakElement(weak.clone());
         rc.get_mut().ctx.weak_this_any = weak.clone();
         rc
+    }
+
+    fn new_cyclic(f: impl FnOnce(WeakElementAny) -> T) -> UniqueRc<RefCell<ElemBox<T>>> {
+        let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit()));
+        // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
+        // because the resulting weak pointer can't be upgraded anyway.
+        let weak: Weak<RefCell<ElemBox<T>>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
+        urc.get_mut().write(ElemBox {
+            ctx: ElementCtxAny::new(),
+            element: f(WeakElement(weak.clone())),
+        });
+        // SAFETY: the value is now initialized
+        let mut urc: UniqueRc<RefCell<ElemBox<T>>> = unsafe { mem::transmute(urc) };
+        urc.get_mut().ctx.weak_this = WeakElement(weak.clone());
+        urc.get_mut().ctx.weak_this_any = weak;
+        urc
     }
 
     fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut ElemBox<T>)) {
@@ -558,8 +575,10 @@ impl ElementAny {
     /// Invokes layout on this element and its children, recursively.
     pub fn layout(&self, size: Size) -> LayoutOutput {
         let ref mut inner = *self.borrow_mut();
-        inner.ctx.geometry = size;
+        inner.ctx.geometry.width = size.width;
+        inner.ctx.geometry.height = size.height;
         let output = inner.layout(size);
+        inner.ctx.geometry.baseline = output.baseline;
         inner.ctx.change_flags.remove(ChangeFlags::LAYOUT);
         output
     }
@@ -597,8 +616,14 @@ impl ElementAny {
         let transform = inner.ctx.transform;
 
         parent_ctx.save();
-        // TODO baseline
-        parent_ctx.transform(&transform, inner.ctx.geometry.to_rect(), 0.0);
+        parent_ctx.transform(
+            &transform,
+            Rect::from_origin_size(
+                Point::ZERO,
+                Size::new(inner.ctx.geometry.width, inner.ctx.geometry.height),
+            ),
+            inner.ctx.geometry.baseline.unwrap_or(0.0),
+        );
         inner.paint(parent_ctx);
         parent_ctx.restore();
 
@@ -621,14 +646,25 @@ impl ElementAny {
 
 /// Trait for elements that can be converted into a `ElementAny`.
 pub trait IntoElementAny {
-    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny;
+    type Element: Element;
+    fn into_element(self, parent: WeakElementAny) -> ElementRc<Self::Element>;
+
+    fn into_element_any(self, parent: WeakElementAny) -> ElementAny
+    where
+        Self: Sized,
+        Self::Element: Sized,
+    {
+        self.into_element(parent).as_dyn()
+    }
 }
 
 impl<T> IntoElementAny for T
 where
     T: Element,
 {
-    fn into_element(self, parent: WeakElementAny, _index_in_parent: usize) -> ElementAny {
+    type Element = T;
+
+    fn into_element(self, parent: WeakElementAny) -> ElementRc<Self> {
         let mut urc = ElemBox::new(self);
         urc.get_mut().ctx.parent = parent;
         ElementRc(UniqueRc::into_rc(urc))
@@ -651,7 +687,7 @@ pub struct ElementCtxAny {
     /// Layout: transform from local to parent coordinates.
     transform: Affine,
     /// Layout: geometry (size and baseline) of this element.
-    geometry: Size,
+    geometry: LayoutOutput,
     /// Name of the element.
     name: String,
     /// Whether the element is focusable via tab-navigation.
@@ -669,7 +705,11 @@ impl ElementCtxAny {
             change_flags: ChangeFlags::NONE,
             window: WeakWindow::default(),
             transform: Affine::default(),
-            geometry: Size::ZERO,
+            geometry: LayoutOutput {
+                width: 0.,
+                height: 0.,
+                baseline: None,
+            },
             name: String::new(),
             focusable: false,
             focused: false,
@@ -690,11 +730,15 @@ impl ElementCtxAny {
     }
 
     pub fn rect(&self) -> Rect {
-        self.geometry.to_rect()
+        self.size().to_rect()
     }
 
     pub fn size(&self) -> Size {
-        self.geometry
+        Size::new(self.geometry.width, self.geometry.height)
+    }
+
+    pub fn baseline(&self) -> f64 {
+        self.geometry.baseline.unwrap_or(0.0)
     }
 
     pub fn transform(&self) -> &Affine {
@@ -868,6 +912,10 @@ impl<T: Element> ElementBuilder<T> {
         ElementBuilder(ElemBox::new(inner))
     }
 
+    pub fn new_cyclic(f: impl FnOnce(WeakElementAny) -> T) -> ElementBuilder<T> {
+        ElementBuilder(ElemBox::new_cyclic(f))
+    }
+
     pub fn weak(&self) -> WeakElement<T> {
         let weak = UniqueRc::downgrade(&self.0);
         WeakElement(weak)
@@ -978,9 +1026,15 @@ impl<T> DerefMut for ElementBuilder<T> {
 }
 
 impl<T: Element> IntoElementAny for ElementBuilder<T> {
-    fn into_element(mut self, parent: WeakElementAny, _index_in_parent: usize) -> ElementAny {
+    type Element = T;
+
+    fn into_element(mut self, parent: WeakElementAny) -> ElementRc<T> {
         self.0.get_mut().ctx.parent = parent;
         ElementRc(UniqueRc::into_rc(self.0))
+    }
+
+    fn into_element_any(self, parent: WeakElementAny) -> ElementAny {
+        self.into_element(parent).as_dyn()
     }
 }
 

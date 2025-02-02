@@ -1,6 +1,6 @@
 use crate::compositor::DrawableSurface;
 use crate::drawing::{place_rect_into, round_to_px, BorderPosition, Image, Paint, Placement, ToSkia};
-use crate::text::TextLayout;
+use crate::text::{TextLayout, TextRun, TextStyle};
 use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Size, Vec2};
 
 /// Paint context.
@@ -64,6 +64,36 @@ impl<'a> PaintCtx<'a> {
     /// This is different from the clip rectangle.
     pub fn bounds(&self) -> Rect {
         self.bounds_stack.last().cloned().unwrap().0
+    }
+
+    /// Returns a mutable reference to the current bounds.
+    pub fn bounds_mut(&mut self) -> &mut Rect {
+        &mut self.bounds_stack.last_mut().unwrap().0
+    }
+
+    /// Pads the current bounds with the specified insets.
+    pub fn pad(&mut self, insets: Insets) {
+        *self.bounds_mut() = *self.bounds_mut() - insets;
+    }
+
+    /// Pads the current bounds with the specified insets.
+    pub fn pad_left(&mut self, left: f64) {
+        self.bounds_mut().x0 += left;
+    }
+
+    /// Pads the current bounds with the specified insets.
+    pub fn pad_right(&mut self, right: f64) {
+        self.bounds_mut().x1 -= right;
+    }
+
+    /// Pads the current bounds with the specified insets.
+    pub fn pad_top(&mut self, top: f64) {
+        self.bounds_mut().y0 += top;
+    }
+
+    /// Pads the current bounds with the specified insets.
+    pub fn pad_bottom(&mut self, bottom: f64) {
+        self.bounds_mut().y1 -= bottom;
     }
 
     /// Returns the current baseline.
@@ -187,8 +217,8 @@ impl<'a> PaintCtx<'a> {
     }
 
     /// Draws text in the current rectangle with the specified alignment.
-    pub fn draw_text(&mut self, placement: impl Into<Placement>, text: impl Into<TextLayout>) {
-        let mut text = text.into();
+    pub fn draw_text(&mut self, placement: impl Into<Placement>, style: &TextStyle, text: &[TextRun]) {
+        let mut text = TextLayout::new(style, text);
         let bounds = self.bounds();
         text.layout(bounds.width());
         let pos = place_rect_into(

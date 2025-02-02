@@ -20,6 +20,28 @@ impl Default for TextStyle<'static> {
     }
 }
 
+pub enum StyleProperty<'a> {
+    FontFamily(&'a str),
+    FontSize(f64),
+    FontWeight(FontWeight),
+    FontStyle(FontStyle),
+    FontStretch(FontStretch),
+    Color(Color),
+}
+
+impl<'a> StyleProperty<'a> {
+    pub fn apply(&self, text_style: &mut TextStyle) {
+        match self {
+            StyleProperty::FontFamily(family) => text_style.font_family = Cow::Owned(family.to_string()),
+            StyleProperty::FontSize(size) => text_style.font_size = *size,
+            StyleProperty::FontWeight(weight) => text_style.font_weight = *weight,
+            StyleProperty::FontStyle(style) => text_style.font_style = *style,
+            StyleProperty::FontStretch(stretch) => text_style.font_stretch = *stretch,
+            StyleProperty::Color(color) => text_style.color = *color,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct FontWeight(pub u16);
 

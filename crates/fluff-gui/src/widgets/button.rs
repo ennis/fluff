@@ -1,22 +1,19 @@
 use crate::colors;
-use kyute::drawing::{BASELINE_CENTER, BorderPosition, vec2};
+use crate::widgets::{TEXT_STYLE, WIDGET_FONT_FAMILY, WIDGET_FONT_SIZE};
+use kyute::drawing::{BASELINE_CENTER, vec2};
 use kyute::element::ElemBox;
 use kyute::element::prelude::*;
-use kyute::elements::Visual;
-use kyute::kurbo::Insets;
 use kyute::text::TextLayout;
 use kyute::{ElementState, Event, IntoElementAny, PaintCtx, Point, Size, text};
-use std::ops::{Add, Sub};
 
 const BUTTON_RADIUS: f64 = 4.;
 const BUTTON_MIN_WIDTH: f64 = 80.;
 const BUTTON_HEIGHT: f64 = 23.;
 const BUTTON_BASELINE: f64 = 16.;
-const BUTTON_FONT_SIZE: f64 = 12.;
 
 pub fn button(label: impl Into<String>) -> impl IntoElementAny {
     let label = label.into();
-    let label = TextLayout::new(text![size(BUTTON_FONT_SIZE) family("Inter") color(colors::STATIC_TEXT) "{label}"]);
+    let label = TextLayout::new(&TEXT_STYLE, text!["{label}"]);
 
     struct ButtonVisual {
         label: TextLayout,

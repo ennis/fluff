@@ -707,7 +707,7 @@ impl<'a> Default for WindowOptions<'a> {
 impl Window {
     /// TODO builder
     pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
-        let root = root.into_element(WeakElementAny::default(), 0);
+        let root = root.into_element_any(WeakElementAny::default());
         let window = with_event_loop_window_target(|event_loop| {
             // the window is initially invisible, we show it after the first frame is painted.
             let mut builder = winit::window::WindowBuilder::new()

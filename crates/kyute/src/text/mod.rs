@@ -6,7 +6,7 @@ use std::cell::OnceCell;
 use std::fmt;
 
 pub use selection::Selection;
-pub use style::{FontStretch, FontStyle, FontWeight, TextStyle};
+pub use style::{FontStretch, FontStyle, FontWeight, StyleProperty, TextStyle};
 pub use text_run::TextRun;
 
 use crate::drawing::ToSkia;
@@ -56,24 +56,25 @@ pub struct TextLayout {
 
 impl Default for TextLayout {
     fn default() -> Self {
-        Self::new(&[])
+        Self::new(&TextStyle::default(), &[])
     }
 }
 
 impl TextLayout {
-    /// Constructs a new text layout from attributed text runs.
-    pub fn new(text: &[TextRun]) -> TextLayout {
+    /// Constructs a new text layout from a default text style and attributed text runs.
+    pub fn new(style: &TextStyle, text: &[TextRun]) -> TextLayout {
         let font_collection = get_font_collection();
-        let mut text_style = skia_safe::textlayout::TextStyle::new();
-        text_style.set_font_size(16.0 as f32); // TODO default font size
         let mut paragraph_style = skia_safe::textlayout::ParagraphStyle::new();
-        paragraph_style.set_text_style(&text_style);
+        paragraph_style.set_text_style(&style.to_skia());
         paragraph_style.set_apply_rounding_hack(false);
         let mut builder = skia_safe::textlayout::ParagraphBuilder::new(&paragraph_style, font_collection);
 
         for run in text.into_iter() {
-            let style = run.style.to_skia();
-            builder.push_style(&style);
+            let mut style = style.clone();
+            for prop in run.styles {
+                prop.apply(&mut style);
+            }
+            builder.push_style(&style.to_skia());
             builder.add_text(&run.str);
             builder.pop();
         }
@@ -114,7 +115,7 @@ impl TextLayout {
 
 impl<'a, const N: usize> From<&'a [TextRun<'a>; N]> for TextLayout {
     fn from(runs: &'a [TextRun; N]) -> Self {
-        TextLayout::new(runs)
+        TextLayout::new(&TextStyle::default(), runs)
     }
 }
 

@@ -9,4 +9,4 @@ pub const STATIC_BACKGROUND: Color = rgb(26, 26, 26);
 pub const STATIC_TEXT: Color = rgb(171, 168, 160);
 
 pub const BUTTON_BACKGROUND: Color = rgb(37, 37, 37);
-pub const BUTTON_BEVEL: Color = rgb(100, 100, 95);
+pub const BUTTON_BEVEL: Color = rgb(80, 80, 75);

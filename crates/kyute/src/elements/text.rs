@@ -3,10 +3,10 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, HitTestCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::text::{TextLayout, TextRun};
+use crate::text::{TextLayout, TextRun, TextStyle};
 use crate::PaintCtx;
 
 /// A run of styled text.
@@ -35,8 +35,8 @@ impl Text {
         })
     }
 
-    pub fn set_text(&mut self, text: &[TextRun]) {
-        let paragraph = TextLayout::new(text).inner;
+    pub fn set_text(&mut self, text_style: &TextStyle, text: &[TextRun]) {
+        let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
         self.ctx.mark_needs_layout();
     }

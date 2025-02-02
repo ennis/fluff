@@ -1,26 +1,26 @@
 //! Macro to create styled text runs.
 
-use crate::element::{ElementAny, IntoElementAny, WeakElementAny};
+use crate::element::{ElementRc, IntoElementAny, WeakElementAny};
 use crate::elements::text::Text;
-use crate::text::TextStyle;
+use crate::text::StyleProperty;
 
 /// String slice with associated style attributes.
 #[derive(Copy, Clone)]
 pub struct TextRun<'a> {
     pub str: &'a str,
-    pub style: &'a TextStyle<'a>,
+    pub styles: &'a [StyleProperty<'a>],
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __text {
-    // Parse styles
+    /*// Parse styles
     (@style($s:ident) rgb ($($p:expr),*) ) => {
-        $s.color = $crate::Color::from_rgb_u8($($p),*);
+        $crate::text::StyleProperty::Color($crate::Color::from_rgb_u8($($p),*)),
     };
 
     (@style($s:ident) color ($f:expr) ) => {
-        $s.color = $f;
+        $crate::text::StyleProperty::Color($f),
     };
 
     (@style($s:ident) hexcolor ($f:expr) ) => {
@@ -70,7 +70,7 @@ macro_rules! __text {
     (@apply_styles($s:ident) ( $(($($styles:tt)*))* ) $($rest:tt)* ) => {
          $crate::__text!(@apply_styles($s) $($rest)*);
          $($crate::__text!(@style($s) $($styles)*);)*
-    };
+    };*/
 
     ////////////////////
     // finish rule
@@ -83,18 +83,20 @@ macro_rules! __text {
         // string parts with their associated styles
         // TODO document format of styles
         ($(
-            ($part:literal, $($styles:tt)* )
+            ($part:literal, $(($($styles:tt)*))* )
         )*)
     ) => {
         &[
             $(
             $crate::text::TextRun {
                 str: &*$crate::text::cow_format_args(::std::format_args!($part)),
-                style: &{
-                    let mut __s = $crate::text::TextStyle::default();
-                    $crate::__text!(@apply_styles(__s) $($styles)*);
-                    __s
-                }
+                styles: &[
+                    $($crate::text::StyleProperty::$($styles)*),*
+                ],
+                //    let mut __s = $crate::text::TextStyle::default();
+                //    $crate::__text!(@apply_styles(__s) $($styles)*);
+                //    __s
+                //}
             },
             )*
         ]
@@ -106,12 +108,12 @@ macro_rules! __text {
         // input
         ( @pop $($r:tt)* )
         // output
-        ( ($($sty_top:tt)*) $(($($sty_rest:tt)*))* )
+        ( ($($sty_top:tt)*) $($sty_rest:tt)* )
         ($($ranges:tt)*)
     ) => {
         $crate::__text!(
             ($($r)*)
-            ($(($($sty_rest)*))*)
+            ($($sty_rest)*)
             ($($ranges)*)
         )
     };
@@ -122,14 +124,14 @@ macro_rules! __text {
         // input
         ( $str:literal $($r:tt)* )
         // output
-        ( $(($($sty:tt)*))*)
+        ( ($($sty_top:tt)*) $($sty_rest:tt)* )
         ( $($ranges:tt)* )
 
     ) => {
         $crate::__text!(
             ($($r)*)
-            ( $(($($sty)*))*)
-            ( $($ranges)* ( $str, $(($($sty)*))* ))
+            ( ( $($sty_top)* ) $($sty_rest)* )
+            ( $($ranges)* ( $str, $($sty_top)* ) )
         )
     };
 
@@ -139,12 +141,12 @@ macro_rules! __text {
         // input
         ( $m:ident ($($mp:expr),*) $($r:tt)* )
         // output
-        ( ($($cur_style:tt)*) $($style_stack:tt)*)
+        ( ($($sty_top:tt)*) $($sty_rest:tt)*)
         ( $($ranges:tt)* )
     ) => {
         $crate::__text!(
             ($($r)*)
-            ( ( $($cur_style)* ($m ($($mp),*)) ) $($style_stack)*)
+            ( ( $($sty_top)* ($m ($($mp),*)) ) $($sty_rest)* )
             ($($ranges)*)
         )
     };
@@ -155,66 +157,33 @@ macro_rules! __text {
         // input
         ( $m:ident $($r:tt)* )
         // output
-        ( ($($cur_style:tt)*) $($style_stack:tt)*)
+        ( ($($sty_top:tt)*) $($sty_rest:tt)*)
         ($($ranges:tt)*)
     ) => {
 
         $crate::__text!(
             ($($r)*)
-            ( ( $($cur_style)* ($m) ) $($style_stack)*)
+            ( ( $($sty_top)* ($m) ) $($sty_rest)* )
             ($($ranges)*)
         )
     };
-
-    ////////////////////
-    // color modifier (literal ver.)
-    (
-        // input
-        ( # $color:literal $($r:tt)* )
-        // output
-        ($($style_stack:tt)*)
-        ($($ranges:tt)*)
-    ) => {
-
-        $crate::__text!(
-            (hexcolor(::std::stringify!($color)) $($r)*)
-            ($($style_stack)*)
-            ($($ranges)*)
-        )
-    };
-
-
-    ////////////////////
-    // color modifier (ident ver. when the color starts with a letter...)
-    (
-        // input
-        ( # $color:ident $($r:tt)* )
-        // output
-        ($($style_stack:tt)*)
-        ($($ranges:tt)*)
-    ) => {
-
-        $crate::__text!(
-            (hexcolor(::std::stringify!($color)) $($r)*)
-            ($($style_stack)*)
-            ($($ranges)*)
-        )
-    };
-
 
     ////////////////////
     // block start
     (
         // input
         ( { $($inner:tt)* } $($r:tt)* )
+
         // output
-        ($($style_stack:tt)*)
+        // ( $( ( $( ($style) )*) )* )
+        ( ($($sty_top:tt)*) $($sty_rest:tt)*)
         ($($ranges:tt)*)
     )
     => {
         $crate::__text!(
             ( $($inner)* @pop $($r)* )
-            (() $($style_stack)*)
+            // duplicate the top of the stack
+            (($($sty_top)*) ($($sty_top)*) $($sty_rest)*)
             ($($ranges)*)
         )
     };
@@ -228,7 +197,7 @@ macro_rules! __text {
 /// Macro that expands to an array of styled `TextRun`s (`&[TextRun<'_>]`).
 ///
 /// Note that this macro, like `format_args!`, borrows temporaries, so you may not be able to assign
-/// the result to a variable. However, you can use it with methods that accept &[TextRun<'_>].
+/// the result to a variable. However, you can use it with methods that accept `&[TextRun<'_>]`.
 ///
 /// # Syntax
 /// TODO
@@ -238,7 +207,7 @@ macro_rules! __text {
 /// ```
 /// use kyute::text;
 ///
-/// text! [ size(20.0) "Hello, world!" { b "test" } ];
+/// text! [ FontSize(20.) "Hello, world!" { FontWeight(FontWeight::BOLD) "test" } ];
 /// ```
 #[macro_export]
 macro_rules! text {
@@ -253,8 +222,13 @@ macro_rules! text {
     };
 }
 
+/*fn test() {
+    text! [ FontSize(20.0) "Hello, world!" { FontWeight() "test" } ];
+}*/
+
 impl<const N: usize> IntoElementAny for &[TextRun<'_>; N] {
-    fn into_element(self, parent: WeakElementAny, index_in_parent: usize) -> ElementAny {
-        Text::new(self).into_element(parent, index_in_parent)
+    type Element = Text;
+    fn into_element(self, parent: WeakElementAny) -> ElementRc<Text> {
+        Text::new(self).into_element(parent)
     }
 }

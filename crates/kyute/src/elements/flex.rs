@@ -1,6 +1,4 @@
-use crate::element::{
-    ElemBox, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
-};
+use crate::element::{ElemBox, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
 use crate::model::with_tracking_scope;
@@ -111,7 +109,7 @@ impl Flex {
     #[must_use]
     pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
         let weak_any = self.weak_any();
-        self.children.push(FlexChild::new(child.into_element(weak_any, 0)));
+        self.children.push(FlexChild::new(child.into_element_any(weak_any)));
         self
     }
 
@@ -123,7 +121,7 @@ impl Flex {
     ) -> ElementBuilder<Self> {
         let weak_any = self.weak_any();
         self.children.push(FlexChild {
-            element: child.element.into_element(weak_any, 0),
+            element: child.element.into_element_any(weak_any),
             flex: child.flex,
             margin_before: child.margin_before,
             margin_after: child.margin_after,

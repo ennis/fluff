@@ -1,8 +1,6 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{
-    ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WindowCtx,
-};
+use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WindowCtx};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
@@ -143,7 +141,7 @@ impl Frame {
     #[must_use]
     pub fn content(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
         let weak_self = self.weak_any();
-        self.content = Some(child.into_element(weak_self, 0));
+        self.content = Some(child.into_element_any(weak_self));
         self
     }
 

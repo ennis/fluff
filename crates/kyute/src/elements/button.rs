@@ -7,7 +7,6 @@ use crate::elements::flex::Flex;
 use crate::elements::frame::{Frame, FrameStyle, FrameStyleOverride};
 use crate::elements::HoveredEvent;
 use crate::layout::SizeValue;
-use crate::text::TextStyle;
 use crate::theme::DARK_THEME;
 use crate::{text, Color};
 
@@ -52,21 +51,15 @@ fn button_style() -> FrameStyle {
 pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
     let label = label.into();
     let theme = &DARK_THEME;
-    let text_style = TextStyle::new()
-        .font_size(theme.font_size)
-        .font_family(theme.font_family)
-        .color(Color::from_hex("ffe580"));
 
     Frame::new()
         .style(button_style())
         .padding(4.0)
         .width(SizeValue::MaxContent)
         .min_width(80)
-        .content(
-            Flex::row()
-                .gaps(SizeValue::Stretch, 0, SizeValue::Stretch)
-                .child(text!( style(text_style) "{label}" )),
-        )
+        .content(Flex::row().gaps(SizeValue::Stretch, 0, SizeValue::Stretch).child(
+            text!( FontSize(theme.font_size) FontFamily(theme.font_family) Color(Color::from_hex("ffe580")) "{label}" ),
+        ))
         .on(|button, HoveredEvent(hovered)| {
             if *hovered {
                 button.set_background_color(Color::from_hex("474029"));
