@@ -1,12 +1,14 @@
 use keyboard_types::Key;
 use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
+use std::cell::RefCell;
 use std::time::Duration;
 use tracing::{info, trace_span};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{ElemBox, Element, ElementBuilder, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, ElementCtxAny, HitTestCtx, WindowCtx};
+use crate::elements::ElementId;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
@@ -53,7 +55,10 @@ pub enum TextOverflow {
     Clip,
 }
 
-impl TextEdit {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct BlinkEvent;
+
+impl TextEditBase {
     fn rebuild_paragraph(&mut self) {
         let font_collection = get_font_collection();
         let mut text_style = skia_safe::textlayout::TextStyle::new();
@@ -283,8 +288,9 @@ enum Gesture {
 }
 
 /// Single- or multiline text editor.
-pub struct TextEdit {
-    selection_changed: Notifier<Selection>,
+pub struct TextEditBase {
+    id: ElementId,
+    //selection_changed: Notifier<Selection>,
     text: String,
     selection: Selection,
     text_style: TextStyle<'static>,
@@ -304,10 +310,10 @@ pub struct TextEdit {
     blink_pending_reset: bool,
 }
 
-impl TextEdit {
-    pub fn new() -> ElementBuilder<TextEdit> {
-        let mut text_edit = ElementBuilder::new(TextEdit {
-            selection_changed: Default::default(),
+impl TextEditBase {
+    pub fn new(id: ElementId) -> TextEditBase {
+        TextEditBase {
+            id,
             text: String::new(),
             selection: Selection::empty(0),
             text_style: TextStyle::default(),
@@ -325,13 +331,10 @@ impl TextEdit {
             blink_phase: true,
             blink_pending_reset: false,
             gesture: None,
-        });
-
-        text_edit.reset_blink_cursor();
-        text_edit
+        }
     }
 
-    pub fn reset_blink_cursor(self: &mut ElemBox<Self>) {
+    /*pub fn reset_blink_cursor(self: &mut ElemBox<Self>) {
         if self.blink_pending_reset {
             return;
         }
@@ -358,40 +361,40 @@ impl TextEdit {
             self.ctx.mark_needs_paint();
         }
         let caret_blink_time = AppGlobals::get().caret_blink_time();
-        self.run_after(caret_blink_time, TextEdit::blink_cursor);
-    }
+        self.run_after(caret_blink_time, TextEditBase::blink_cursor);
+    }*/
 
-    pub fn set_wrap_mode(self: &mut ElemBox<Self>, wrap_mode: WrapMode) {
+    pub fn set_wrap_mode(&mut self, ctx: &mut ElementCtxAny, wrap_mode: WrapMode) {
         if self.wrap_mode != wrap_mode {
             self.wrap_mode = wrap_mode;
             self.rebuild_paragraph();
             self.relayout = true;
-            self.ctx.mark_needs_layout();
+            ctx.mark_needs_layout();
         }
     }
 
-    pub fn set_max_lines(self: &mut ElemBox<Self>, max_lines: usize) {
+    pub fn set_max_lines(&mut self, ctx: &mut ElementCtxAny, max_lines: usize) {
         self.line_clamp = Some(max_lines);
         self.rebuild_paragraph();
         self.relayout = true;
-        self.ctx.mark_needs_layout();
+        ctx.mark_needs_layout();
     }
 
-    pub fn set_text_align(self: &mut ElemBox<Self>, align: TextAlign) {
+    pub fn set_text_align(&mut self, ctx: &mut ElementCtxAny, align: TextAlign) {
         if self.align != align {
             self.align = align;
             self.rebuild_paragraph();
             self.relayout = true;
-            self.ctx.mark_needs_layout();
+            ctx.mark_needs_layout();
         }
     }
 
-    pub fn set_overflow(self: &mut ElemBox<Self>, overflow: TextOverflow) {
+    pub fn set_overflow(&mut self, ctx: &mut ElementCtxAny, overflow: TextOverflow) {
         if self.text_overflow != overflow {
             self.text_overflow = overflow;
             self.rebuild_paragraph();
             self.relayout = true;
-            self.ctx.mark_needs_layout();
+            ctx.mark_needs_layout();
         }
     }
 
@@ -402,25 +405,25 @@ impl TextEdit {
         self.ctx.mark_needs_paint();
     }*/
 
-    pub fn set_caret_color(self: &mut ElemBox<Self>, color: Color) {
+    pub fn set_caret_color(&mut self, ctx: &mut ElementCtxAny, color: Color) {
         if self.caret_color != color {
             self.caret_color = color;
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
-    pub fn set_selection_color(self: &mut ElemBox<Self>, color: Color) {
+    pub fn set_selection_color(&mut self, ctx: &mut ElementCtxAny, color: Color) {
         if self.selection_color != color {
             self.selection_color = color;
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
-    pub fn set_text_style(self: &mut ElemBox<Self>, text_style: TextStyle) {
+    pub fn set_text_style(&mut self, ctx: &mut ElementCtxAny, text_style: TextStyle) {
         self.text_style = text_style.into_static();
         self.rebuild_paragraph();
         self.relayout = true;
-        self.ctx.mark_needs_layout();
+        ctx.mark_needs_layout();
     }
 
     /// Returns the current selection.
@@ -429,10 +432,10 @@ impl TextEdit {
     }
 
     /// Sets the current selection.
-    pub fn set_selection(self: &mut ElemBox<Self>, selection: Selection) -> bool {
+    pub fn set_selection(&mut self, ctx: &mut ElementCtxAny, selection: Selection) -> bool {
         // TODO clamp selection to text length
         if self.set_selection_inner(selection) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
             true
         } else {
             false
@@ -445,13 +448,13 @@ impl TextEdit {
     }
 
     /// Sets the current text.
-    pub fn set_text(self: &mut ElemBox<Self>, text: impl Into<String>) {
+    pub fn set_text(&mut self, ctx: &mut ElementCtxAny, text: impl Into<String>) {
         // TODO we could compare the previous and new text
         // to relayout only affected lines.
         self.text = text.into();
         self.rebuild_paragraph();
         self.relayout = true;
-        self.ctx.mark_needs_layout();
+        ctx.mark_needs_layout();
     }
 
     pub fn text_position_for_point(&self, point: Point) -> usize {
@@ -459,18 +462,18 @@ impl TextEdit {
     }
 
     /// NOTE: valid only after first layout.
-    pub fn set_cursor_at_point(self: &mut ElemBox<Self>, point: Point, keep_anchor: bool) -> bool {
+    pub fn set_cursor_at_point(&mut self, ctx: &mut ElementCtxAny, point: Point, keep_anchor: bool) -> bool {
         if self.set_cursor_at_point_inner(point, keep_anchor) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
             true
         } else {
             false
         }
     }
 
-    pub fn select_word_under_cursor(self: &mut ElemBox<Self>) {
+    pub fn select_word_under_cursor(&mut self, ctx: &mut ElementCtxAny) {
         if self.select_word_under_cursor_inner() {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
@@ -507,34 +510,34 @@ impl TextEdit {
     }*/
 
     /// Moves the cursor to the next or previous word boundary.
-    pub fn move_cursor_to_next_word(self: &mut ElemBox<Self>, keep_anchor: bool) {
+    pub fn move_cursor_to_next_word(&mut self, ctx: &mut ElementCtxAny, keep_anchor: bool) {
         if self.move_cursor_to_next_word_inner(keep_anchor) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_prev_word(self: &mut ElemBox<Self>, keep_anchor: bool) {
+    pub fn move_cursor_to_prev_word(&mut self, ctx: &mut ElementCtxAny, keep_anchor: bool) {
         if self.move_cursor_to_prev_word_inner(keep_anchor) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_next_grapheme(self: &mut ElemBox<Self>, keep_anchor: bool) {
+    pub fn move_cursor_to_next_grapheme(&mut self, ctx: &mut ElementCtxAny, keep_anchor: bool) {
         if self.move_cursor_to_next_grapheme_inner(keep_anchor) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
-    pub fn move_cursor_to_prev_grapheme(self: &mut ElemBox<Self>, keep_anchor: bool) {
+    pub fn move_cursor_to_prev_grapheme(&mut self, ctx: &mut ElementCtxAny, keep_anchor: bool) {
         if self.move_cursor_to_prev_grapheme_inner(keep_anchor) {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
     /// Selects the line under the cursor.
-    pub fn select_line_under_cursor(self: &mut ElemBox<Self>) {
+    pub fn select_line_under_cursor(&mut self, ctx: &mut ElementCtxAny) {
         if self.select_line_under_cursor_inner() {
-            self.ctx.mark_needs_paint();
+            ctx.mark_needs_paint();
         }
     }
 
@@ -554,7 +557,7 @@ impl TextEdit {
 // - truncate text (with ellipsis)
 // - become scrollable
 
-impl Element for TextEdit {
+impl Element for TextEditBase {
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("TextEdit::measure",).entered();
 
@@ -578,7 +581,7 @@ impl Element for TextEdit {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ectx: &mut ElementCtxAny, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
 
         ctx.save();
@@ -598,7 +601,7 @@ impl Element for TextEdit {
             ctx.canvas().draw_rect(text_box.rect, &selection_paint);
         }
 
-        if self.ctx.has_focus() && (self.blink_phase || self.blink_pending_reset) {
+        if ectx.has_focus() && (self.blink_phase || self.blink_pending_reset) {
             if let Some(info) = self.paragraph.get_glyph_cluster_at(self.selection.end) {
                 let caret_rect = Rect::from_origin_size(
                     Point::new((info.bounds.left as f64).round(), (info.bounds.top as f64).round()),
@@ -613,7 +616,7 @@ impl Element for TextEdit {
         ctx.restore();
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {
         let mut selection_changed = false;
 
         match event {
@@ -622,7 +625,7 @@ impl Element for TextEdit {
                 eprintln!("[text_edit] pointer down: {:?}", pos);
                 if event.repeat_count == 2 {
                     // select word under cursor
-                    self.select_word_under_cursor();
+                    self.select_word_under_cursor(ctx);
                     selection_changed = true;
                     self.gesture = Some(Gesture::WordSelection {
                         anchor: self.selection(),
@@ -630,12 +633,12 @@ impl Element for TextEdit {
                 } else if event.repeat_count == 3 {
                     // TODO select line under cursor
                 } else {
-                    selection_changed |= self.set_cursor_at_point(pos, false);
+                    selection_changed |= self.set_cursor_at_point(ctx, pos, false);
                     self.gesture = Some(Gesture::CharacterSelection);
                 }
-                self.reset_blink_cursor();
-                self.ctx.set_focus();
-                self.ctx.set_pointer_capture();
+                //self.reset_blink_cursor();
+                ctx.set_focus();
+                ctx.set_pointer_capture();
             }
             Event::PointerMove(event) => {
                 //eprintln!("pointer move point: {:?}", event.local_position());
@@ -643,14 +646,14 @@ impl Element for TextEdit {
 
                 match self.gesture {
                     Some(Gesture::CharacterSelection) => {
-                        selection_changed |= self.set_cursor_at_point(pos, true);
-                        self.reset_blink_cursor();
+                        selection_changed |= self.set_cursor_at_point(ctx, pos, true);
+                        //self.reset_blink_cursor();
                     }
                     Some(Gesture::WordSelection { anchor }) => {
                         let text_offset = self.text_position_for_point(pos);
                         let word_selection = self.word_selection_at_text_position(text_offset);
-                        selection_changed |= self.set_selection(add_selections(anchor, word_selection));
-                        self.reset_blink_cursor();
+                        selection_changed |= self.set_selection(ctx, add_selections(anchor, word_selection));
+                        //self.reset_blink_cursor();
                     }
                     _ => {}
                 }
@@ -660,11 +663,11 @@ impl Element for TextEdit {
             }
             Event::FocusGained => {
                 eprintln!("focus gained");
-                self.reset_blink_cursor();
+                //self.reset_blink_cursor();
             }
             Event::FocusLost => {
                 eprintln!("focus lost");
-                selection_changed |= self.set_selection(Selection::empty(0));
+                selection_changed |= self.set_selection(ctx, Selection::empty(0));
             }
             Event::KeyDown(event) => {
                 let keep_anchor = event.modifiers.shift();
@@ -673,21 +676,21 @@ impl Element for TextEdit {
                     Key::ArrowLeft => {
                         // TODO bidi?
                         if word_nav {
-                            self.move_cursor_to_prev_word(keep_anchor);
+                            self.move_cursor_to_prev_word(ctx, keep_anchor);
                         } else {
-                            self.move_cursor_to_prev_grapheme(keep_anchor);
+                            self.move_cursor_to_prev_grapheme(ctx, keep_anchor);
                         }
                         selection_changed = true;
-                        self.reset_blink_cursor();
+                        //self.reset_blink_cursor();
                     }
                     Key::ArrowRight => {
                         if word_nav {
-                            self.move_cursor_to_next_word(keep_anchor);
+                            self.move_cursor_to_next_word(ctx, keep_anchor);
                         } else {
-                            self.move_cursor_to_next_grapheme(keep_anchor);
+                            self.move_cursor_to_next_grapheme(ctx, keep_anchor);
                         }
                         selection_changed = true;
-                        self.reset_blink_cursor();
+                        //self.reset_blink_cursor();
                     }
                     Key::Character(ref s) => {
                         // TODO don't do this, emit the changed text instead
@@ -699,8 +702,8 @@ impl Element for TextEdit {
                         self.relayout = true;
                         self.selection = Selection::empty(selection.min() + s.len());
                         selection_changed = true;
-                        self.ctx.mark_needs_layout();
-                        self.reset_blink_cursor();
+                        ctx.mark_needs_layout();
+                        //self.reset_blink_cursor();
                     }
                     _ => {}
                 }
@@ -709,8 +712,8 @@ impl Element for TextEdit {
         }
 
         if selection_changed {
-            self.ctx.mark_needs_paint();
-            self.selection_changed.invoke(self.selection());
+            ctx.mark_needs_paint();
+            //self.selection_changed.invoke(self.selection());
         }
     }
 }

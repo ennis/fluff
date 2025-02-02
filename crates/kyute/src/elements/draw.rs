@@ -79,7 +79,13 @@ where
     V: Visual + 'static,
 {
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
-        self.visual.layout(layout_input)
+        // TODO
+        //self.visual.layout(layout_input)
+        Size::new(
+            self.width.unwrap_or(layout_input.width.available().unwrap_or_default()),
+            self.height
+                .unwrap_or(layout_input.height.available().unwrap_or_default()),
+        )
     }
 
     fn layout(&mut self, size: Size) -> LayoutOutput {
@@ -100,7 +106,7 @@ where
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, elem_ctx: &mut ElementCtxAny, paint_ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
         self.draw_subscription.unsubscribe();
@@ -108,16 +114,16 @@ where
         // run the draw function within a tracking scope to collect the list of dependencies
         // (models that we read from).
         let (_, deps) = with_tracking_scope(|| {
-            self.visual.paint(ctx);
+            self.visual.paint(paint_ctx);
         });
 
         // subscribe again to changes
-        self.draw_subscription = self.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
+        self.draw_subscription = elem_ctx.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
             this.ctx.mark_needs_paint();
         });
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {
+    fn event(&mut self, _ctx: &mut ElementCtxAny, _event: &mut Event) {
         // TODO
         //self.visual.event(&mut self.ctx, event);
     }

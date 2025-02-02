@@ -4,7 +4,7 @@ use crate::widgets::{INPUT_WIDTH, TEXT_STYLE, WIDGET_BASELINE, WIDGET_LINE_HEIGH
 use kyute::drawing::{BASELINE_LEFT, RIGHT_CENTER, place, point, vec2};
 use kyute::element::prelude::*;
 use kyute::element::{ElemBox, ElementRc};
-use kyute::elements::TextEdit;
+use kyute::elements::TextEditBase;
 use kyute::elements::draw::Visual;
 use kyute::kurbo::Insets;
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
@@ -66,7 +66,7 @@ pub struct SpinnerBase {
     // This would be easier if we had exclusive ownership of the text edit,
     // but there are several considerations to take into account:
     // -
-    text_edit: ElementRc<TextEdit>,
+    text_edit: ElementRc<TextEditBase>,
 }
 
 impl SpinnerBase {
@@ -177,7 +177,7 @@ impl Element for SpinnerBase {
 
 impl SpinnerBase {
     pub fn new() -> ElementBuilder<Self> {
-        let text_edit = TextEdit::new();
+        let text_edit = TextEditBase::new();
 
         ElementBuilder::new_cyclic(|weak_this| SpinnerBase {
             value: 0.,

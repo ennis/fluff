@@ -1404,3 +1404,24 @@ Considerations:
 - an attainable goal would be to make a macro for more concisely specifying shapes and fills and groups, like SVG
     - basically, a macro to produce an inline representation of SVG, with parameters interpolated from the surrounding
       context
+
+# Things to look for before delegation
+
+Main issue: the elements don't have an identity until they are inserted in the tree.
+
+- any use of `run_later`, `subscribe` outside of `Element` methods
+    - possible replacement: it's tricky; basically the target of the callback will be the host element, which may be
+      different
+      somehow the host element must forward the callback to the delegated element
+        - but then, it's impossible to determine which delegated element is the target, since they have no identity (
+          they all share the identity of the host element)
+    - compromise:
+        - elements can `emit` events via the context, but the source will be the host element
+            - for example, the TextEdit will emit "blink", but the host will need to make the cursor blink manually
+            - for buttons, mostly OK
+        - problem: identifying which delegated element emits the event
+            - for example: one widget that holds two buttons
+            - each button can emit the "Clicked" event, but impossible to determine which button was clicked in the
+              handler (since the source is the same)
+                - solution: add an ID to the button
+        

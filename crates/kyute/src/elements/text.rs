@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
@@ -11,7 +11,6 @@ use crate::PaintCtx;
 
 /// A run of styled text.
 pub struct Text {
-    ctx: ElementCtx<Self>,
     paragraph: textlayout::Paragraph,
 }
 
@@ -27,18 +26,15 @@ impl Text {
     ///
     /// let text = Text::new(text![size(20.0) "Hello, " { b "world!" }]);
     /// ```
-    pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
+    pub fn new(text: impl Into<TextLayout>) -> Text {
         let paragraph = text.into().inner;
-        ElementBuilder::new(Text {
-            ctx: ElementCtx::new(),
-            paragraph,
-        })
+        Text { paragraph }
     }
 
-    pub fn set_text(&mut self, text_style: &TextStyle, text: &[TextRun]) {
+    pub fn set_text(&mut self, ctx: &mut ElementCtxAny, text_style: &TextStyle, text: &[TextRun]) {
         let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
-        self.ctx.mark_needs_layout();
+        ctx.mark_needs_layout();
     }
 }
 
@@ -64,13 +60,13 @@ impl Element for Text {
         output
     }
 
-    fn hit_test(&self, _ctx: &mut HitTestCtx, point: Point) -> bool {
-        self.ctx.rect().contains(point)
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _ectx: &mut ElementCtxAny, ctx: &mut PaintCtx) {
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {}
+    fn event(&mut self, _ectx: &mut ElementCtxAny, _event: &mut Event) {}
 }

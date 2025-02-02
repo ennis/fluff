@@ -1,8 +1,8 @@
-use crate::element::{ElemBox, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WeakElementAny};
-use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
+use crate::element::{ElemBox, ElementAny, ElementBuilder, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny};
+use crate::layout::flex::{flex_layout, flex_measure, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
 use crate::model::with_tracking_scope;
-use crate::{Element, PaintCtx};
+use crate::{Element, Event, PaintCtx};
 use kurbo::{Point, Size};
 use tracing::trace_span;
 
@@ -67,24 +67,25 @@ pub struct Flex {
 }
 
 impl Flex {
-    pub fn new() -> ElementBuilder<Self> {
-        ElementBuilder::new(Flex {
+    pub fn new() -> Flex {
+        Flex {
             direction: Axis::Vertical,
             gap: SizeValue::Fixed(0.0),
             initial_gap: SizeValue::Fixed(0.0),
             final_gap: SizeValue::Fixed(0.0),
             children: Vec::new(),
-        })
+        }
     }
 
-    pub fn row() -> ElementBuilder<Self> {
+    pub fn row() -> Self {
         Self::new().direction(Axis::Horizontal)
     }
 
-    pub fn column() -> ElementBuilder<Self> {
+    pub fn column() -> Self {
         Self::new().direction(Axis::Vertical)
     }
 
+    /*
     fn update_dynamic_children(self: &mut ElemBox<Self>, mut children: impl DynamicFlexChildren + 'static) {
         let (_, deps) = with_tracking_scope(|| children.update(self.ctx.weak_any(), &mut self.children));
         self.ctx.mark_needs_layout();
@@ -103,71 +104,67 @@ impl Flex {
     ) -> ElementBuilder<Self> {
         self.update_dynamic_children(children);
         self
-    }
+    }*/
 
     /// Adds a child element to the flex layout.
     #[must_use]
-    pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
-        let weak_any = self.weak_any();
-        self.children.push(FlexChild::new(child.into_element_any(weak_any)));
+    pub fn child(mut self, child: impl Element) -> Self {
+        self.children.push(FlexChild::new(child));
         self
     }
 
     /// Adds a child element to the flex layout with additional layout options.
     #[must_use]
-    pub fn flex_child(
-        mut self: ElementBuilder<Self>,
-        child: FlexChildBuilder<impl IntoElementAny>,
-    ) -> ElementBuilder<Self> {
-        let weak_any = self.weak_any();
+    pub fn flex_child(mut self, child: FlexChildBuilder<impl Element>) -> Self {
         self.children.push(FlexChild {
-            element: child.element.into_element_any(weak_any),
+            element: Box::new(child.element),
             flex: child.flex,
             margin_before: child.margin_before,
             margin_after: child.margin_after,
             cross_axis_alignment: Default::default(),
+            bounds: Default::default(),
         });
         self
     }
 
     /// Specifies a vertical layout direction.
     #[must_use]
-    pub fn vertical(mut self: ElementBuilder<Self>) -> ElementBuilder<Self> {
+    pub fn vertical(mut self) -> Self {
         self.direction = Axis::Vertical;
         self
     }
 
     /// Specifies a horizontal layout direction.
     #[must_use]
-    pub fn horizontal(mut self: ElementBuilder<Self>) -> ElementBuilder<Self> {
+    pub fn horizontal(mut self) -> Self {
         self.direction = Axis::Horizontal;
         self
     }
 
     /// Specifies layout direction.
     #[must_use]
-    pub fn direction(mut self: ElementBuilder<Self>, dir: Axis) -> ElementBuilder<Self> {
+    pub fn direction(mut self, dir: Axis) -> Self {
         self.direction = dir;
         self
     }
 
     /// Specifies the gap between items in the layout direction.
     #[must_use]
-    pub fn gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn gap(mut self, value: impl Into<SizeValue>) -> Self {
         self.gap = value.into();
         self
     }
 
     /// Specifies the initial gap before the first item in the layout direction.
     #[must_use]
-    pub fn initial_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn initial_gap(mut self, value: impl Into<SizeValue>) -> Self {
         self.initial_gap = value.into();
         self
     }
 
     /// Specifies the final gap after the last item in the layout direction.
     #[must_use]
-    pub fn final_gap(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn final_gap(mut self, value: impl Into<SizeValue>) -> Self {
         self.final_gap = value.into();
         self
     }
@@ -175,11 +172,11 @@ impl Flex {
     /// Sets the initial, inter-element and final gaps.
     #[must_use]
     pub fn gaps(
-        mut self: ElementBuilder<Self>,
+        mut self,
         initial_gap: impl Into<SizeValue>,
         inter_element_gap: impl Into<SizeValue>,
         final_gap: impl Into<SizeValue>,
-    ) -> ElementBuilder<Self> {
+    ) -> Self {
         self.initial_gap = initial_gap.into();
         self.gap = inter_element_gap.into();
         self.final_gap = final_gap.into();
@@ -188,11 +185,18 @@ impl Flex {
 }
 
 impl Element for Flex {
+    fn children(&self) -> Vec<ElementAny> {
+        self.children
+            .iter()
+            .map(|child| child.element.children())
+            .flatten()
+            .collect()
+    }
+
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
-        let output = flex_layout(
-            LayoutMode::Measure,
+        let output = flex_measure(
             &FlexLayoutParams {
                 direction: self.direction,
                 width_constraint: layout_input.width,
@@ -203,7 +207,7 @@ impl Element for Flex {
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,
             },
-            &self.children,
+            &mut self.children[..],
         );
 
         Size {
@@ -212,13 +216,8 @@ impl Element for Flex {
         }
     }
 
-    fn children(&self) -> Vec<ElementAny> {
-        self.children.iter().map(|child| child.element.clone()).collect()
-    }
-
     fn layout(&mut self, size: Size) -> LayoutOutput {
         let mut output = flex_layout(
-            LayoutMode::Place,
             &FlexLayoutParams {
                 direction: self.direction,
                 width_constraint: SizeConstraint::Available(size.width),
@@ -230,7 +229,7 @@ impl Element for Flex {
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,
             },
-            &self.children[..],
+            &mut self.children[..],
         );
 
         output.width = size.width;
@@ -245,9 +244,17 @@ impl Element for Flex {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ectx: &mut ElementCtxAny, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
-            child.element.paint(ctx);
+            child.element.paint(ectx, ctx);
+        }
+    }
+
+    fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {
+        for child in self.children.iter_mut() {
+            if child.element.hit_test(ctx.hit_test_ctx(), event.cursor_position) {
+                child.element.event(ctx, event);
+            }
         }
     }
 }

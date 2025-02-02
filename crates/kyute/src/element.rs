@@ -1,6 +1,6 @@
 use crate::application::{run_after, run_queued};
 use crate::compositor::DrawableSurface;
-use crate::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
+use crate::elements::{ActivatedEvent, ClickedEvent, ElementId, HoveredEvent};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
@@ -79,12 +79,12 @@ pub fn set_keyboard_focus(target: ElementAny) {
 
             // Send a FocusLost event to the previously focused element.
             prev_focus.element.borrow_mut().ctx.focused = false;
-            prev_focus.element.send_event(&mut WindowCtx {}, &mut Event::FocusLost);
+            prev_focus.element.send_event(&mut Event::FocusLost);
         }
 
         // Send a FocusGained event to the newly focused element.
         target.borrow_mut().ctx.focused = true;
-        target.send_event(&mut WindowCtx {}, &mut Event::FocusGained);
+        target.send_event(&mut Event::FocusGained);
 
         // If necessary, activate the target window.
         if let Some(_parent_window) = parent_window.shared.upgrade() {
@@ -128,9 +128,6 @@ pub trait Element: Any {
 
     /// Asks the element to measure itself under the specified constraints, but without actually laying
     /// out the children.
-    ///
-    /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
-    /// in ElementCtx.
     fn measure(&mut self, layout_input: &LayoutInput) -> Size;
 
     /// Specifies the size of the element, and lays out its children.
@@ -154,12 +151,11 @@ pub trait Element: Any {
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool;
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
-    #[allow(unused_variables)]
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx);
+    fn paint(&mut self, ctx: &mut ElementCtxAny, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {}
+    fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {}
 }
 
 impl dyn Element + 'static {
@@ -358,28 +354,30 @@ impl WeakElementAny {
     }
 }
 
+pub struct Dummy;
+impl Element for Dummy {
+    fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
+        unimplemented!()
+    }
+
+    fn layout(&mut self, _size: Size) -> LayoutOutput {
+        unimplemented!()
+    }
+
+    fn hit_test(&self, _ctx: &mut HitTestCtx, _point: Point) -> bool {
+        unimplemented!()
+    }
+
+    fn paint(&mut self, _ctx: &mut ElementCtxAny, _paint: &mut PaintCtx) {
+        unimplemented!()
+    }
+}
+
 impl Default for WeakElementAny {
     fn default() -> Self {
         // dummy element because Weak::new doesn't work with dyn trait
         // this is never instantiated, so it's fine
-        struct Dummy;
-        impl Element for Dummy {
-            fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
-                unimplemented!()
-            }
 
-            fn layout(&mut self, _size: Size) -> LayoutOutput {
-                unimplemented!()
-            }
-
-            fn hit_test(&self, _ctx: &mut HitTestCtx, _point: Point) -> bool {
-                unimplemented!()
-            }
-
-            fn paint(self: &mut ElemBox<Self>, _ctx: &mut PaintCtx) {
-                unimplemented!()
-            }
-        }
         let weak = Weak::<RefCell<ElemBox<Dummy>>>::new();
         WeakElement(weak)
     }
@@ -605,9 +603,9 @@ impl ElementAny {
         hit
     }
 
-    pub fn send_event(&self, ctx: &mut WindowCtx, event: &mut Event) {
+    pub fn send_event(&self, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
-        inner.event(ctx, event);
+        inner.element.event(&mut inner.ctx, event);
         inner.ctx.propagate_dirty_flags();
     }
 
@@ -624,7 +622,7 @@ impl ElementAny {
             ),
             inner.ctx.geometry.baseline.unwrap_or(0.0),
         );
-        inner.paint(parent_ctx);
+        inner.element.paint(&mut inner.ctx, parent_ctx);
         parent_ctx.restore();
 
         inner.ctx.change_flags.remove(ChangeFlags::PAINT);
@@ -763,17 +761,17 @@ impl ElementCtxAny {
     /// when the state changed.
     ///
     /// Returns whether the state changed.
-    pub fn update_element_state(&mut self, state: &mut ElementState, event: &Event) -> bool {
+    pub fn update_element_state(&mut self, id: ElementId, state: &mut ElementState, event: &Event) -> bool {
         match event {
             Event::PointerDown(_) => {
                 state.set_active(true);
-                self.emit(ActivatedEvent(true));
+                self.emit(ActivatedEvent(id, true));
                 true
             }
             Event::PointerUp(_) => {
                 if state.is_active() {
                     state.set_active(false);
-                    self.emit(ActivatedEvent(false));
+                    self.emit(ActivatedEvent(id, false));
                     self.emit(ClickedEvent);
                     true
                 } else {
@@ -782,12 +780,12 @@ impl ElementCtxAny {
             }
             Event::PointerEnter(_) => {
                 state.set_hovered(true);
-                self.emit(HoveredEvent(true));
+                self.emit(HoveredEvent(id, true));
                 true
             }
             Event::PointerLeave(_) => {
                 state.set_hovered(false);
-                self.emit(HoveredEvent(false));
+                self.emit(HoveredEvent(id, false));
                 true
             }
             _ => false,
@@ -837,6 +835,23 @@ impl ElementCtxAny {
                 window.mark_needs_paint();
             }
         }
+    }
+
+    #[track_caller]
+    pub fn watch_once(
+        &mut self,
+        models: impl IntoIterator<Item = Weak<dyn Any>>,
+        on_changed: impl FnOnce(&mut ElemBox<dyn Element>, Weak<dyn Any>) + 'static,
+    ) -> SubscriptionKey {
+        let weak_this = self.weak_this.clone();
+        watch_multi_once(models, move |source| {
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(move |this| {
+                    //let this = this.downcast_mut().expect("unexpected type of element");
+                    on_changed(this, source);
+                });
+            }
+        })
     }
 }
 
@@ -1061,11 +1076,11 @@ pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bo
         // dispatch the event, bubbling from the target up the root
         for (element, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
             event.set_transform(transform);
-            element.send_event(&mut WindowCtx {}, event);
+            element.send_event(event);
         }
     } else {
         // dispatch the event to the target only
         event.set_transform(transforms.last().unwrap());
-        target.send_event(&mut WindowCtx {}, event);
+        target.send_event(event);
     }
 }
