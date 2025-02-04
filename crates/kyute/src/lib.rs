@@ -1,5 +1,6 @@
 #![feature(unique_rc_arc)]
 #![feature(arbitrary_self_types)]
+#![feature(default_field_values)]
 
 mod app_globals;
 pub mod application;

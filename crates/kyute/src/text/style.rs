@@ -12,6 +12,7 @@ pub struct TextStyle<'a> {
     pub font_style: FontStyle,
     pub font_stretch: FontStretch,
     pub color: Color,
+    pub underline: bool,
 }
 
 impl Default for TextStyle<'static> {
@@ -127,6 +128,7 @@ impl<'a> TextStyle<'a> {
             font_style: Default::default(),
             font_stretch: Default::default(),
             color: Color::from_rgb_u8(0, 0, 0),
+            underline: false,
         }
     }
 
@@ -167,6 +169,7 @@ impl<'a> TextStyle<'a> {
             font_style: self.font_style,
             font_stretch: self.font_stretch,
             color: self.color,
+            underline: self.underline,
         }
     }
 }

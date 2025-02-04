@@ -415,7 +415,7 @@ impl Element for Frame {
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
         if let Some(content) = &self.content {
-            content.hit_test(ctx, point);
+            content.hit_test(ctx, point + Vec2::new(self.padding.x0, self.padding.y0));
         }
         ctx.rect.contains(point)
     }

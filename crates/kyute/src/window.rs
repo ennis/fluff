@@ -14,7 +14,7 @@ use kurbo::{Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
-use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::KeyLocation;
 use winit::platform::windows::WindowBuilderExtWindows;
 
@@ -25,7 +25,7 @@ use crate::drawing::ToSkia;
 use crate::element::{
     dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
 };
-use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent};
+use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent};
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::{application, Color, Notifier};
 
@@ -218,6 +218,8 @@ impl WindowInner {
         hit_position: Point,
         //time: Duration,
     ) {
+        debug_assert!(event.pointer_event().is_some(), "event must be a pointer event");
+
         let mut input_state = self.input_state.borrow_mut();
 
         let mut hit_test_ctx = HitTestCtx::new();
@@ -228,10 +230,12 @@ impl WindowInner {
 
         // If something is grabbing the pointer, then the event is delivered to that element;
         // otherwise it is delivered to the innermost widget that passes the hit-test.
+        let has_pointer_capture = self.pointer_capture.borrow().is_some();
         let target = self.pointer_capture.borrow().clone().or(innermost_hit.clone());
 
         if let Some(target) = target {
             if let Some(target) = target.upgrade() {
+                event.pointer_event_mut().unwrap().request_capture = has_pointer_capture;
                 dispatch_event(target, &mut event, true);
             }
         }
@@ -526,6 +530,20 @@ impl WindowInner {
                     self.dispatch_pointer_event(event, self.cursor_pos.get());
                 }
             }
+            WindowEvent::MouseWheel {delta, ..} => {
+                if let Some(FocusedElement { window: _, element }) = get_keyboard_focus() {
+                    dispatch_event(element, &mut Event::Wheel(WheelEvent{
+                        delta: match *delta {
+                            MouseScrollDelta::LineDelta(x, y) => {
+                                ScrollDelta::Lines { x: x as f64, y: y as f64 }
+                            }
+                            MouseScrollDelta::PixelDelta(pos) => {
+                                ScrollDelta::Pixels { x: pos.x , y: pos.y }
+                            }
+                        }
+                    }), true);
+                }
+            }
             WindowEvent::CloseRequested => {
                 self.close_requested.invoke(());
             }
@@ -584,7 +602,7 @@ impl WindowInner {
             self.root.paint_on_surface(&surface, scale_factor);
 
             // **** DEBUGGING ****
-            draw_crosshair(skia_surface.canvas(), self.cursor_pos.get());
+            //draw_crosshair(skia_surface.canvas(), self.cursor_pos.get());
 
             if let Some(event) = &*self.last_kb_event.borrow() {
                 draw_text_blob(

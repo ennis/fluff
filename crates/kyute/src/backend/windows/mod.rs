@@ -256,8 +256,13 @@ impl ApplicationBackend {
 
         //let compositor = Compositor::new().expect("failed to create compositor");
 
-        let composition_device =
+        let composition_device : IDCompositionDesktopDevice =
             unsafe { DCompositionCreateDevice3(None).expect("failed to create composition device") };
+
+        //let composition_device_debug : IDCompositionDeviceDebug = composition_device.cast().unwrap();
+        //unsafe {
+        //    composition_device_debug.EnableDebugCounters();
+        //}
 
         let sync = {
             let fence = unsafe {

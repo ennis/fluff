@@ -1,5 +1,5 @@
 use crate::compositor::DrawableSurface;
-use crate::drawing::{place_rect_into, round_to_px, BorderPosition, Image, Paint, Placement, ToSkia};
+use crate::drawing::{place_rect_into, round_to_device_pixel, round_to_device_pixel_center, BorderPosition, Image, Paint, Placement, ToSkia};
 use crate::text::{TextLayout, TextRun, TextStyle};
 use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Size, Vec2};
 
@@ -44,12 +44,71 @@ impl<'a> PaintCtx<'a> {
         )
     }
 
-    /// Rounds a logical point to the nearest physical pixel.
-    pub fn round_to_px(&self, logical: Point) -> Point {
+    // === PIXEL SNAPPING ===
+    // issue: correct pixel rounding is complicated:
+    // - we can't round logical coordinates to integers, as integer logical pixels may end up in the middle of physical pixels
+    // - when rounding a logical value, you have to take into account the current transformation
+    //      - (which means inverting the transformation to get a pixel value, round it here, and then transform it back)
+    // - for lines/strokes you usually want a coordinate that is in the middle of a pixel, not at the edge
+    // - it may affect hit-testing
+    //
+    // The main pain point here is that we need to round once the physical pixel coordinates
+    // are known, but we don't know them until we've applied the transformation,
+    // which, currently, is done internally by Skia.
+    //
+    // Skia has no way of rounding the resulting physical pixel coordinates to the nearest pixel,
+    // so this leaves us with those options:
+    // - (A) convert to physical coordinates, round, and convert back to logical coordinates
+    //     - this is an expensive round-trip (2x mat mult + inverse) which is totally accidental, and I hate this
+    // - (B) convert all coordinates to physical pixels ourselves, bypassing the skia transform stack
+    // - (C) ensure that all transforms are translations with an offset that is a multiple of a physical pixel
+    //       - i.e. no scaling or rotation
+    // - (D) convert affine transforms to physical units before pushing them on the transform stack
+    //       - not sure it solves anything
+    //
+    // The secondary pain point is the representation of logical pixels, aka "layout units"
+    // - should we support fractional layout units? firefox & webkit use 1/60th of a CSS pixel
+    //
+    // Conclusion:
+    // We make the assumption that the current transform is a translation with an offset that is a multiple of a physical pixel size in logical units
+    // - all transformations are translations with an offset that is a multiple of a physical pixel
+    //
+
+    /// Rounds a logical coordinate to the nearest physical pixel boundary.
+    ///
+    /// This function _does not_ take the current transformation into account. If the current
+    /// transformation is not aligned with the pixel grid (e.g. rotation, scaling, or translation
+    /// by a subpixel amount), the result may not be pixel-aligned.
+    pub fn round_to_device_pixel(&self, logical_coord:f64) -> f64 {
+        round_to_device_pixel(logical_coord, self.scale_factor)
+    }
+
+    /// Rounds a logical coordinate to the center of the nearest physical pixel.
+    ///
+    /// This function _does not_ take the current transformation into account. If the current
+    /// transformation is not aligned with the pixel grid (e.g. rotation, scaling, or translation
+    /// by a subpixel amount), the result may not be pixel-aligned.
+    pub fn round_to_device_pixel_center(&self, logical_coord:f64) -> f64 {
+        round_to_device_pixel_center(logical_coord, self.scale_factor)
+    }
+
+    /// Rounds a logical point to the nearest physical pixel center.
+    pub fn round_point_to_device_pixel_center(&self, logical: Point) -> Point {
         Point::new(
-            round_to_px(logical.x, self.scale_factor) + 0.5 / self.scale_factor,
-            round_to_px(logical.y, self.scale_factor) + 0.5 / self.scale_factor,
+            self.round_to_device_pixel_center(logical.x),
+            self.round_to_device_pixel_center(logical.y),
         )
+    }
+
+    /// Rounds a logical rectangle to the device pixel grid.
+    pub fn snap_rect_to_device_pixel(&self, rect: Rect) -> Rect {
+        // FIXME: either floor everything or floor/ceil
+        Rect {
+            x0: self.round_to_device_pixel(rect.x0),
+            y0: self.round_to_device_pixel(rect.y0),
+            x1: self.round_to_device_pixel(rect.x1),
+            y1: self.round_to_device_pixel(rect.y1),
+        }
     }
 
     /// Returns the skia canvas.
@@ -141,6 +200,15 @@ impl<'a> PaintCtx<'a> {
     // Drawing methods
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+    /// Draws a line.
+    pub fn draw_line(&mut self, line: Line,
+                     stroke_width: f64,  stroke_paint: impl Into<Paint>) {
+        let mut paint = stroke_paint.into().to_sk_paint(self.bounds(), skia_safe::PaintStyle::Stroke);
+        paint.set_stroke_width(stroke_width as f32);
+        self.canvas().draw_line(line.p0.to_skia(), line.p1.to_skia(), &paint);
+    }
+
     /// Draws a border around or inside the specified rectangle.
     pub fn draw_border(
         &mut self,
@@ -200,6 +268,18 @@ impl<'a> PaintCtx<'a> {
             .into()
             .to_sk_paint(self.bounds(), skia_safe::PaintStyle::Stroke);
         paint.set_stroke_width(stroke_width as f32);
+        self.canvas().draw_path(&path, &paint);
+    }
+
+    /// Fills a path.
+    pub fn fill_path(
+        &mut self,
+        path: impl IntoIterator<Item = PathEl>,
+        fill_paint: impl Into<Paint>,
+    ) {
+        // TODO: build skia path directly
+        let path = BezPath::from_iter(path).to_skia();
+        let paint = fill_paint.into().to_sk_paint(self.bounds(), skia_safe::PaintStyle::Fill);
         self.canvas().draw_path(&path, &paint);
     }
 

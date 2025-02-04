@@ -10,6 +10,7 @@ use skia_safe::gpu::d3d::TextureResourceInfo;
 use skia_safe::gpu::{DirectContext, FlushInfo, Protected};
 use skia_safe::surface::BackendSurfaceAccess;
 use skia_safe::{ColorSpace, SurfaceProps};
+use tracing::trace;
 use tracy_client::span;
 use windows::core::{Interface, Owned};
 use windows::Win32::Foundation::{HANDLE, HWND};
@@ -17,9 +18,7 @@ use windows::Win32::Graphics::Direct3D12::{ID3D12Resource, D3D12_RESOURCE_STATE_
 use windows::Win32::Graphics::DirectComposition::{
     IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual3,
 };
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
-};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT,  DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{
     IDXGISwapChain3, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
@@ -35,6 +34,8 @@ use crate::Size;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
+const SWAP_CHAIN_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
+const SKIA_COLOR_TYPE: skia_safe::ColorType = sk::ColorType::RGBA8888;
 
 /// Windows drawable surface backend.
 pub(crate) struct DrawableSurface {
@@ -42,6 +43,10 @@ pub(crate) struct DrawableSurface {
     context: DirectContext,
     swap_chain: IDXGISwapChain3,
     surface: sk::Surface,
+}
+
+thread_local! {
+    static LAST_COMMIT_TIME: Cell<std::time::Instant> = Cell::new(std::time::Instant::now());
 }
 
 impl DrawableSurface {
@@ -62,6 +67,10 @@ impl DrawableSurface {
 
         unsafe {
             let _span = span!("D3D12: present");
+            //let t = std::time::Instant::now();
+            //let dur = t.duration_since(LAST_COMMIT_TIME.get()).as_millis();
+            //trace!("present + commit, {dur}ms");
+            //LAST_COMMIT_TIME.set(t);
             self.swap_chain.Present(1, DXGI_PRESENT::default()).unwrap();
             self.composition_device.Commit().unwrap();
         }
@@ -123,13 +132,15 @@ impl Layer {
             // ResizeBuffers from succeeding. This cleans them up.
             self.app.direct_context.borrow_mut().flush_submit_and_sync_cpu();
 
+            trace!("resizing swap chain buffers to {}x{}", width, height);
+
             unsafe {
                 // SAFETY: basic FFI call
                 match swap_chain.inner.ResizeBuffers(
                     SWAP_CHAIN_BUFFER_COUNT,
                     width,
                     height,
-                    DXGI_FORMAT_R16G16B16A16_FLOAT,
+                    SWAP_CHAIN_FORMAT,
                     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
                 ) {
                     Ok(_) => {}
@@ -150,11 +161,13 @@ impl Layer {
         let swap_chain = self.swap_chain.as_ref().expect("layer should be a surface layer");
         // if the swapchain has a mechanism for syncing with presentation, use it,
         // otherwise do nothing.
+        //let t = std::time::Instant::now();
         if !swap_chain.frame_latency_waitable.is_invalid() {
             unsafe {
                 WaitForSingleObject(*swap_chain.frame_latency_waitable, 1000);
             }
         }
+        //trace!("wait_for_presentation took {:?}", t.elapsed());
     }
 
     /// Creates a skia drawing context for the specified surface layer.
@@ -171,11 +184,11 @@ impl Layer {
 
             let surface = self.app.create_surface_for_texture(
                 swap_chain_buffer,
-                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                SWAP_CHAIN_FORMAT,
                 self.size.get(),
                 sk::gpu::SurfaceOrigin::TopLeft,
-                sk::ColorType::RGBAF16,
-                sk::ColorSpace::new_srgb_linear(),
+                SKIA_COLOR_TYPE,
+                sk::ColorSpace::new_srgb(),
                 Some(sk::SurfaceProps::new(
                     sk::SurfacePropsFlags::default(),
                     sk::PixelGeometry::RGBH,
@@ -198,6 +211,7 @@ impl Layer {
     ///
     /// TODO: return result
     pub(crate) unsafe fn bind_to_window(&self, window: RawWindowHandle) {
+        trace!("binding layer to window");
         let win32_handle = match window {
             RawWindowHandle::Win32(w) => w,
             _ => panic!("expected a Win32 window handle"),
@@ -269,6 +283,7 @@ impl ApplicationBackend {
     ///
     /// FIXME: don't ignore format
     pub(crate) fn create_surface_layer(&self, size: Size, _format: ColorType) -> Layer {
+        trace!("create_surface_layer size {size:?}");
         unsafe {
             // Create the swap chain backing the layer
             let width = size.width as u32;
@@ -280,7 +295,7 @@ impl ApplicationBackend {
             let swap_chain_desc = DXGI_SWAP_CHAIN_DESC1 {
                 Width: width,
                 Height: height,
-                Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
+                Format: SWAP_CHAIN_FORMAT,
                 Stereo: false.into(),
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,

@@ -1060,6 +1060,7 @@ dependencies = [
 name = "fluff-gui"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.6.0",
  "kyute",
  "tracing",
  "tracing-subscriber 0.3.18",

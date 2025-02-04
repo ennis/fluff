@@ -1,3 +1,4 @@
+use skia_safe::textlayout::TextDecorationMode;
 use crate::drawing::ToSkia;
 use crate::text::style::{FontStretch, FontStyle, FontWeight};
 use crate::text::{TextAlign, TextStyle};
@@ -68,6 +69,14 @@ impl ToSkia for TextStyle<'_> {
         style.set_font_size(self.font_size as f32);
         style.set_font_style(font_style);
         style.set_color(self.color.to_skia().to_color());
+        let mut decoration = skia_safe::textlayout::Decoration::default();
+        if self.underline {
+            decoration.ty = skia_safe::textlayout::TextDecoration::UNDERLINE;
+            decoration.style = skia_safe::textlayout::TextDecorationStyle::Solid;
+            decoration.color = self.color.to_skia().to_color();
+            decoration.mode = TextDecorationMode::Through;
+        }
+        style.set_decoration(&decoration);
         style
     }
 }

@@ -31,6 +31,11 @@ impl Selection {
     pub fn byte_range(&self) -> Range<usize> {
         self.min()..self.max()
     }
+    pub fn clamp(self, range: Range<usize>) -> Selection {
+        let start = self.start.clamp(range.start, range.end);
+        let end = self.end.clamp(range.start, range.end);
+        Selection { start, end }
+    }
 }
 
 impl Default for Selection {

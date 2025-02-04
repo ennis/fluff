@@ -1,7 +1,9 @@
 //! Events sent to elements.
+
+use std::any::Any;
 use std::fmt;
 
-pub use keyboard_types::{KeyboardEvent, Modifiers};
+pub use keyboard_types::{Key, KeyboardEvent, Modifiers};
 use kurbo::{Affine, Point, Rect, Vec2};
 
 mod key_code;
@@ -132,9 +134,18 @@ impl PointerEvent {
         }
     }*/
 
+    pub fn capturing_pointer(&self) -> bool {
+        self.request_capture
+    }
+
     /// Local position
     pub fn local_position(&self) -> Point {
         self.transform.inverse() * self.position
+    }
+
+    /// Local position with offset
+    pub fn local_position_with_offset(&self, offset: Vec2) -> Point {
+        self.transform.inverse() * (self.position - offset)
     }
 
     pub fn transformed(self, transform: Affine) -> PointerEvent {
@@ -158,8 +169,25 @@ pub struct KeyboardEvent {
     pub is_composing: bool,
 }*/
 
+#[derive(Copy, Clone, Debug)]
+pub enum ScrollDelta {
+    Lines {
+        x: f64,
+        y: f64,
+    },
+    Pixels {
+        x: f64,
+        y: f64,
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct WheelEvent {
+    pub delta: ScrollDelta,
+}
+
 /// Events.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Event {
     FocusGained,
     FocusLost,
@@ -173,6 +201,9 @@ pub enum Event {
     PointerLeave(PointerEvent),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
+    Wheel(WheelEvent),
+    /// Non-input event.
+    Custom(Box<dyn Any>),
 }
 
 impl Event {

@@ -1,16 +1,16 @@
 use crate::colors;
 use crate::colors::DISPLAY_TEXT;
-use crate::widgets::{INPUT_WIDTH, TEXT_STYLE, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
-use kyute::drawing::{BASELINE_LEFT, RIGHT_CENTER, place, point, vec2};
+use crate::widgets::{PaintExt, DISPLAY_TEXT_STYLE, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use kyute::drawing::{place, vec2, BorderPosition, RIGHT_CENTER};
 use kyute::element::prelude::*;
-use kyute::element::{ElemBox, ElementRc};
-use kyute::elements::TextEdit;
-use kyute::elements::draw::Visual;
-use kyute::kurbo::Insets;
+use kyute::element::ElemBox;
+use kyute::elements::{TextEditBase, ValueChangedEvent};
+use kyute::event::{Key, PointerButton, ScrollDelta};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
-use kyute::model::{EventSource, Model};
-use kyute::text::TextLayout;
-use kyute::{IntoElementAny, Point, Rect, Size, text};
+use kyute::kurbo::{Insets, Vec2};
+use kyute::model::EventSource;
+use kyute::text::Selection;
+use kyute::{Color, Point, Rect, Size};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -22,6 +22,8 @@ pub struct SpinnerDownButtonEvent;
 struct SpinnerButtons {
     pos: Point,
 }
+
+const PADDING: Vec2 = vec2(4., 2.);
 
 impl SpinnerButtons {
     const SIZE: Size = Size::new(13., 16.);
@@ -54,25 +56,80 @@ impl SpinnerButtons {
     }
 
     fn down_clicked(&self, event: &mut Event) -> bool {
-        event.is_inside(Rect::new(0., 8., 13., 8.) + self.pos.to_vec2()) && event.is_pointer_down()
+        event.is_inside(Rect::new(0., 8., 13., 16.) + self.pos.to_vec2()) && event.is_pointer_down()
+    }
+}
+
+pub struct SpinnerOptions<'a> {
+    pub initial_value: f64,
+    pub unit: &'a str,
+    pub increment: f64,
+    /// Number of decimal places to display.
+    pub precision: u8,
+    /// Whether to clamp all values to the nearest integer.
+    pub clamp_to_integer: bool,
+}
+
+impl<'a> Default for SpinnerOptions<'a> {
+    fn default() -> Self {
+        SpinnerOptions {
+            initial_value: 0.,
+            unit: "",
+            increment: 1.,
+            precision: 2,
+            clamp_to_integer: false,
+        }
     }
 }
 
 /// Numeric spinner input widget.
 pub struct SpinnerBase {
+    /// The value to display.
     value: f64,
-    unit: String,
+    /// The value before editing began.
+    value_before_editing: f64,
     show_background: bool,
-    // This would be easier if we had exclusive ownership of the text edit,
-    // but there are several considerations to take into account:
-    // -
-    text_edit: ElementRc<TextEdit>,
+    text_edit: TextEditBase,
+    /// Number of decimal places to display.
+    precision: u8,
+    /// Whether to clamp all values to the nearest integer.
+    clamp_to_integer: bool,
+    unit: String,
+    increment: f64,
+    /// Currently editing the value
+    editing: bool,
 }
 
 impl SpinnerBase {
+    pub fn new(options: SpinnerOptions) -> ElementBuilder<Self> {
+        let mut text_edit = TextEditBase::new();
+        text_edit.set_text_style(DISPLAY_TEXT_STYLE.clone());
+        text_edit.set_caret_color(DISPLAY_TEXT);
+
+        let mut spinner = ElementBuilder::new(SpinnerBase {
+            value: options.initial_value,
+            value_before_editing: options.initial_value,
+            show_background: true,
+            text_edit,
+            precision: options.precision,
+            clamp_to_integer: options.clamp_to_integer,
+            unit: options.unit.into(),
+            increment: options.increment,
+            editing: false,
+        });
+        spinner.update_text();
+        spinner
+    }
+
     /// Whether to paint the background of the spinner.
     pub fn show_background(mut self: ElementBuilder<Self>, show: bool) -> ElementBuilder<Self> {
         self.show_background = show;
+        self
+    }
+
+    /// Sets the text color of the spinner.
+    pub fn set_text_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+        self.text_edit.set_text_color(color);
         self
     }
 
@@ -86,55 +143,75 @@ impl SpinnerBase {
 
     /// Sets the current value of the spinner.
     pub fn value(mut self: ElementBuilder<Self>, value: f64) -> ElementBuilder<Self> {
-        self.value = value;
+        self.set_value(value);
         self
     }
 
     /// Sets the current value of the spinner.
-    pub fn set_value(self: &mut ElemBox<Self>, value: f64) {
+    pub fn set_value(self: &mut ElemBox<Self>, mut value: f64) {
+        if self.clamp_to_integer {
+            value = value.round();
+        }
         self.value = value;
-
-        // -> &mut ElemBox<TextEdit>
-        self.map(|this| &this.text_edit).set_text(formatted);
-
-        // problem: flags not propagated correctly when calling set_text directly
-        // idea: return a RefMut like wrapper that borrows the parent ElemBox
-        // and propagate the flags upwards when the RefMut is dropped
-
-        self.ctx.mark_needs_paint();
+        self.ctx.emit(ValueChangedEvent(value));
+        self.update_text();
     }
 
     /////////////////////////////
+
+    fn update_text(self: &mut ElemBox<Self>) {
+        let str = self.format_value();
+        self.text_edit.set_text(str);
+        self.ctx.mark_needs_layout();
+    }
 
     fn place_buttons(&self, rect: Rect) -> SpinnerButtons {
         SpinnerButtons {
             pos: place(
                 SpinnerButtons::SIZE.to_rect(),
                 RIGHT_CENTER,
-                rect - Insets::new(0., 2., 0., 0.),
+                rect - Insets::new(0., 0., 2., 0.),
             )
             .origin(),
         }
     }
 
     fn format_value(&self) -> String {
-        format!("{:.2} {}", self.value, self.unit)
+        if self.editing {
+            // don't display the unit during editing
+            format!("{0:.1$}", self.value, self.precision as usize)
+        } else {
+            format!("{0:.1$} {2}", self.value, self.precision as usize, self.unit)
+        }
+    }
+
+    fn is_valid_key_input(key: &Key) -> bool {
+        match key {
+            Key::Character(c) => {
+                if let Some(c) = c.chars().next() {
+                    if !c.is_digit(10) && c != '.' && c != '-' {
+                        return false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
     }
 }
 
 impl Element for SpinnerBase {
-    fn children(&self) -> Vec<ElementAny> {
-        vec![self.text_edit.clone()]
-    }
-
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
         // fill the available width, use the fixed height
-        let width = layout_input.width.available().unwrap_or(INPUT_WIDTH);
+        let width = INPUT_WIDTH;
         let height = WIDGET_LINE_HEIGHT;
         Size { width, height }
     }
 
     fn layout(&mut self, size: Size) -> LayoutOutput {
+        let baseline = self.text_edit.layout(size).baseline.unwrap_or(0.);
+        self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
+
         LayoutOutput {
             width: size.width,
             height: size.height,
@@ -147,16 +224,21 @@ impl Element for SpinnerBase {
     }
 
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+
+        let rrect = ctx.bounds().to_rounded_rect(0.);
+
         // paint background
         if self.show_background {
-            ctx.fill_rrect(ctx.bounds().to_rounded_rect(4.), colors::DISPLAY_BACKGROUND);
+            ctx.draw_display_background();
         }
 
-        // format & paint value
-        //let value_fmt = self.format_value();
-        //ctx.pad_left(4.);
-        //ctx.draw_text(BASELINE_LEFT, &TEXT_STYLE, text![Color(DISPLAY_TEXT) "{value_fmt}"]);
-        self.content.paint(ctx);
+        // contents
+        self.text_edit.paint(ctx);
+
+        if self.ctx.has_focus() {
+            // draw the focus ring
+            ctx.draw_border(rrect, 1., BorderPosition::Inside, colors::DISPLAY_TEXT.darken(0.2));
+        }
 
         // paint buttons
         let buttons = self.place_buttons(ctx.bounds());
@@ -166,24 +248,172 @@ impl Element for SpinnerBase {
     fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
         let buttons = self.place_buttons(self.ctx.rect());
         if buttons.up_clicked(event) {
-            self.ctx.emit(SpinnerUpButtonEvent);
+            self.set_value(self.value + self.increment);
         } else if buttons.down_clicked(event) {
-            self.ctx.emit(SpinnerDownButtonEvent);
+            self.set_value(self.value - self.increment);
         } else {
-            // Handle mouse events over the spinner value
+            match event {
+                // filter non-numeric input
+                Event::KeyDown(key) | Event::KeyUp(key) => {
+                    if !Self::is_valid_key_input(&key.key) {
+                        return;
+                    }
+                }
+
+                Event::PointerDown(p) => {
+                    // acquire focus on pointer down
+                    self.ctx.set_focus();
+                    self.ctx.set_pointer_capture();
+
+                    // context menu
+                    if p.buttons.test(PointerButton::RIGHT) {
+
+                        //TODO
+
+                        // facts:
+                        // - it's possible for this widget to still receive events (like pointer over/out)
+                        // - ideally it would be a synchronous function call
+                        //     - but it's not possible, since this function `event` isn't suspendable
+                        //     - even if it was suspendable, awaiting there would block all other events to this widget
+
+
+                      // self.run_async(async |this| {
+                      //     // `this` is `&mut Self` borrowed for the duration of the modal proc
+                      //     // issue: no events are sent, but we cannot `paint` either
+
+                      //     // Fundamentally, we can't have exclusive access to the widget
+                      //     // during the modal, since we must be able to call `paint` and respond
+                      //     // to certain events at all times.
+                      //     //
+                      //     // Alternative: widgets could use interior mutability, but this ship has sailed.
+                      //     // Alternative: paint, etc. are invoked in the modal closure somehow
+                      //     // Alternative: paint, etc. are not called at all while inside the modal closure
+                      //     // Alternative: when awaiting in the modal closure, release access to the widget
+                      //     //   - this is almost impossible, as it would invalidate any mut ref held
+                      //     //     across await points
+                      //     // Alternative: spawn an async task that does the async stuff and
+                      //     // then sends an event to the widget to update itself.
+                      //     // `this` is thus an `ElementRc<Self>`, and we can call run_later on it
+
+                      //     let menu = show_context_menu().await;
+                      //     this.run_later(move |this| this.handle_context_menu(menu));
+                      // });
+
+
+                    }
+                }
+
+                // mouse wheel
+                Event::Wheel(wheel) => {
+                    match wheel.delta {
+                        ScrollDelta::Lines {
+                            y, ..
+                        } => {
+                            // determine which decimal place to change
+                            if self.editing {
+                                let text = self.text_edit.text();
+                                if !text.parse::<f64>().is_ok() {
+                                    return;
+                                }
+                                // determine position relative to the decimal point
+                                let selection = self.text_edit.selection();
+                                let cursor_from_end = text.len() - selection.end;
+                                let point = text.find('.').unwrap_or(text.len());
+                                let mut decimal_place = point as i32  - selection.end as i32;
+                                if decimal_place > 0 {
+                                    // cursor to the left of the decimal point
+                                    decimal_place -= 1;
+                                }
+                                let increment = 10_f64.powi(decimal_place) * y.signum();
+                                let new_value = self.value + increment;
+                                self.set_value(new_value);
+                                // we may have added digits to the left, reset the cursor position
+                                // relative to the end
+                                let new_len = self.text_edit.text_len();
+                                self.text_edit.set_selection(Selection::empty(new_len - cursor_from_end));
+                            } else {
+                                let new_value = self.value + self.increment * y.signum();
+                                self.set_value(new_value);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                Event::FocusGained => {
+                    // Focus gained either by pointer down or by tabbing
+                    // Go in editing mode
+                    self.editing = true;
+                    self.value_before_editing = self.value;
+                    self.update_text();
+                }
+
+                _ => {}
+            }
+
+            let r = self.text_edit.event(event);
+
+            // clamp selection to the actual numbers, not the unit
+            if r.selection_changed() {
+                //let mut selection = self.text_edit.selection();
+                //let unit_len = self.unit.len() + 1; // +1 for the space
+                //let text_len = self.text_edit.text().len();
+                //let text_without_unit = text_len - unit_len;
+                //selection.start = selection.start.min(text_without_unit);
+                //selection.end = selection.end.min(text_without_unit);
+                //self.text_edit.set_selection(selection);
+            }
+            if r.text_changed() {
+                // TODO: parse and update
+            }
+            if r.relayout() {
+                self.ctx.mark_needs_layout();
+            }
+            if r.repaint() {
+                self.ctx.mark_needs_paint();
+            }
+            if r.reset_blink() {
+                //self.text_edit.reset_blink();
+            }            
+            if matches!(event, Event::FocusLost) || r.confirmed() {
+                // When the spinner loses focus, or the user presses enter
+                // keep the current value and exit editing mode
+                self.editing = false;
+                self.ctx.clear_focus();
+                // Parse value and update
+                let text = self.text_edit.text();
+                if let Some(value) = text.parse().ok() {
+                    self.set_value(value);
+                } else {
+                    // restore the text
+                    self.update_text();
+                }
+            }
+            if r.cancelled() {
+                // user pressed escape
+                // restore the previous value
+                self.editing = false;
+                self.ctx.clear_focus();
+                self.set_value(self.value_before_editing);
+            }
         }
     }
 }
 
+/*
 impl SpinnerBase {
     pub fn new() -> ElementBuilder<Self> {
-        let text_edit = TextEdit::new();
+        let mut text_edit = TextEditBase::new();
+        text_edit.set_text_style(DISPLAY_TEXT_STYLE.clone());
+        text_edit.set_caret_color(DISPLAY_TEXT);
 
-        ElementBuilder::new_cyclic(|weak_this| SpinnerBase {
+        ElementBuilder::new(SpinnerBase {
             value: 0.,
             unit: String::new(),
             show_background: true,
-            content: text_edit.into_element(weak_this, 0),
+            text_edit,
+            formatting: Formatting::Integer,
         })
     }
 }
+*/

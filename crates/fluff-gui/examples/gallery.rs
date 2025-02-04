@@ -1,11 +1,12 @@
 use fluff_gui::colors;
-use fluff_gui::widgets::button::button;
-use fluff_gui::widgets::spinner::SpinnerBase;
+use fluff_gui::widgets::button::Button;
+use fluff_gui::widgets::spinner::{SpinnerBase, SpinnerOptions};
 use kyute::elements::{Flex, Frame};
 use kyute::{Size, Window, WindowOptions, application, select};
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_tree::HierarchicalLayer;
+use fluff_gui::widgets::slider::Slider;
 
 fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
@@ -15,9 +16,15 @@ fn main() {
         let row = Frame::new()
             .content(
                 Flex::row()
-                    .child(button("Test"))
-                    .child(button("Test2"))
-                    .child(SpinnerBase::new().value(17.).unit("°C"))
+                    .child(Button::new("OK"))
+                    .child(Button::new("Cancel"))
+                    .child(SpinnerBase::new(SpinnerOptions {
+                        unit: "°C",
+                        precision: 2,
+                        increment: 0.10,
+                        ..Default::default()
+                    }))
+                    .child(Slider::new(0.0, 0.0..100.0))
                     .gaps(0, 2, 0),
             )
             .padding(10.);

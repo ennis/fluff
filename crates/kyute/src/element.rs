@@ -20,7 +20,6 @@ use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::time::Duration;
 use std::{fmt, mem, ptr};
-use tracing::warn;
 
 pub mod prelude {
     pub use crate::element::{
@@ -72,19 +71,19 @@ pub fn set_keyboard_focus(target: ElementAny) {
         if let Some(prev_focus) = prev_focus {
             if prev_focus.element == target {
                 // Element already has focus. This should be handled earlier.
-                warn!("{:?} already focused", target);
+                //warn!("{:?} already focused", target);
                 FOCUSED_ELEMENT.replace(Some(prev_focus));
                 return;
             }
 
             // Send a FocusLost event to the previously focused element.
             prev_focus.element.borrow_mut().ctx.focused = false;
-            prev_focus.element.send_event(&mut WindowCtx {}, &mut Event::FocusLost);
+            prev_focus.element.send_event(&mut Event::FocusLost);
         }
 
         // Send a FocusGained event to the newly focused element.
         target.borrow_mut().ctx.focused = true;
-        target.send_event(&mut WindowCtx {}, &mut Event::FocusGained);
+        target.send_event(&mut Event::FocusGained);
 
         // If necessary, activate the target window.
         if let Some(_parent_window) = parent_window.shared.upgrade() {
@@ -97,6 +96,17 @@ pub fn set_keyboard_focus(target: ElementAny) {
             window: parent_window,
             element: target,
         }));
+    });
+}
+
+pub fn clear_keyboard_focus() {
+    run_queued(|| {
+        let prev_focus = FOCUSED_ELEMENT.take();
+        if let Some(prev_focus) = prev_focus {
+            prev_focus.element.borrow_mut().ctx.focused = false;
+            prev_focus.element.send_event(&mut Event::FocusLost);
+        }
+        FOCUSED_ELEMENT.replace(None);
     });
 }
 
@@ -605,9 +615,9 @@ impl ElementAny {
         hit
     }
 
-    pub fn send_event(&self, ctx: &mut WindowCtx, event: &mut Event) {
+    pub fn send_event(&self, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
-        inner.event(ctx, event);
+        inner.event(&mut WindowCtx{}, event);
         inner.ctx.propagate_dirty_flags();
     }
 
@@ -767,6 +777,8 @@ impl ElementCtxAny {
         match event {
             Event::PointerDown(_) => {
                 state.set_active(true);
+                self.set_focus();
+                self.set_pointer_capture();
                 self.emit(ActivatedEvent(true));
                 true
             }
@@ -800,6 +812,13 @@ impl ElementCtxAny {
     /// focus, `has_focus` will still return `false` until the next event loop iteration.
     pub fn set_focus(&mut self) {
         set_keyboard_focus(self.weak_this.upgrade().unwrap());
+    }
+
+    /// Relinquishes the keyboard focus from this widget.
+    pub fn clear_focus(&mut self) {
+        if self.focused {
+            clear_keyboard_focus();
+        }
     }
 
     /// Requests that this element captures the pointer events sent to the parent window.
@@ -1061,11 +1080,11 @@ pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bo
         // dispatch the event, bubbling from the target up the root
         for (element, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
             event.set_transform(transform);
-            element.send_event(&mut WindowCtx {}, event);
+            element.send_event(event);
         }
     } else {
         // dispatch the event to the target only
         event.set_transform(transforms.last().unwrap());
-        target.send_event(&mut WindowCtx {}, event);
+        target.send_event(event);
     }
 }

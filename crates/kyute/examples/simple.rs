@@ -2,7 +2,7 @@ pub use kurbo::{self, Size};
 use kyute::drawing::StaticImage;
 use kyute::element::IntoElementAny;
 use kyute::elements::button::button;
-use kyute::elements::text_edit::TextEdit;
+use kyute::elements::text_edit::TextEditBase;
 use kyute::elements::{Flex, Frame};
 use kyute::model::Model;
 use kyute::text::TextStyle;
@@ -29,7 +29,7 @@ fn main() {
         let main_button =
             button("Test");
 
-        let mut text_edit = TextEdit::new();
+        let mut text_edit = TextEditBase::new();
         text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));
         text_edit.set_text("Hello, world!\nMultiline".to_string());
 

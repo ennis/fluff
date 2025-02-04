@@ -299,9 +299,24 @@ pub const fn vec2(x: f64, y: f64) -> Vec2 {
     Vec2::new(x, y)
 }
 
-/// Rounds a logical px value to the nearest physical pixel.
-pub fn round_to_px(logical: f64, scale_factor: f64) -> f64 {
-    (logical * scale_factor).round() / scale_factor
+fn round_towards_infinity(x: f64) -> f64 {
+    // https://stackoverflow.com/questions/28121957/how-do-i-specify-the-rounding-mode-for-floating-point-numbers
+    let y = f64::floor(x);
+    if x == y {
+        y
+    } else {
+        f64::floor(2.*x-y)
+    }
+}
+
+/// Rounds a logical coordinate to the nearest physical pixel boundary.
+pub fn round_to_device_pixel(logical: f64, device_scale_factor: f64) -> f64 {
+    round_towards_infinity(logical * device_scale_factor) / device_scale_factor
+}
+
+/// Rounds a logical coordinate to the nearest physical pixel center.
+pub fn round_to_device_pixel_center(logical: f64, device_scale_factor: f64) -> f64 {
+    (round_towards_infinity(logical * device_scale_factor - 0.5) + 0.5) / device_scale_factor
 }
 
 pub fn linear_gradient<I, C>(
