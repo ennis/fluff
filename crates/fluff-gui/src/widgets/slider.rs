@@ -60,12 +60,11 @@ impl SliderBase {
         }
     }
 
-    pub fn paint(&mut self, ctx: &mut PaintCtx) {
+    pub fn paint(&mut self, ctx: &mut PaintCtx, rect: Rect) {
         if self.draw_background {
-            ctx.draw_display_background();
+            ctx.draw_display_background(rect);
         }
 
-        let rect = ctx.bounds();
 
         // Normalize value
         let value_norm = (self.value - self.range.start) / (self.range.end - self.range.start);
@@ -111,9 +110,9 @@ impl SliderBase {
         }
     }
 
-    pub fn measure(&self, _available: &LayoutInput) -> Size {
+    pub fn measure(&self, available: &LayoutInput) -> Size {
+        let width = available.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
-        let width = INPUT_WIDTH* 4.0;
         Size {width, height}
     }
 
@@ -193,7 +192,7 @@ impl Element for Slider {
     }
 
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        self.base.paint(ctx);
+        self.element.base.paint(ctx, self.ctx.rect());
     }
 
     fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {

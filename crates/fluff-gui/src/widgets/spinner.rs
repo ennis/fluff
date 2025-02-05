@@ -1,16 +1,19 @@
+use kyute::drawing::PlacementExt;
 use crate::colors;
 use crate::colors::DISPLAY_TEXT;
-use crate::widgets::{PaintExt, DISPLAY_TEXT_STYLE, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
-use kyute::drawing::{place, vec2, BorderPosition, RIGHT_CENTER};
-use kyute::element::prelude::*;
+use crate::widgets::menu::{MenuItem, context_menu};
+use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use kyute::application::spawn;
+use kyute::drawing::{BorderPosition, RIGHT_CENTER, place, vec2};
 use kyute::element::ElemBox;
+use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::EventSource;
 use kyute::text::Selection;
-use kyute::{Color, Point, Rect, Size};
+use kyute::{Color, Point, Rect, Size, select};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -167,12 +170,10 @@ impl SpinnerBase {
 
     fn place_buttons(&self, rect: Rect) -> SpinnerButtons {
         SpinnerButtons {
-            pos: place(
-                SpinnerButtons::SIZE.to_rect(),
-                RIGHT_CENTER,
+            pos: SpinnerButtons::SIZE.place_into(
                 rect - Insets::new(0., 0., 2., 0.),
-            )
-            .origin(),
+                RIGHT_CENTER
+            ),
         }
     }
 
@@ -198,12 +199,45 @@ impl SpinnerBase {
         }
         true
     }
+
+    fn handle_scroll(self: &mut ElemBox<Self>, scroll_delta_lines: f64) {
+        if self.editing {
+            let text = self.text_edit.text();
+            if !text.parse::<f64>().is_ok() {
+                return;
+            }
+            // determine which decimal place to change
+            // determine position relative to the decimal point
+            let selection = self.text_edit.selection();
+            let cursor_from_end = text.len() - selection.end;
+            let point = text.find('.').unwrap_or(text.len());
+            let mut decimal_place = point as i32 - selection.end as i32;
+            if decimal_place > 0 {
+                // cursor to the left of the decimal point
+                decimal_place -= 1;
+            }
+            let increment = 10_f64.powi(decimal_place) * scroll_delta_lines.signum();
+            let new_value = self.value + increment;
+            self.set_value(new_value);
+            // we may have added digits to the left, reset the cursor position
+            // relative to the end
+            let new_len = self.text_edit.text_len();
+            self.text_edit
+                .set_selection(Selection::empty(new_len - cursor_from_end));
+        } else {
+            let new_value = self.value + self.increment * scroll_delta_lines.signum();
+            self.set_value(new_value);
+        }
+    }
+
+    fn handle_context_menu(self: &mut ElemBox<Self>, entry: i32) {
+        eprintln!("Context menu entry: {:?}", entry);
+    }
 }
 
 impl Element for SpinnerBase {
-    fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
-        // fill the available width, use the fixed height
-        let width = INPUT_WIDTH;
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+        let width = layout_input.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
         Size { width, height }
     }
@@ -224,16 +258,16 @@ impl Element for SpinnerBase {
     }
 
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-
-        let rrect = ctx.bounds().to_rounded_rect(0.);
+        let rect = self.ctx.rect();
+        let rrect = rect.to_rounded_rect(0.);
 
         // paint background
         if self.show_background {
-            ctx.draw_display_background();
+            ctx.draw_display_background(rect);
         }
 
         // contents
-        self.text_edit.paint(ctx);
+        self.text_edit.paint(ctx, rect);
 
         if self.ctx.has_focus() {
             // draw the focus ring
@@ -241,7 +275,7 @@ impl Element for SpinnerBase {
         }
 
         // paint buttons
-        let buttons = self.place_buttons(ctx.bounds());
+        let buttons = self.place_buttons(rect);
         buttons.paint(ctx);
     }
 
@@ -260,6 +294,14 @@ impl Element for SpinnerBase {
                     }
                 }
 
+                // mouse wheel
+                Event::Wheel(wheel) => match wheel.delta {
+                    ScrollDelta::Lines { y, .. } => {
+                        self.handle_scroll(y);
+                    }
+                    _ => {}
+                },
+
                 Event::PointerDown(p) => {
                     // acquire focus on pointer down
                     self.ctx.set_focus();
@@ -267,6 +309,38 @@ impl Element for SpinnerBase {
 
                     // context menu
                     if p.buttons.test(PointerButton::RIGHT) {
+                        let mut this = self.weak();
+                        let Some(parent_window) = self.ctx.get_parent_window().upgrade() else {
+                            // no parent window
+                            panic!("context_menu: no parent window in context");
+                        };
+                        let position = p.position;
+
+                        spawn(async move {
+                            let menu = context_menu(
+                                parent_window,
+                                position,
+                                [
+                                    MenuItem::Entry { id: 0, label: "Copy" },
+                                    MenuItem::Entry { id: 1, label: "Cut" },
+                                    MenuItem::Entry { id: 2, label: "Paste" },
+                                    MenuItem::Separator,
+                                    MenuItem::Entry { id: 3, label: "Delete" },
+                                ],
+                            );
+
+                            loop {
+                                select! {
+                                    entry = menu.entry_activated() => {
+                                        this.run_later(move |this| this.handle_context_menu(entry));
+                                        break
+                                    }
+                                    entry = menu.entry_highlighted() => {
+                                        this.run_later(move |this| this.handle_context_menu(entry));
+                                    }
+                                }
+                            }
+                        });
 
                         //TODO
 
@@ -276,67 +350,27 @@ impl Element for SpinnerBase {
                         //     - but it's not possible, since this function `event` isn't suspendable
                         //     - even if it was suspendable, awaiting there would block all other events to this widget
 
+                        // self.run_async(async |this| {
+                        //     // `this` is `&mut Self` borrowed for the duration of the modal proc
+                        //     // issue: no events are sent, but we cannot `paint` either
 
-                      // self.run_async(async |this| {
-                      //     // `this` is `&mut Self` borrowed for the duration of the modal proc
-                      //     // issue: no events are sent, but we cannot `paint` either
+                        //     // Fundamentally, we can't have exclusive access to the widget
+                        //     // during the modal, since we must be able to call `paint` and respond
+                        //     // to certain events at all times.
+                        //     //
+                        //     // Alternative: widgets could use interior mutability, but this ship has sailed.
+                        //     // Alternative: paint, etc. are invoked in the modal closure somehow
+                        //     // Alternative: paint, etc. are not called at all while inside the modal closure
+                        //     // Alternative: when awaiting in the modal closure, release access to the widget
+                        //     //   - this is almost impossible, as it would invalidate any mut ref held
+                        //     //     across await points
+                        //     // Alternative: spawn an async task that does the async stuff and
+                        //     // then sends an event to the widget to update itself.
+                        //     // `this` is thus an `ElementRc<Self>`, and we can call run_later on it
 
-                      //     // Fundamentally, we can't have exclusive access to the widget
-                      //     // during the modal, since we must be able to call `paint` and respond
-                      //     // to certain events at all times.
-                      //     //
-                      //     // Alternative: widgets could use interior mutability, but this ship has sailed.
-                      //     // Alternative: paint, etc. are invoked in the modal closure somehow
-                      //     // Alternative: paint, etc. are not called at all while inside the modal closure
-                      //     // Alternative: when awaiting in the modal closure, release access to the widget
-                      //     //   - this is almost impossible, as it would invalidate any mut ref held
-                      //     //     across await points
-                      //     // Alternative: spawn an async task that does the async stuff and
-                      //     // then sends an event to the widget to update itself.
-                      //     // `this` is thus an `ElementRc<Self>`, and we can call run_later on it
-
-                      //     let menu = show_context_menu().await;
-                      //     this.run_later(move |this| this.handle_context_menu(menu));
-                      // });
-
-
-                    }
-                }
-
-                // mouse wheel
-                Event::Wheel(wheel) => {
-                    match wheel.delta {
-                        ScrollDelta::Lines {
-                            y, ..
-                        } => {
-                            // determine which decimal place to change
-                            if self.editing {
-                                let text = self.text_edit.text();
-                                if !text.parse::<f64>().is_ok() {
-                                    return;
-                                }
-                                // determine position relative to the decimal point
-                                let selection = self.text_edit.selection();
-                                let cursor_from_end = text.len() - selection.end;
-                                let point = text.find('.').unwrap_or(text.len());
-                                let mut decimal_place = point as i32  - selection.end as i32;
-                                if decimal_place > 0 {
-                                    // cursor to the left of the decimal point
-                                    decimal_place -= 1;
-                                }
-                                let increment = 10_f64.powi(decimal_place) * y.signum();
-                                let new_value = self.value + increment;
-                                self.set_value(new_value);
-                                // we may have added digits to the left, reset the cursor position
-                                // relative to the end
-                                let new_len = self.text_edit.text_len();
-                                self.text_edit.set_selection(Selection::empty(new_len - cursor_from_end));
-                            } else {
-                                let new_value = self.value + self.increment * y.signum();
-                                self.set_value(new_value);
-                            }
-                        }
-                        _ => {}
+                        //     let menu = show_context_menu().await;
+                        //     this.run_later(move |this| this.handle_context_menu(menu));
+                        // });
                     }
                 }
 
@@ -374,7 +408,7 @@ impl Element for SpinnerBase {
             }
             if r.reset_blink() {
                 //self.text_edit.reset_blink();
-            }            
+            }
             if matches!(event, Event::FocusLost) || r.confirmed() {
                 // When the spinner loses focus, or the user presses enter
                 // keep the current value and exit editing mode

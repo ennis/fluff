@@ -13,3 +13,6 @@ pub const BUTTON_BEVEL: Color = rgb(80, 80, 75);
 
 pub const SLIDER_LINE_BACKGROUND: Color = DISPLAY_TEXT_INACTIVE;
 pub const SLIDER_LINE: Color = DISPLAY_TEXT;
+
+pub const MENU_SEPARATOR: Color = rgb(80, 80, 75);
+pub const MENU_BACKGROUND: Color = rgb(26, 26, 26);

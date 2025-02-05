@@ -8,6 +8,7 @@ use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
 use crate::model::EventSource;
 use crate::{drawing, Color, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
+use skia_safe::PaintStyle;
 use tracing::trace_span;
 
 #[derive(Clone, Default)]
@@ -423,7 +424,7 @@ impl Element for Frame {
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         self.resolve_style();
 
-        let rect = ctx.bounds();
+        let rect = self.ctx.rect();
         let s = &self.resolved_style;
 
         let border_radius = s.border_radius;
@@ -440,7 +441,7 @@ impl Element for Frame {
         }
 
         // fill
-        let paint = Paint::Color(s.background_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
+        let paint = Paint::Color(s.background_color).to_sk_paint(PaintStyle::Fill);
         canvas.draw_rrect(inner_shape.to_skia(), &paint);
 
         // draw inset shadows
@@ -452,7 +453,7 @@ impl Element for Frame {
 
         // paint border
         if s.border_color.alpha() != 0.0 && s.border_size != Insets::ZERO {
-            let paint = Paint::Color(s.border_color).to_sk_paint(rect, skia_safe::PaintStyle::Fill);
+            let paint = Paint::Color(s.border_color).to_sk_paint(PaintStyle::Fill);
             canvas.draw_drrect(outer_shape.to_skia(), inner_shape.to_skia(), &paint);
         }
 

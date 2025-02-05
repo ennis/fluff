@@ -1,8 +1,9 @@
 use crate::colors;
 use crate::widgets::TEXT_STYLE;
-use kyute::drawing::{vec2, BASELINE_CENTER};
+use kyute::drawing::{vec2, Image, PlacementExt, BASELINE_CENTER};
 use kyute::element::prelude::*;
 use kyute::element::ElemBox;
+use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
 use kyute::{text, ElementState, Event, PaintCtx, Point, Size};
 
@@ -33,11 +34,22 @@ impl Button {
 
 impl Element for Button {
     fn measure(&mut self, input: &LayoutInput) -> Size {
-        self.label.layout(input.width.available().unwrap_or_default());
+        // layout label with available space, but don't go below the minimum width
+        self.label
+            .layout(input.width.available().unwrap_or_default().max(BUTTON_MIN_WIDTH));
         let label_width = self.label.size().width + 20.;
         let w = label_width.max(BUTTON_MIN_WIDTH);
         let h = BUTTON_HEIGHT;
         Size::new(w, h)
+    }
+
+    fn layout(&mut self, size: Size) -> LayoutOutput {
+        self.label.layout(size.width - 20.);
+        LayoutOutput {
+            width: size.width,
+            height: size.height,
+            baseline: None,
+        }
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
@@ -45,8 +57,7 @@ impl Element for Button {
     }
 
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        ctx.set_baseline(BUTTON_BASELINE);
-        let mut rect = ctx.bounds();
+        let mut rect = self.ctx.rect();
         rect.y1 -= 1.;
         let rect = rect.to_rounded_rect(BUTTON_RADIUS);
 
@@ -72,7 +83,11 @@ impl Element for Button {
         }
 
         // label
-        ctx.draw_text_layout(BASELINE_CENTER, &self.label);
+        let pos = self
+            .label
+            .rect_with_baseline()
+            .place_into((self.ctx.rect(), BUTTON_BASELINE), BASELINE_CENTER);
+        ctx.draw_text_layout(pos, &self.label);
     }
 
     fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
@@ -82,7 +97,34 @@ impl Element for Button {
     }
 }
 
+struct ButtonVisual {
+    icon: Option<Image>,
+    label: Option<TextLayout>,
+    offset: Vec2,
+}
+
+impl ButtonVisual {
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+        todo!()
+    }
+}
+
+/*
 /// A group of buttons sharing the same visual.
 pub struct ButtonGroup {
-    buttons: Vec<Button>,
+    pub buttons: Vec<ButtonVisual>,
 }
+
+impl Element for ButtonGroup {
+    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+
+    }
+
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        todo!()
+    }
+
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+        todo!()
+    }
+}*/

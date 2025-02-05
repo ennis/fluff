@@ -16,6 +16,7 @@ use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::KeyLocation;
+use winit::monitor::MonitorHandle;
 use winit::platform::windows::WindowBuilderExtWindows;
 
 use crate::app_globals::AppGlobals;
@@ -25,7 +26,9 @@ use crate::drawing::ToSkia;
 use crate::element::{
     dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
 };
-use crate::event::{key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent};
+use crate::event::{
+    key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
+};
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::{application, Color, Notifier};
 
@@ -159,6 +162,18 @@ impl WindowInner {
         //}
         //eprintln!("set_pointer_capture {}", element.name());
         self.pointer_capture.replace(Some(element));
+    }
+
+    fn map_to_screen(&self, point: Point) -> Point {
+        let window_pos = self
+            .window
+            .inner_position()
+            .expect("failed to get window position")
+            .to_logical::<f64>(self.window.scale_factor());
+        Point {
+            x: point.x + window_pos.x,
+            y: point.y + window_pos.y,
+        }
     }
 
     /// Dispatches a keyboard event in the UI tree.
@@ -530,18 +545,21 @@ impl WindowInner {
                     self.dispatch_pointer_event(event, self.cursor_pos.get());
                 }
             }
-            WindowEvent::MouseWheel {delta, ..} => {
+            WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(FocusedElement { window: _, element }) = get_keyboard_focus() {
-                    dispatch_event(element, &mut Event::Wheel(WheelEvent{
-                        delta: match *delta {
-                            MouseScrollDelta::LineDelta(x, y) => {
-                                ScrollDelta::Lines { x: x as f64, y: y as f64 }
-                            }
-                            MouseScrollDelta::PixelDelta(pos) => {
-                                ScrollDelta::Pixels { x: pos.x , y: pos.y }
-                            }
-                        }
-                    }), true);
+                    dispatch_event(
+                        element,
+                        &mut Event::Wheel(WheelEvent {
+                            delta: match *delta {
+                                MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines {
+                                    x: x as f64,
+                                    y: y as f64,
+                                },
+                                MouseScrollDelta::PixelDelta(pos) => ScrollDelta::Pixels { x: pos.x, y: pos.y },
+                            },
+                        }),
+                        true,
+                    );
                 }
             }
             WindowEvent::CloseRequested => {
@@ -804,6 +822,15 @@ impl Window {
         WeakWindow {
             shared: Rc::downgrade(&self.shared),
         }
+    }
+
+    pub fn map_to_screen(&self, pos: Point) -> Point {
+        self.shared.map_to_screen(pos)
+    }
+
+    pub fn monitor(&self) -> Option<MonitorHandle>
+    {
+        self.shared.window.current_monitor()
     }
 
     pub fn mark_needs_layout(&self) {

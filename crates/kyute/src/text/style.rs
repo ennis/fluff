@@ -28,6 +28,7 @@ pub enum StyleProperty<'a> {
     FontStyle(FontStyle),
     FontStretch(FontStretch),
     Color(Color),
+    Underline,
 }
 
 impl<'a> StyleProperty<'a> {
@@ -39,6 +40,7 @@ impl<'a> StyleProperty<'a> {
             StyleProperty::FontStyle(style) => text_style.font_style = *style,
             StyleProperty::FontStretch(stretch) => text_style.font_stretch = *stretch,
             StyleProperty::Color(color) => text_style.color = *color,
+            StyleProperty::Underline => text_style.underline = true,
         }
     }
 }

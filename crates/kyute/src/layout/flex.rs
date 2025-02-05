@@ -3,7 +3,7 @@ use crate::layout::{
     Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue,
 };
 use kurbo::{Size, Vec2};
-use tracing::trace;
+use tracing::{trace, warn};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum CrossAxisAlignment {
@@ -72,8 +72,8 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
     // ====== Measure children & margins along the main axis and calculate the sum of flex factors ======
     // ======
 
-    let mut non_flex_main_total = 0.0; // total size of non-flex children + min size of spacers
-                                       // main_axis_max - non_flex_main_total = remaining space available for growing flex children
+    let mut margin_main_total = 0.0; // total min size of margins along the main axis
+    let mut item_main_total = 0.0; // total size of children
     let mut flex_sum = 0.0; // sum of flex factors
 
     #[derive(Copy, Clone, Default)]
@@ -120,7 +120,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
             ))
             .axis(main_axis);
 
-        non_flex_main_total += item_main;
+        item_main_total += item_main;
         flex_sum += flex;
 
         measures[i] = ItemMeasure {
@@ -141,31 +141,72 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
 
         margins[i] = margins[i].combine(margin_before);
         margins[i + 1] = margins[i + 1].combine(margin_after);
-        non_flex_main_total += margins[i].size;
+        margin_main_total += margins[i].size;
         flex_sum += margins[i].flex;
     }
 
     // don't forget to take into account the last margin
-    non_flex_main_total += margins[child_count].size;
+    margin_main_total += margins[child_count].size;
     flex_sum += margins[child_count].flex;
 
     trace!(
-        "After first flex pass: non_flex_main_total: {}, flex_sum: {}",
-        non_flex_main_total,
-        flex_sum
+        "After first flex pass: margin_main_total: {margin_main_total}, flex_sum: {flex_sum}",
     );
+
+    // ======
+    // ====== Try to shrink children if it overflows ======
+    // ======
+
+    // If it overflows, we need to shrink by taking space from children
+    if item_main_total + margin_main_total > main_max {
+
+        // how much space we still need to reclaim
+        let mut still_to_reclaim = (item_main_total + margin_main_total) - main_max;
+        let mut new_main_total = 0.;
+
+        for i in 0..child_count {
+            // try to distribute shrinkage equally among remaining children
+            let shrink = still_to_reclaim / (child_count - i) as f64;
+            let (item_main, item_cross) = children[i]
+                .element
+                .measure(&LayoutInput::from_logical(
+                    main_axis,
+                    SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
+                    cross_size_constraint,
+                    parent_main,
+                    parent_cross,
+                ))
+                .main_cross(main_axis);
+            let actual_shrink = measures[i].main - item_main;
+            measures[i].main = item_main;
+            measures[i].cross = item_cross;
+            still_to_reclaim -= actual_shrink;
+            new_main_total += item_main;
+        }
+
+        if still_to_reclaim > 0.0 {
+            warn!("flex container overflow");
+        }
+
+
+        trace!(
+            "After flex shrinkage: item_main_total: {item_main_total}, flex_sum: {flex_sum}",
+        );
+
+        item_main_total = new_main_total;
+    }
 
     // ======
     // ====== Grow children & margins according to their flex factors to fill any remaining space. ======
     // ======
 
-    let remaining_main = main_max - non_flex_main_total;
-    let mut main_size = non_flex_main_total; // Size of the container along the main axis
+    let mut main_size = item_main_total + margin_main_total; // Size of the container along the main axis
 
     // We can skip growth if:
     // - there aren't any flex items (flex_sum == 0)
     // - there isn't any remaining space (remaining_main <= 0), or the remaining space is infinite
     // TODO honor growth factors even if the remaining space is negative, to keep alignment
+    let remaining_main = main_max - (item_main_total + margin_main_total);
     if remaining_main > 0.0 && remaining_main.is_finite() && flex_sum > 0.0 {
         for i in 0..child_count {
             // grow margins with flex factors

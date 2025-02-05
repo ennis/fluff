@@ -9,7 +9,7 @@ pub use selection::Selection;
 pub use style::{FontStretch, FontStyle, FontWeight, StyleProperty, TextStyle};
 pub use text_run::TextRun;
 
-use crate::drawing::ToSkia;
+use crate::drawing::{RectWithBaseline, ToSkia};
 
 mod selection;
 mod skia;
@@ -81,6 +81,15 @@ impl TextLayout {
 
         Self { inner: builder.build() }
     }
+    
+    /// Constructs a new text layout from a default text style and a string.
+    pub fn from_str(style: &TextStyle, text: &str) -> TextLayout {
+        let run = TextRun {
+            str: text,
+            styles: &[],
+        };
+        Self::new(style, &[run])
+    }
 
     /// Recomputes the layout of the text given the specified available width.
     pub fn layout(&mut self, width: f64) {
@@ -110,6 +119,13 @@ impl TextLayout {
     /// Returns the baseline of the first line of text.
     pub fn baseline(&self) -> f64 {
         self.inner.alphabetic_baseline() as f64
+    }
+    
+    pub fn rect_with_baseline(&self) -> RectWithBaseline {
+        RectWithBaseline {
+            rect: self.size().to_rect(),
+            baseline: self.baseline(),
+        }
     }
 }
 

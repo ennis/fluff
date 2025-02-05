@@ -23,7 +23,7 @@ use std::{fmt, mem, ptr};
 
 pub mod prelude {
     pub use crate::element::{
-        Element, ElementAny, ElementBuilder, ElementCtx, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
+        ElemBox, Element, ElementAny, ElementBuilder, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
         WindowCtx,
     };
     pub use crate::event::Event;
@@ -141,6 +141,14 @@ pub trait Element: Any {
     ///
     /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
     /// in ElementCtx.
+    ///
+    /// FIXME: this should return a baseline
+    ///
+    /// FIXME: this is not practical, there's no way for the element to fill its parent space.
+    ///        for flex layouts, returning input.width.available() is broken because it will
+    ///        use up all the space regardless of other elements in the flex, leading to overflow.
+    ///        Basically, elements by themselves can NEVER be flexible, they can only be flexible
+    ///        by wrapping them in FlexItem.
     fn measure(&mut self, layout_input: &LayoutInput) -> Size;
 
     /// Specifies the size of the element, and lays out its children.
@@ -152,6 +160,8 @@ pub trait Element: Any {
     ///
     /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
     /// in ElementCtx.
+    ///
+    /// FIXME: LayoutOutput is useless here, it should always return the size passed in argument
     fn layout(&mut self, size: Size) -> LayoutOutput {
         LayoutOutput {
             width: size.width,
@@ -164,6 +174,8 @@ pub trait Element: Any {
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool;
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
+    ///
+    ///
     #[allow(unused_variables)]
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx);
 
@@ -201,6 +213,13 @@ impl dyn Element + 'static {
     }
 }
 
+// FIXME: I'm not convinced that `ElemBox` is very ergonomic (because of the implicit deref,
+//        and borrowing issues with statements like `self.inner.paint(self.ctx.rect())` which don't work).
+//        The main point of `ElemBox` is to associate the element Self type to the `ElementCtxAny` context,
+//        so that we can have `run_later` or `watch_once` methods, which need the Self type
+//        and thus can't be implemented on `ElementCtxAny` directly.
+// Possible solution: remove the implicit deref to the inner element
+//                    This has some syntactical overhead but at least it avoids surprises with borrowing. 
 pub struct ElemBox<T: ?Sized> {
     pub ctx: ElementCtxAny,
     pub element: T,
@@ -359,6 +378,33 @@ impl<T: ?Sized> WeakElement<T> {
     }
 }
 
+impl<T: ?Sized + 'static> WeakElement<T> {
+    pub fn run_later(&self, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
+        let this = self.clone();
+        run_queued(move || {
+            if let Some(this) = this.upgrade() {
+                this.invoke(f);
+            }
+        })
+    }
+}
+
+impl<T: 'static> EventSource for WeakElement<T> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.0.clone()
+    }
+}
+
+impl EventSource for WeakElementAny {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        // FIXME: that's not great, we need to upgrade to get the Weak<Any> inside
+        //        the ElemBox. This may fail in reasonable situations.
+        //        This is doubly stupid because we don't care about the Any in the
+        //        subscription system, we just need to be able to compare Weak pointers.
+        self.0.upgrade().unwrap().borrow().ctx.weak_this_any.clone()
+    }
+}
+
 impl WeakElementAny {
     pub unsafe fn downcast_unchecked<T: 'static>(self) -> WeakElement<T> {
         unsafe {
@@ -455,6 +501,16 @@ impl<T: ?Sized> ElementRc<T> {
     pub(crate) fn borrow_mut(&self) -> RefMut<ElemBox<T>> {
         self.0.borrow_mut()
     }
+
+    /// Invokes a method on this widget.
+    ///
+    /// Propagates the dirty flags up the tree.
+    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<T>) -> R) -> R {
+        let ref mut inner = *self.borrow_mut();
+        let r = f(inner);
+        inner.ctx.propagate_dirty_flags();
+        r
+    }
 }
 
 impl<T: Element + ?Sized> ElementRc<T> {
@@ -515,15 +571,6 @@ impl<T: Element> ElementRc<T> {
     pub fn as_dyn(&self) -> ElementAny {
         ElementRc(self.0.clone())
     }
-
-    /// Invokes a method on this widget.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<T>) -> R) -> R {
-        // TODO don't go through dyn
-        self.as_dyn().invoke(move |this| {
-            let this = this.downcast_mut().expect("unexpected type of element");
-            f(this)
-        })
-    }
 }
 
 impl ElementAny {
@@ -541,16 +588,6 @@ impl ElementAny {
         ancestors
     }
 
-    /// Invokes a method on this widget.
-    ///
-    /// Propagates the dirty flags up the tree.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<dyn Element>) -> R) -> R {
-        let ref mut inner = *self.borrow_mut();
-        let r = f(inner);
-        inner.ctx.propagate_dirty_flags();
-        r
-    }
-
     /// Registers the parent window of this element.
     ///
     /// This is called on the root widget of each window.
@@ -562,7 +599,7 @@ impl ElementAny {
     ///
     /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
     /// root to get the window handle.
-    pub(crate) fn get_parent_window(&self) -> WeakWindow {
+    pub fn get_parent_window(&self) -> WeakWindow {
         let mut current = self.clone();
         // climb up to the root element which holds a valid window pointer
         while let Some(parent) = current.parent() {
@@ -617,7 +654,7 @@ impl ElementAny {
 
     pub fn send_event(&self, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
-        inner.event(&mut WindowCtx{}, event);
+        inner.event(&mut WindowCtx {}, event);
         inner.ctx.propagate_dirty_flags();
     }
 
@@ -626,14 +663,7 @@ impl ElementAny {
         let transform = inner.ctx.transform;
 
         parent_ctx.save();
-        parent_ctx.transform(
-            &transform,
-            Rect::from_origin_size(
-                Point::ZERO,
-                Size::new(inner.ctx.geometry.width, inner.ctx.geometry.height),
-            ),
-            inner.ctx.geometry.baseline.unwrap_or(0.0),
-        );
+        parent_ctx.transform(&transform);
         inner.paint(parent_ctx);
         parent_ctx.restore();
 
@@ -857,51 +887,23 @@ impl ElementCtxAny {
             }
         }
     }
+
+    /// Returns the parent window of this element.
+    ///
+    /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
+    /// root to get the window handle.
+    pub fn get_parent_window(&self) -> WeakWindow {
+        if let Some(parent) = self.parent.upgrade() {
+            parent.get_parent_window()
+        } else {
+            self.window.clone()
+        }
+    }
 }
 
 impl EventSource for ElementCtxAny {
     fn as_weak(&self) -> Weak<dyn Any> {
         self.weak_this_any.clone()
-    }
-}
-
-pub struct ElementCtx<T> {
-    inner: ElementCtxAny,
-    _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T: 'static> EventSource for ElementCtx<T> {
-    fn as_weak(&self) -> Weak<dyn Any> {
-        self.inner.weak_this_any.clone()
-    }
-}
-
-impl<T: 'static> ElementCtx<T> {
-    pub fn new() -> ElementCtx<T> {
-        ElementCtx {
-            inner: ElementCtxAny::new(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    pub fn with_parent(parent: WeakElementAny) -> ElementCtx<T> {
-        let mut ctx = ElementCtx::new();
-        ctx.inner.parent = parent;
-        ctx
-    }
-}
-
-impl<T> Deref for ElementCtx<T> {
-    type Target = ElementCtxAny;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T> DerefMut for ElementCtx<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
     }
 }
 

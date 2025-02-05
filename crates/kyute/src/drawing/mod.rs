@@ -10,8 +10,10 @@ pub use image::{Image, StaticImage};
 pub use linear_gradient::{ColorStop, InterpolationColorSpace, LinearGradient};
 pub use paint::Paint;
 pub use placement::{
+    PlacementExt,
+    RectWithBaseline,
     align, place, place_rect_into, Anchor, Placement, BASELINE_CENTER, BASELINE_LEFT, BASELINE_RIGHT, BOTTOM_CENTER,
-    BOTTOM_LEFT, BOTTOM_RIGHT, CENTER, LEFT_CENTER, RIGHT_CENTER, TOP_CENTER, TOP_LEFT, TOP_RIGHT,
+    BOTTOM_LEFT, BOTTOM_RIGHT, CENTER, LEFT_CENTER, RIGHT_CENTER, TOP_CENTER, TOP_LEFT, TOP_RIGHT, Anchor2D, Alignment
 };
 
 mod box_shadow;

@@ -1,53 +1,155 @@
-use kurbo::{Point, Rect};
+use kurbo::{Point, Rect, Size};
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub enum Anchor {
+pub enum Alignment {
+    // For maximum flexibility this could be a float value (0.0 = start, 0.5 = center, 1.0 = end)
     #[default]
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-    Top,    // == TopCenter
-    Bottom, // == BottomCenter
-    Left,   // == LeftCenter
-    Right,  // == RightCenter
+    Start,
     Center,
-    BaselineLeft,
-    BaselineRight,
-    Baseline, // == BaselineCenter
-    Absolute(Point),
+    End,
+    Baseline,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct Anchor {
+    pub alignment: Alignment,
+    pub offset: f64,
 }
 
 impl Anchor {
-    pub fn to_point(self, container: Rect, container_baseline: f64) -> Point {
-        match self {
-            Anchor::TopLeft => Point::new(container.x0, container.y0),
-            Anchor::TopRight => Point::new(container.x1, container.y0),
-            Anchor::BottomLeft => Point::new(container.x0, container.y1),
-            Anchor::BottomRight => Point::new(container.x1, container.y1),
-            Anchor::Top => Point::new(container.x0 + 0.5 * container.width(), container.y0),
-            Anchor::Bottom => Point::new(container.x0 + 0.5 * container.width(), container.y1),
-            Anchor::Left => Point::new(container.x0, container.y0 + 0.5 * container.height()),
-            Anchor::Right => Point::new(container.x1, container.y0 + 0.5 * container.height()),
-            Anchor::Center => Point::new(
-                container.x0 + 0.5 * container.width(),
-                container.y0 + 0.5 * container.height(),
-            ),
-            Anchor::BaselineLeft => Point::new(container.x0, container.y0 + container_baseline),
-            Anchor::BaselineRight => Point::new(container.x1, container.y0 + container_baseline),
-            Anchor::Baseline => Point::new(
-                container.x0 + 0.5 * container.width(),
-                container.y0 + container_baseline,
-            ),
-            Anchor::Absolute(point) => point,
+    pub fn to_pos(self, x0: f64, x1: f64, baseline: f64) -> f64 {
+        match self.alignment {
+            Alignment::Start => x0 + self.offset,
+            Alignment::Center => x0 + 0.5 * (x1 - x0) + self.offset,
+            Alignment::End => x1 + self.offset,
+            Alignment::Baseline => x0 + baseline + self.offset,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct Anchor2D {
+    pub x: Anchor,
+    pub y: Anchor,
+}
+
+impl Anchor2D {
+    pub fn to_point(self, container: Rect, container_baseline: f64) -> Point {
+        // TODO: vertical baselines
+        let x = self.x.to_pos(container.x0, container.x1, container_baseline);
+        let y = self.y.to_pos(container.y0, container.y1, container_baseline);
+        Point { x, y }
+    }
+
+    pub const TOP_LEFT: Self = Self {
+        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+    };
+    pub const TOP_RIGHT: Self = Self {
+        x: Anchor { alignment: Alignment::End, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+    };
+    pub const BOTTOM_LEFT: Self = Self {
+        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+    };
+    pub const BOTTOM_RIGHT: Self = Self {
+        x: Anchor { alignment: Alignment::End, offset: 0.0 },
+        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+    };
+    pub const TOP: Self = Self {
+        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+    };
+    pub const BOTTOM: Self = Self {
+        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+    };
+    pub const LEFT: Self = Self {
+        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+    };
+    pub const RIGHT: Self = Self {
+        x: Anchor { alignment: Alignment::End, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+    };
+    pub const CENTER: Self = Self {
+        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+    };
+    pub const BASELINE_LEFT: Self = Self {
+        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+    };
+    pub const BASELINE_RIGHT: Self = Self {
+        x: Anchor { alignment: Alignment::End, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+    };
+    pub const BASELINE: Self = Self {
+        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
-    pub container: Anchor,
-    pub content: Anchor,
+    pub container: Anchor2D,
+    pub content: Anchor2D,
+}
+
+/// A rectangle with a baseline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RectWithBaseline {
+    pub rect: Rect,
+    pub baseline: f64,
+}
+
+impl From<Rect> for RectWithBaseline {
+    fn from(rect: Rect) -> Self {
+        RectWithBaseline { rect, baseline: rect.height() }
+    }
+}
+
+impl From<(Rect, f64)> for RectWithBaseline {
+    fn from((rect, baseline): (Rect, f64)) -> Self {
+        RectWithBaseline { rect, baseline }
+    }
+}
+
+impl From<Size> for RectWithBaseline {
+    fn from(size: Size) -> Self {
+        RectWithBaseline { rect: size.to_rect(), baseline: size.height }
+    }
+}
+
+impl From<(Size, f64)> for RectWithBaseline {
+    fn from((size, baseline): (Size, f64)) -> Self {
+        RectWithBaseline { rect: size.to_rect(), baseline }
+    }
+}
+
+pub trait PlacementExt {
+    fn place_into(self, container: impl Into<RectWithBaseline>, placement: impl Into<Placement>) -> Point;
+}
+
+impl PlacementExt for RectWithBaseline {
+    fn place_into(self, container: impl Into<RectWithBaseline>, placement: impl Into<Placement>) -> Point {
+        let container = container.into();
+        let placement = placement.into();
+        place_rect_into(container.rect, container.baseline, self.rect, self.baseline, placement)
+    }
+}
+
+impl PlacementExt for Size {
+    fn place_into(self, container: impl Into<RectWithBaseline>, placement: impl Into<Placement>) -> Point {
+        RectWithBaseline::from(self).place_into(container, placement)
+    }
+}
+
+impl PlacementExt for Rect {
+    fn place_into(self, container: impl Into<RectWithBaseline>, placement: impl Into<Placement>) -> Point {
+        RectWithBaseline::from(self).place_into(container, placement)
+    }
 }
 
 pub fn place_rect_into(
@@ -65,9 +167,9 @@ pub fn place_rect_into(
 
 pub fn align(
     content: Rect,
-    content_anchor: impl Into<Anchor>,
+    content_anchor: impl Into<Anchor2D>,
     container: Rect,
-    container_anchor: impl Into<Anchor>,
+    container_anchor: impl Into<Anchor2D>,
 ) -> Rect {
     let pos = place_rect_into(
         container,
@@ -87,8 +189,8 @@ pub fn place(content: Rect, placement: impl Into<Placement>, container: Rect) ->
     align(content, placement.content, container, placement.container)
 }
 
-impl From<Anchor> for Placement {
-    fn from(anchor: Anchor) -> Self {
+impl From<Anchor2D> for Placement {
+    fn from(anchor: Anchor2D) -> Self {
         Placement {
             container: anchor,
             content: anchor,
@@ -96,57 +198,57 @@ impl From<Anchor> for Placement {
     }
 }
 
-impl From<(Anchor, Anchor)> for Placement {
-    fn from((container, content): (Anchor, Anchor)) -> Self {
+impl From<(Anchor2D, Anchor2D)> for Placement {
+    fn from((container, content): (Anchor2D, Anchor2D)) -> Self {
         Placement { container, content }
     }
 }
 
 pub const TOP_LEFT: Placement = Placement {
-    container: Anchor::TopLeft,
-    content: Anchor::TopLeft,
+    container: Anchor2D::TOP_LEFT,
+    content: Anchor2D::TOP_LEFT,
 };
 pub const TOP_RIGHT: Placement = Placement {
-    container: Anchor::TopRight,
-    content: Anchor::TopRight,
+    container: Anchor2D::TOP_RIGHT,
+    content: Anchor2D::TOP_RIGHT,
 };
 pub const BOTTOM_LEFT: Placement = Placement {
-    container: Anchor::BottomLeft,
-    content: Anchor::BottomLeft,
+    container: Anchor2D::BOTTOM_LEFT,
+    content: Anchor2D::BOTTOM_LEFT,
 };
 pub const BOTTOM_RIGHT: Placement = Placement {
-    container: Anchor::BottomRight,
-    content: Anchor::BottomRight,
+    container: Anchor2D::BOTTOM_RIGHT,
+    content: Anchor2D::BOTTOM_RIGHT,
 };
 pub const TOP_CENTER: Placement = Placement {
-    container: Anchor::Top,
-    content: Anchor::Top,
+    container: Anchor2D::TOP,
+    content: Anchor2D::TOP,
 };
 pub const BOTTOM_CENTER: Placement = Placement {
-    container: Anchor::Bottom,
-    content: Anchor::Bottom,
+    container: Anchor2D::BOTTOM,
+    content: Anchor2D::BOTTOM,
 };
 pub const LEFT_CENTER: Placement = Placement {
-    container: Anchor::Left,
-    content: Anchor::Left,
+    container: Anchor2D::LEFT,
+    content: Anchor2D::LEFT,
 };
 pub const RIGHT_CENTER: Placement = Placement {
-    container: Anchor::Right,
-    content: Anchor::Right,
+    container: Anchor2D::RIGHT,
+    content: Anchor2D::RIGHT,
 };
 pub const CENTER: Placement = Placement {
-    container: Anchor::Center,
-    content: Anchor::Center,
+    container: Anchor2D::CENTER,
+    content: Anchor2D::CENTER,
 };
 pub const BASELINE_LEFT: Placement = Placement {
-    container: Anchor::BaselineLeft,
-    content: Anchor::BaselineLeft,
+    container: Anchor2D::BASELINE_LEFT,
+    content: Anchor2D::BASELINE_LEFT,
 };
 pub const BASELINE_RIGHT: Placement = Placement {
-    container: Anchor::BaselineRight,
-    content: Anchor::BaselineRight,
+    container: Anchor2D::BASELINE_RIGHT,
+    content: Anchor2D::BASELINE_RIGHT,
 };
 pub const BASELINE_CENTER: Placement = Placement {
-    container: Anchor::Baseline,
-    content: Anchor::Baseline,
+    container: Anchor2D::BASELINE,
+    content: Anchor2D::BASELINE,
 };

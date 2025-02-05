@@ -1,18 +1,19 @@
-use bitflags::{bitflags};
+use bitflags::bitflags;
 use keyboard_types::Key;
 use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
+use skia_safe::PaintStyle;
 use std::ops::Range;
 use std::time::Duration;
 use tracing::{trace_span, warn};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{HitTestCtx};
+use crate::element::HitTestCtx;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{ Color,  PaintCtx};
+use crate::{Color, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {
@@ -640,9 +641,7 @@ impl TextEditBase {
         ctx.rect.contains(point)
     }
 
-    pub fn paint(&mut self, ctx: &mut PaintCtx) {
-        let bounds = ctx.bounds();
-
+    pub fn paint(&mut self, ctx: &mut PaintCtx, bounds: Rect) {
         // Relayout if someone called set_text or set_text_style between the last call to layout() and now.
         if self.relayout {
             self.layout(Size::new(bounds.width(), bounds.height()));
@@ -662,7 +661,7 @@ impl TextEditBase {
             RectHeightStyle::Tight,
             RectWidthStyle::Tight,
         );
-        let selection_paint = Paint::from(self.selection_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
+        let selection_paint = Paint::from(self.selection_color).to_sk_paint(PaintStyle::Fill);
         for text_box in selection_rects {
             ctx.canvas().draw_rect(text_box.rect, &selection_paint);
         }
@@ -674,7 +673,7 @@ impl TextEditBase {
                     Size::new(1.0, info.bounds.height() as f64),
                 );
                 //eprintln!("caret_rect: {:?}", caret_rect);
-                let caret_paint = Paint::from(self.caret_color).to_sk_paint(bounds, skia_safe::PaintStyle::Fill);
+                let caret_paint = Paint::from(self.caret_color).to_sk_paint(PaintStyle::Fill);
                 ctx.canvas().draw_rect(caret_rect.to_skia(), &caret_paint);
             }
         }
@@ -721,7 +720,10 @@ impl TextEditBase {
                     Some(Gesture::WordSelection { anchor }) => {
                         let text_offset = self.text_position_for_point(pos);
                         let word_selection = self.word_selection_at_text_position(text_offset);
-                        flags.set(F::SELECTION_CHANGED, self.set_selection(add_selections(anchor, word_selection)));
+                        flags.set(
+                            F::SELECTION_CHANGED,
+                            self.set_selection(add_selections(anchor, word_selection)),
+                        );
                         flags |= F::RESET_BLINK;
                     }
                     _ => {}
@@ -758,7 +760,7 @@ impl TextEditBase {
                         } else {
                             self.move_cursor_to_next_grapheme(keep_anchor);
                         }
-                        flags |= F::SELECTION_CHANGED| F::RESET_BLINK;
+                        flags |= F::SELECTION_CHANGED | F::RESET_BLINK;
                     }
                     Key::Backspace => {
                         if self.selection.is_empty() {

@@ -272,6 +272,17 @@ pub struct LayoutInput {
     pub parent_height: Option<f64>,
 }
 
+impl Default for LayoutInput {
+    fn default() -> Self {
+        LayoutInput {
+            width: SizeConstraint::Unspecified,
+            height: SizeConstraint::Unspecified,
+            parent_width: None,
+            parent_height: None,
+        }
+    }
+}
+
 impl fmt::Debug for LayoutInput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}×{:?}", self.width, self.height)

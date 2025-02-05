@@ -1,5 +1,5 @@
 //! Description of paints.
-use kurbo::Rect;
+use kurbo::{ Size};
 use skia_safe as sk;
 
 use crate::drawing::{Image, LinearGradient, ToSkia};
@@ -148,14 +148,15 @@ impl Paint {
     }
 
     /// Converts this object to a skia `SkPaint`.
-    pub fn to_sk_paint(&self, bounds: Rect, style: skia_safe::PaintStyle) -> sk::Paint {
+    pub fn to_sk_paint(&self, style: skia_safe::PaintStyle) -> sk::Paint {
         let mut paint = match self {
             Paint::Color(color) => {
                 let mut paint = sk::Paint::new(color.to_skia(), None);
                 paint.set_anti_alias(true);
                 paint
             }
-            Paint::LinearGradient(linear_gradient) => linear_gradient.to_skia_paint(bounds),
+            // TODO linear gradient bounds, should be specified in the gradient itself (two points in local coordinates)
+            Paint::LinearGradient(linear_gradient) => linear_gradient.to_skia_paint(Size::new(200.0, 200.0).to_rect()),
             Paint::Image {
                 image,
                 repeat_x,

@@ -13,6 +13,9 @@ use std::rc::{Rc, Weak};
 // New
 pub trait EventSource: Any {
     /// Returns this object as a weak reference.
+    ///
+    /// FIXME: this should not be `dyn Any`, as we never access the object, but it's the only way
+    ///        to erase the type of the object.
     fn as_weak(&self) -> Weak<dyn Any>;
 
     #[track_caller]
@@ -32,8 +35,48 @@ pub trait EventSource: Any {
     }
 
     #[track_caller]
+    fn subscribe_once<E: 'static>(&self, callback: impl FnOnce(Weak<dyn Any>, &E) + 'static) -> SubscriptionKey
+    where
+        Self: Sized,
+    {
+        let mut callback = Some(callback);
+        self.subscribe(move |source, e| {
+            callback.take().unwrap()(source, e);
+            false
+        })
+    }
+
+    #[track_caller]
     fn emit<E: 'static>(&self, event: E) {
         emit_inner(self.as_weak(), Box::new(event), type_name::<E>())
+    }
+
+    async fn wait_event<E: 'static + Clone>(&self) -> E
+    where
+        Self: Sized,
+    {
+        // TODO this is not very efficient since it allocates,
+        //      but it will do until I figure out how to do this with direct pointers
+        //      (see the comment in `Notifier::wait`)
+        //      This is especially nasty when used inside a select loop, since it will allocate
+        //      a new oneshot on every iteration.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        let key = self.subscribe_once(move |_, e: &E| {
+            let _ = tx.send(e.clone());
+        });
+
+        // If the future is cancelled, we need to make sure the subscription is removed
+        // So wrap the subsciption in a guard object
+        struct Guard(SubscriptionKey);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.unsubscribe();
+            }
+        }
+        let _guard = Guard(key);
+
+        rx.await.unwrap()
     }
 }
 

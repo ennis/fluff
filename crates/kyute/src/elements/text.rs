@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, HitTestCtx, WindowCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
@@ -11,7 +11,6 @@ use crate::PaintCtx;
 
 /// A run of styled text.
 pub struct Text {
-    ctx: ElementCtx<Self>,
     paragraph: textlayout::Paragraph,
 }
 
@@ -30,12 +29,11 @@ impl Text {
     pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
         let paragraph = text.into().inner;
         ElementBuilder::new(Text {
-            ctx: ElementCtx::new(),
             paragraph,
         })
     }
 
-    pub fn set_text(&mut self, text_style: &TextStyle, text: &[TextRun]) {
+    pub fn set_text(self: &mut ElemBox<Self>, text_style: &TextStyle, text: &[TextRun]) {
         let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
         self.ctx.mark_needs_layout();
@@ -64,8 +62,8 @@ impl Element for Text {
         output
     }
 
-    fn hit_test(&self, _ctx: &mut HitTestCtx, point: Point) -> bool {
-        self.ctx.rect().contains(point)
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        ctx.rect.contains(point)
     }
 
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
