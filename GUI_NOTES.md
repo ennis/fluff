@@ -1451,4 +1451,10 @@ ElementBuilder is an owned pointer to the element (like box).
 On a side table, store child->parent relationships.
 On a side table, store dirty flags.
 
-`ElementRc` becomes a single usize index `ElementRef<T>(usize)` to the element table, and it signifies ownership.
+`ElementRc` becomes a single pointer to the element table `ElementRef<T>(usize)`, and it signifies ownership.
+Thus it is not copyable. However, to access an element you need an exclusive reference to the table, with a separate `&mut ElemBox`.
+
+`WeakElement` is a generational index. It can be upgraded to a `&mut ElemBox`, but this locks the element table for writing.
+
+`&mut Node<Self>` is a mutable reference to an entry in the element table (i.e. a mutable reference to an element).
+It can be used to access other elements in the tree, given a `&mut ElementRef`.
