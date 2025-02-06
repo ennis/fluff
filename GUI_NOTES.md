@@ -1404,3 +1404,51 @@ Considerations:
 - an attainable goal would be to make a macro for more concisely specifying shapes and fills and groups, like SVG
     - basically, a macro to produce an inline representation of SVG, with parameters interpolated from the surrounding
       context
+
+
+# Next steps
+- Context menus have to close when they lose focus
+- Better API (wrapper) for monitor size
+- Submenus
+- Better event handling: right now it's only convenient to listen to events from widgets _and_ modify the same widget (the `on` method).
+  - There should be a way to watch events from any target (OK), and to add callbacks that take a mutable reference to the target.
+    - This is only convenient with `ElementBuilder::on()`
+
+# Event emitter unification
+
+- Have `Window` be an `EventEmitter`
+- Figure out how we avoid (or not) borrowing errors with `ElementRc`
+  - when do we need to use `run_later`?
+  - what we must guarantee is to correctly propagate flags up the tree when invoking a method on an element
+    - but recursively calling `ElementRc::invoke` on a child element won't work, because the parent element is borrowed 
+    - Solution: disallow direct calls to `invoke` on child elements, 
+      - all calls to invoke must be in a `run_later` closure to ensure no outstanding borrows
+      - but: how to enforce that? invoke must be made private, and there needs to be specializations of `run_later` 
+        for `ElementRc`
+        - too complicated
+  - allow direct calls to child elements, using borrow_mut
+    - it's the responsibility of the caller to avoid reentrancy
+    - usually won't be a problem when responding to events
+  - the `ElemBox::callback` pattern may be generalizable to other `Rc<RefCell>`-like objects
+
+- `ElemBox::callback` not super intuitive, doesn't work with callbacks that get multiple parameters
+  - also it doesn't work with closures that take a reference because it's impossible to make it generic (the type parameter would have to be a HKT)
+  - maybe a macro instead?
+
+# Getting rid of parent pointers?
+
+May be possible. But there needs to be an alternate way of building an explicit hierarchy, because it's necessary 
+to propagate dirty flags up the tree.
+Alternative: IDs
+
+- each element has a unique ID (generational index)
+- when an element is added to a parent, update the global parent->child relationship table
+    - when an element is dropped, remove the key from the table
+
+Instead of allocating with Rc, allocate in generational table (boxed).
+ElementBuilder is an owned pointer to the element (like box). 
+
+On a side table, store child->parent relationships.
+On a side table, store dirty flags.
+
+`ElementRc` becomes a single usize index `ElementRef<T>(usize)` to the element table, and it signifies ownership.

@@ -3,7 +3,7 @@ use bitflags::bitflags;
 use kyute::kurbo::{Line, PathEl, Vec2};
 use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
 use kyute::drawing::point;
-use kyute::element::{ElemBox, ElementCtxAny, HitTestCtx, WindowCtx};
+use kyute::element::{ElemBox, ElementCtx, HitTestCtx, WindowCtx};
 use kyute::elements::ValueChangedEvent;
 use kyute::event::ScrollDelta;
 use kyute::layout::{LayoutInput, LayoutOutput};

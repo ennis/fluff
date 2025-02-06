@@ -23,7 +23,7 @@ use std::{fmt, mem, ptr};
 
 pub mod prelude {
     pub use crate::element::{
-        ElemBox, Element, ElementAny, ElementBuilder, ElementCtxAny, HitTestCtx, IntoElementAny, WeakElementAny,
+        ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny,
         WindowCtx,
     };
     pub use crate::event::Event;
@@ -221,7 +221,7 @@ impl dyn Element + 'static {
 // Possible solution: remove the implicit deref to the inner element
 //                    This has some syntactical overhead but at least it avoids surprises with borrowing. 
 pub struct ElemBox<T: ?Sized> {
-    pub ctx: ElementCtxAny,
+    pub ctx: ElementCtx,
     pub element: T,
 }
 
@@ -257,7 +257,7 @@ impl ElemBox<dyn Element> {
 impl<T: Element> ElemBox<T> {
     fn new(element: T) -> UniqueRc<RefCell<ElemBox<T>>> {
         let mut rc = UniqueRc::new(RefCell::new(ElemBox {
-            ctx: ElementCtxAny::new(),
+            ctx: ElementCtx::new(),
             element,
         }));
         let weak = UniqueRc::downgrade(&rc);
@@ -272,7 +272,7 @@ impl<T: Element> ElemBox<T> {
         // because the resulting weak pointer can't be upgraded anyway.
         let weak: Weak<RefCell<ElemBox<T>>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
         urc.get_mut().write(ElemBox {
-            ctx: ElementCtxAny::new(),
+            ctx: ElementCtx::new(),
             element: f(WeakElement(weak.clone())),
         });
         // SAFETY: the value is now initialized
@@ -303,6 +303,21 @@ impl<T: Element> ElemBox<T> {
         run_after(duration, move || {
             Self::invoke_helper(weak_this, f);
         })
+    }
+
+    // Impossible: V is a specific type, but the input closure might be generic over V via lifetimes
+    pub fn callback<V, R>(&self, mut f: impl FnMut(&mut ElemBox<T>, V) -> R) -> impl FnMut(V) -> R {
+        let weak_this = self.ctx.weak_this.clone();
+        move |value| {
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(|this| {
+                    let this = this.downcast_mut().expect("unexpected type of element");
+                    f(this, value)
+                })
+            } else {
+                panic!("element is dead")
+            }
+        }
     }
 
     #[track_caller]
@@ -362,7 +377,7 @@ impl<T: ?Sized> DerefMut for ElemBox<T> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Weak reference to an element in the element tree.
-pub struct WeakElement<T: ?Sized>(Weak<RefCell<ElemBox<T>>>);
+pub struct WeakElement<T: ?Sized = dyn Element>(Weak<RefCell<ElemBox<T>>>);
 
 pub type WeakElementAny = WeakElement<dyn Element>;
 
@@ -493,19 +508,19 @@ impl<T: ?Sized> ElementRc<T> {
     //}
 
     /// Borrows the inner element.
-    pub(crate) fn borrow(&self) -> Ref<ElemBox<T>> {
+    pub fn borrow(&self) -> Ref<ElemBox<T>> {
         self.0.borrow()
     }
 
     /// Borrows the inner element mutably.
-    pub(crate) fn borrow_mut(&self) -> RefMut<ElemBox<T>> {
+    pub fn borrow_mut(&self) -> RefMut<ElemBox<T>> {
         self.0.borrow_mut()
     }
 
     /// Invokes a method on this widget.
     ///
     /// Propagates the dirty flags up the tree.
-    pub(crate) fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<T>) -> R) -> R {
+    pub fn invoke<R>(&self, f: impl FnOnce(&mut ElemBox<T>) -> R) -> R {
         let ref mut inner = *self.borrow_mut();
         let r = f(inner);
         inner.ctx.propagate_dirty_flags();
@@ -713,7 +728,7 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct ElementCtxAny {
+pub struct ElementCtx {
     parent: WeakElementAny,
     /// Weak pointer to this element (~= `Weak<RefCell<dyn Element>>`)
     weak_this: WeakElementAny,
@@ -736,9 +751,9 @@ pub struct ElementCtxAny {
     focused: bool,
 }
 
-impl ElementCtxAny {
-    pub fn new() -> ElementCtxAny {
-        ElementCtxAny {
+impl ElementCtx {
+    pub fn new() -> ElementCtx {
+        ElementCtx {
             parent: WeakElementAny::default(),
             weak_this: WeakElementAny::default(),
             weak_this_any: Weak::<()>::default(),
@@ -769,6 +784,7 @@ impl ElementCtxAny {
         self.transform *= Affine::translate(offset);
     }
 
+    // FIXME: rename to "bounds"?
     pub fn rect(&self) -> Rect {
         self.size().to_rect()
     }
@@ -901,7 +917,7 @@ impl ElementCtxAny {
     }
 }
 
-impl EventSource for ElementCtxAny {
+impl EventSource for ElementCtx {
     fn as_weak(&self) -> Weak<dyn Any> {
         self.weak_this_any.clone()
     }
@@ -961,7 +977,7 @@ impl<T: Element> ElementBuilder<T> {
     #[track_caller]
     pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut ElemBox<T>, &Event) + 'static) -> Self {
         let weak = self.weak();
-        self.subscribe(move |_, e| {
+        self.subscribe(move |e| {
             if let Some(this) = weak.upgrade() {
                 this.invoke(|this| {
                     f(this, e);

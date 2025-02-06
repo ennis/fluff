@@ -321,11 +321,19 @@ impl Element for SpinnerBase {
                                 parent_window,
                                 position,
                                 [
-                                    MenuItem::Entry { id: 0, label: "Copy" },
-                                    MenuItem::Entry { id: 1, label: "Cut" },
-                                    MenuItem::Entry { id: 2, label: "Paste" },
+                                    MenuItem::Entry { id: 0, label: "Copy".to_string(), submenu: vec![] },
+                                    MenuItem::Entry { id: 1, label: "Cut".to_string(), submenu: vec![] },
+                                    MenuItem::Entry { id: 2, label: "Paste".to_string(), submenu: vec![] },
                                     MenuItem::Separator,
-                                    MenuItem::Entry { id: 3, label: "Delete" },
+                                    MenuItem::Entry { id: 3, label: "Delete".to_string(), submenu: vec![] },
+                                    MenuItem::Separator,
+                                    MenuItem::Entry { id: 4, label: "Advanced".to_string(), submenu: vec![
+                                        MenuItem::Entry { id: 5, label: "Advanced 1".to_string(), submenu: vec![] },
+                                        MenuItem::Entry { id: 6, label: "Advanced 2".to_string(), submenu: vec![
+                                            MenuItem::Entry { id: 7, label: "Advanced 2.1".to_string(), submenu: vec![] },
+                                            MenuItem::Entry { id: 8, label: "Advanced 2.2".to_string(), submenu: vec![] },
+                                        ] },
+                                    ] },
                                 ],
                             );
 
@@ -336,7 +344,7 @@ impl Element for SpinnerBase {
                                         break
                                     }
                                     entry = menu.entry_highlighted() => {
-                                        this.run_later(move |this| this.handle_context_menu(entry));
+                                        //this.run_later(move |this| this.handle_context_menu(entry));
                                     }
                                 }
                             }

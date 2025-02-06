@@ -2,6 +2,8 @@
 //!
 //! `Window` manages an operating system window that hosts a tree of `Visual` elements.
 //! It is responsible for translating window events from winit into `Events` that are dispatched to the `Visual` tree.
+
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::{Rc, Weak};
@@ -30,7 +32,8 @@ use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
-use crate::{application, Color, Notifier};
+use crate::model::EventEmitter;
+use crate::{application, Color, EventSource, Notifier};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -74,6 +77,15 @@ pub fn default_typeface() -> Typeface {
         .clone()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusChanged(pub bool);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CloseRequested;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Resized(pub Size);
+
 /// Stores information about the last click (for double-click handling)
 #[derive(Clone, Debug)]
 struct LastClick {
@@ -100,10 +112,9 @@ struct InputState {
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
 
-    close_requested: Notifier<()>, //RefCell<Option<Box<dyn Fn()>>>,
-    focus_changed: Notifier<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
-    resized: Notifier<Size>,       // RefCell<Option<Box<dyn Fn(Size)>>>,
-
+    //close_requested: Notifier<()>, //RefCell<Option<Box<dyn Fn()>>>,
+    //focus_changed: Notifier<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
+    //resized: Notifier<Size>,       // RefCell<Option<Box<dyn Fn(Size)>>>,
     root: ElementAny,
     layer: Layer,
     window: winit::window::Window,
@@ -563,11 +574,11 @@ impl WindowInner {
                 }
             }
             WindowEvent::CloseRequested => {
-                self.close_requested.invoke(());
+                self.weak_this.emit(CloseRequested);
             }
             WindowEvent::Resized(size) => {
                 let sizef = Size::new(size.width as f64, size.height as f64);
-                self.resized.invoke(sizef);
+                self.weak_this.emit(Resized(sizef));
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
                     self.layer.set_surface_size(sizef);
@@ -575,7 +586,7 @@ impl WindowInner {
                 self.needs_layout.set(true);
             }
             WindowEvent::Focused(focused) => {
-                self.focus_changed.invoke(*focused);
+                self.weak_this.emit(FocusChanged(*focused));
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -659,8 +670,21 @@ impl WindowHandler for WindowInner {
     }
 }
 
+#[derive(Clone)]
 pub struct Window {
     shared: Rc<WindowInner>,
+}
+
+impl EventSource for Window {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        Rc::downgrade(&self.shared) as Weak<dyn Any>
+    }
+}
+
+impl EventSource for Weak<WindowInner> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.clone() as Weak<dyn Any>
+    }
 }
 
 /// A weak reference to a window.
@@ -712,6 +736,16 @@ impl WeakWindow {
             .map(|shared| shared.is_focused(element))
             .unwrap_or(false)
     }*/
+}
+
+#[derive(Debug, Clone)]
+pub struct Monitor(MonitorHandle);
+
+impl Monitor {
+    pub fn logical_size(&self) -> Size {
+        let size = self.0.size().to_logical(self.0.scale_factor());
+        Size::new(size.width, size.height)
+    }
 }
 
 pub struct WindowOptions<'a> {
@@ -785,9 +819,6 @@ impl Window {
         let window_id = window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
-            close_requested: Default::default(),
-            focus_changed: Default::default(),
-            resized: Default::default(),
             root: root.clone(),
             layer,
             window,
@@ -828,9 +859,8 @@ impl Window {
         self.shared.map_to_screen(pos)
     }
 
-    pub fn monitor(&self) -> Option<MonitorHandle>
-    {
-        self.shared.window.current_monitor()
+    pub fn monitor(&self) -> Option<Monitor> {
+        self.shared.window.current_monitor().map(Monitor)
     }
 
     pub fn mark_needs_layout(&self) {
@@ -849,7 +879,7 @@ impl Window {
         self.shared.window.window_handle().unwrap().as_raw()
     }
 
-    pub fn on_close_requested(&self, f: impl Fn() + 'static) {
+    /*pub fn on_close_requested(&self, f: impl Fn() + 'static) {
         self.shared.close_requested.watch(move |_| f());
     }
 
@@ -859,18 +889,18 @@ impl Window {
 
     pub fn on_focus_changed(&self, f: impl Fn(bool) + 'static) {
         self.shared.focus_changed.watch(f);
-    }
+    }*/
 
     pub async fn close_requested(&self) {
-        self.shared.close_requested.wait().await;
+        self.wait_event::<CloseRequested>().await;
     }
 
     pub async fn resized(&self) -> Size {
-        self.shared.resized.wait().await
+        self.wait_event::<Resized>().await.0
     }
 
     pub async fn focus_changed(&self) -> bool {
-        self.shared.focus_changed.wait().await
+        self.wait_event::<FocusChanged>().await.0
     }
 
     /// Hides the window.

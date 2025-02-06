@@ -19,29 +19,29 @@ pub trait EventSource: Any {
     fn as_weak(&self) -> Weak<dyn Any>;
 
     #[track_caller]
-    fn subscribe<E: 'static>(&self, mut callback: impl FnMut(Weak<dyn Any>, &E) -> bool + 'static) -> SubscriptionKey
+    fn subscribe<E: 'static>(&self, mut callback: impl FnMut(&E) -> bool + 'static) -> SubscriptionKey
     where
         Self: Sized,
     {
         subscribe_inner(
             [self.as_weak()],
             TypeId::of::<E>(),
-            Box::new(move |source, e| {
+            Box::new(move |_source, e| {
                 let e = e.downcast_ref::<E>().unwrap();
-                callback(source, e)
+                callback(e)
             }),
             Location::caller(),
         )
     }
 
     #[track_caller]
-    fn subscribe_once<E: 'static>(&self, callback: impl FnOnce(Weak<dyn Any>, &E) + 'static) -> SubscriptionKey
+    fn subscribe_once<E: 'static>(&self, callback: impl FnOnce(&E) + 'static) -> SubscriptionKey
     where
         Self: Sized,
     {
         let mut callback = Some(callback);
-        self.subscribe(move |source, e| {
-            callback.take().unwrap()(source, e);
+        self.subscribe(move |e| {
+            callback.take().unwrap()(e);
             false
         })
     }
@@ -62,7 +62,7 @@ pub trait EventSource: Any {
         //      a new oneshot on every iteration.
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        let key = self.subscribe_once(move |_, e: &E| {
+        let key = self.subscribe_once(move |e: &E| {
             let _ = tx.send(e.clone());
         });
 
@@ -369,6 +369,53 @@ struct ModelHeader {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Internal object that serves as the emitter of global events.
+pub struct GlobalEmitter;
+
+impl EventSource for Rc<GlobalEmitter> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        Rc::downgrade(self) as Weak<dyn Any>
+    }
+}
+
+thread_local! {
+    /// FIXME: this doesn't support emitting events from other threads.
+    static GLOBAL_EMITTER: Rc<GlobalEmitter> = Rc::new(GlobalEmitter);
+}
+
+/// Emits a global event.
+///
+/// Note: this should only be called on the main thread. Emitting events from other threads is not
+/// currently supported.
+pub fn emit_global<E: 'static>(event: E) {
+    GLOBAL_EMITTER.with(|emitter| {
+        let weak = Rc::downgrade(emitter);
+        emit_inner(weak, Box::new(event), type_name::<E>());
+    });
+}
+
+/// Subscribes to global events.
+pub fn subscribe_global<E: 'static>(mut callback: impl FnMut(&E) -> bool + 'static) -> SubscriptionKey {
+    GLOBAL_EMITTER.with(|emitter| {
+        let weak = Rc::downgrade(emitter) as Weak<dyn Any>;
+        subscribe_inner(
+            [weak],
+            TypeId::of::<E>(),
+            Box::new(move |_source, e| {
+                let e = e.downcast_ref::<E>().unwrap();
+                callback(e)
+            }),
+            Location::caller(),
+        )
+    })
+}
+
+/// Asynchronously waits for a global event.
+pub async fn wait_event_global<E: 'static + Clone>() -> E {
+    let emitter = GLOBAL_EMITTER.with(|emitter| emitter.clone());
+    emitter.wait_event().await
+}
 
 /// Watches changes on several models at once and calls a callback when any of the models change.
 ///

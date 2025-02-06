@@ -120,7 +120,7 @@ impl Frame {
     #[must_use]
     #[track_caller]
     pub fn on_click(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
-        self.subscribe::<ClickedEvent>(move |_, _| {
+        self.subscribe::<ClickedEvent>(move |_| {
             func();
             true
         });
@@ -131,7 +131,7 @@ impl Frame {
     #[must_use]
     #[track_caller]
     pub fn on_hover(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
-        self.subscribe::<HoveredEvent>(move |_, _| {
+        self.subscribe::<HoveredEvent>(move |_| {
             func();
             false
         });

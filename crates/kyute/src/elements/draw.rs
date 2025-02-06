@@ -28,7 +28,7 @@ pub trait Visual {
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(&mut self, ctx: &mut ElementCtxAny, event: &mut Event) {}
+    fn event(&mut self, ctx: &mut ElementCtx, event: &mut Event) {}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -2,48 +2,147 @@
 
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
-use indexmap::IndexSet;
-use kyute::drawing::{Alignment, Anchor, Anchor2D, BorderPosition, Image, Placement, point, vec2};
-use kyute::element::WeakElement;
+use kyute::application::spawn;
+use kyute::drawing::{BorderPosition, Image, point};
 use kyute::element::prelude::*;
 use kyute::kurbo::{Insets, Vec2};
+use kyute::model::{emit_global, subscribe_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::{Element, EventSource, Point, Rect, Size, Window, WindowOptions, text};
+use kyute::window::{FocusChanged, Monitor};
+use kyute::{Element, Point, Rect, Size, Window, WindowOptions, text, EventSource};
 use std::collections::BTreeMap;
 use std::hash::Hash;
+use std::marker::PhantomData;
+use std::ops::Range;
+use std::rc::Rc;
 
-#[derive(Debug, Clone)]
-pub struct MenuEntryActivated<ID>(pub ID);
+#[derive(Debug, Clone, Copy)]
+pub struct InternalMenuEntryActivated {
+    pub index: usize,
+    pub display_rect: Rect,
+}
 
-#[derive(Debug, Clone)]
-pub struct MenuEntryHighlighted<ID>(pub ID);
+#[derive(Debug, Clone, Copy)]
+pub struct InternalMenuEntryHighlighted {
+    pub index: usize,
+    pub display_rect: Rect,
+}
 
-enum MenuItemBase {
+enum InternalMenuItem {
     Entry {
+        index: usize,
         icon: Option<Image>,
         label: TextLayout,
         shortcut: Option<TextLayout>,
         shortcut_letter: Option<char>,
+        submenu: bool,
     },
     Separator,
 }
 
-impl MenuItemBase {
+impl InternalMenuItem {
     pub fn measure(&mut self, input: &LayoutInput) -> Size {
         match self {
-            MenuItemBase::Entry { label, .. } => {
+            InternalMenuItem::Entry { label, .. } => {
                 label.layout(input.width.available().unwrap_or_default());
                 label.size()
             }
-            MenuItemBase::Separator => Size::new(input.width.available().unwrap_or_default(), 4.0),
+            InternalMenuItem::Separator => Size::new(input.width.available().unwrap_or_default(), 4.0),
         }
     }
 }
 
+fn submenu_range(nodes: &[Node], index: usize) -> Range<usize> {
+    match nodes[index] {
+        Node::Entry { submenu_count, .. } => index + 1..index + 1 + submenu_count,
+        Node::Separator => Range::default(),
+    }
+}
+
+fn flatten_menu_items<ID: Clone>(
+    items: &[MenuItem<ID>],
+    mut base_index: &mut usize,
+    index_to_id: &mut BTreeMap<usize, ID>,
+) -> Vec<Node> {
+    let mut flat = Vec::new();
+    for item in items.iter() {
+        match item {
+            MenuItem::Entry { label, id, submenu } => {
+                index_to_id.insert(*base_index, id.clone());
+                *base_index += 1;
+                let submenu_flat = flatten_menu_items(submenu, base_index, index_to_id);
+                flat.push(Node::Entry {
+                    label: label.clone(),
+                    submenu_count: submenu_flat.len(),
+                });
+                flat.extend(submenu_flat);
+            }
+            MenuItem::Separator => {
+                flat.push(Node::Separator);
+                *base_index += 1;
+            }
+        }
+    }
+    flat
+}
+
+fn create_menu_popup(mut content: MenuBase, menu_position: Point) -> Window {
+    // create popup window
+    let size = content.measure(&LayoutInput::default());
+    Window::new(
+        &WindowOptions {
+            title: "",
+            size,
+            parent: Some(content.parent_window.raw_window_handle()),
+            decorations: false,
+            visible: true,
+            background: STATIC_BACKGROUND,
+            position: Some(menu_position),
+            no_focus: false,
+        },
+        content,
+    )
+}
+
+/// Fit a menu in available space.
+///
+/// Returns the anchor point of the top-left corner of the menu.
+fn calc_menu_position(monitor: Size, rect: Rect, menu: Size, allow_x_overlap: bool) -> Point {
+    let mut x = rect.x1;
+    if x + menu.width > monitor.width {
+        // overflows on the right
+        if allow_x_overlap {
+            // shift menu to the left
+            x = rect.x1 - (x + menu.width - monitor.width);
+        } else {
+            // place menu to the left
+            x = rect.x1 - menu.width;
+        }
+        x = x.max(0.0);
+    }
+    let mut y = rect.y0;
+    if y + menu.height > monitor.height {
+        // overflows on the bottom
+        y = rect.y1 - menu.height;
+        y = y.max(0.0);
+    }
+    Point { x, y }
+}
+
+enum Node {
+    Entry { label: String, submenu_count: usize },
+    Separator,
+}
+
 pub struct MenuBase {
-    items: Vec<MenuItemBase>,
+    parent_window: Window,
+    monitor: Monitor,
+    items: Vec<InternalMenuItem>,
+    range: Range<usize>,
+    tree: Rc<Vec<Node>>,
     insets: Insets,
     highlighted: Option<usize>,
+    submenu: Option<Window>,
 }
 
 fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
@@ -65,23 +164,83 @@ fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
 }
 
 impl MenuBase {
-    pub fn new() -> Self {
+    fn new(parent_window: Window, monitor: Monitor, tree: Rc<Vec<Node>>, range: Range<usize>) -> Self {
+        let mut items = Vec::new();
+        let mut i = range.start;
+        while i < range.end {
+            match &tree[i] {
+                Node::Entry { label, submenu_count } => {
+                    let (label, shortcut_letter) = format_menu_label(&label);
+                    items.push(InternalMenuItem::Entry {
+                        icon: None,
+                        index: i,
+                        label,
+                        shortcut: None,
+                        shortcut_letter,
+                        submenu: *submenu_count > 0,
+                    });
+                    i += 1 + *submenu_count;
+                }
+                Node::Separator => {
+                    items.push(InternalMenuItem::Separator);
+                    i += 1;
+                }
+            }
+        }
+
         MenuBase {
-            items: Vec::new(),
+            parent_window,
+            monitor,
+            items,
+            range,
+            tree,
             insets: Insets::uniform(4.0),
             highlighted: None,
+            submenu: None,
         }
     }
 
-    fn add_entry(&mut self, icon: Option<Image>, label: &str, shortcut: Option<&str>) -> usize {
-        let (label, shortcut_letter) = format_menu_label(label);
-        self.items.push(MenuItemBase::Entry {
-            icon,
-            label,
-            shortcut_letter,
-            shortcut: shortcut.map(|s| TextLayout::from_str(&TEXT_STYLE, s)),
+    fn open(mut self, at: Point) -> Window {
+        let size = self.measure(&LayoutInput::default());
+        let at_display = self.parent_window.map_to_screen(at);
+        let position = calc_menu_position(
+            self.monitor.logical_size(),
+            Rect::from_origin_size(at_display, Size::ZERO),
+            size,
+            false,
+        );
+        create_menu_popup(self, position)
+    }
+
+    fn open_submenu(self: &mut ElemBox<Self>, display_rect: Rect, index: usize) {
+        let range = submenu_range(&self.tree, index);
+        if range.is_empty() {
+            return;
+        }
+        let mut submenu = MenuBase::new(
+            self.parent_window.clone(),
+            self.monitor.clone(),
+            self.tree.clone(),
+            range,
+        );
+        let size = submenu.measure(&LayoutInput::default());
+        let position = calc_menu_position(self.monitor.logical_size(), display_rect, size, false);
+        let popup = create_menu_popup(submenu, position);
+
+        // Close menu when focus is lost
+        let weak_this = self.weak();
+        popup.subscribe(move |&FocusChanged(focused)| {
+            if !focused {
+                if let Some(this) = weak_this.upgrade() {
+                    this.borrow_mut().submenu = None;
+                }
+                false
+            } else {
+                true
+            }
         });
-        self.items.len() - 1
+
+        self.submenu = Some(popup);
     }
 
     /// Returns the index of the item at the given point.
@@ -91,17 +250,17 @@ impl MenuBase {
             return None;
         }
         let mut y = inset_bounds.y0;
-        for (i, item) in self.items.iter().enumerate() {
+        for item in self.items.iter() {
             match item {
-                MenuItemBase::Entry { .. } => {
+                InternalMenuItem::Entry { index, .. } => {
                     if pos.y < y + MENU_ITEM_HEIGHT {
-                        return Some(i);
+                        return Some(*index);
                     }
                     y += MENU_ITEM_HEIGHT;
                 }
-                MenuItemBase::Separator => {
+                InternalMenuItem::Separator => {
                     if pos.y < y + MENU_SEPARATOR_HEIGHT {
-                        return Some(i);
+                        return None;
                     }
                     y += MENU_SEPARATOR_HEIGHT;
                 }
@@ -122,14 +281,14 @@ const MENU_ICON_SIZE: f64 = 16.0;
 
 const MENU_ICON_SPACE: f64 = MENU_ICON_PADDING_LEFT + MENU_ICON_SIZE + MENU_ICON_PADDING_RIGHT;
 
-impl MenuBase {
+impl Element for MenuBase {
     fn measure(&mut self, _input: &LayoutInput) -> Size {
         // minimum menu width
         let mut width = 100.0f64;
         let mut height = 0.0f64;
         for item in self.items.iter_mut() {
             match item {
-                MenuItemBase::Entry { label, .. } => {
+                InternalMenuItem::Entry { label, .. } => {
                     label.layout(f64::INFINITY);
                     let size = label.size();
                     width = width.max(MENU_ICON_SPACE + size.width + self.insets.x_value());
@@ -137,7 +296,7 @@ impl MenuBase {
                     // don't care about text height
                     height += MENU_ITEM_HEIGHT;
                 }
-                MenuItemBase::Separator => {
+                InternalMenuItem::Separator => {
                     height += MENU_SEPARATOR_HEIGHT;
                 }
             }
@@ -154,10 +313,10 @@ impl MenuBase {
     fn layout(&mut self, size: Size) -> LayoutOutput {
         for item in self.items.iter_mut() {
             match item {
-                MenuItemBase::Entry { label, .. } => {
+                InternalMenuItem::Entry { label, .. } => {
                     label.layout(size.width - MENU_ICON_SPACE - self.insets.x_value());
                 }
-                MenuItemBase::Separator => {}
+                InternalMenuItem::Separator => {}
             }
         }
         LayoutOutput {
@@ -171,11 +330,8 @@ impl MenuBase {
         ctx.rect.contains(point)
     }
 
-    fn event(&mut self, bounds: Rect, event: &mut Event) -> MenuEventResult {
-        let mut result = MenuEventResult {
-            highlighted_item: None,
-            activated_item: None,
-        };
+    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+        let bounds = self.ctx.rect();
         match event {
             Event::PointerMove(event) => {
                 // update highlighted item
@@ -183,33 +339,50 @@ impl MenuBase {
                 let item = self.item_at_position(bounds, pos);
                 if self.highlighted != item {
                     self.highlighted = item;
-                    result.highlighted_item = item;
+                    if let Some(item) = item {
+                        emit_global(InternalMenuEntryHighlighted {
+                            index: item,
+                            display_rect: bounds,
+                        });
+                    }
+
+                    //
+
+                    self.ctx.mark_needs_paint();
                 }
             }
             Event::PointerUp(event) => {
                 // trigger item
                 let pos = event.local_position();
                 if let Some(item) = self.item_at_position(bounds, pos) {
-                    result.activated_item = Some(item);
+                    emit_global(InternalMenuEntryActivated {
+                        index: item,
+                        display_rect: bounds,
+                    });
+                    self.ctx.mark_needs_paint();
                 }
             }
             _ => {}
         }
-        result
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx, bounds: Rect) {
+    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+        let bounds = self.ctx.rect();
         let mut y = self.insets.y0;
 
         // menu border
         ctx.draw_border(bounds.to_rounded_rect(0.0), 1.0, BorderPosition::Inside, MENU_SEPARATOR);
 
-        for (i, item) in self.items.iter().enumerate() {
-            match item {
-                MenuItemBase::Entry {
-                    icon, label, shortcut, ..
+        for item in self.items.iter() {
+            match &item {
+                InternalMenuItem::Entry {
+                    icon,
+                    label,
+                    shortcut,
+                    index,
+                    ..
                 } => {
-                    if self.highlighted == Some(i) {
+                    if self.highlighted == Some(*index) {
                         let rect = ctx.snap_rect_to_device_pixel(Rect {
                             x0: bounds.x0 + self.insets.x0,
                             x1: bounds.x1 - self.insets.x1,
@@ -223,7 +396,7 @@ impl MenuBase {
                     ctx.draw_text_layout(point(self.insets.x0 + MENU_ICON_SPACE, text_offset_y), label);
                     y += MENU_ITEM_HEIGHT;
                 }
-                MenuItemBase::Separator => {
+                InternalMenuItem::Separator => {
                     let mid = y + 0.5 * MENU_SEPARATOR_HEIGHT;
                     ctx.fill_rect(
                         ctx.snap_rect_to_device_pixel(Rect {
@@ -243,160 +416,62 @@ impl MenuBase {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Menu<ID> {
-    menu: MenuBase,
-    items: BTreeMap<usize, ID>,
-}
-
-impl<ID: Clone + Eq + Ord + Hash + 'static> Menu<ID> {
-    pub fn new() -> ElementBuilder<Self> {
-        ElementBuilder::new(Menu {
-            menu: MenuBase::new(),
-            items: BTreeMap::new(),
-        })
-    }
-
-    pub fn entry(mut self: ElementBuilder<Self>, label: &str, id: ID) -> ElementBuilder<Self> {
-        let index = self.menu.add_entry(None, label, None);
-        self.items.insert(index, id);
-        self
-    }
-
-    pub fn separator(mut self: ElementBuilder<Self>) -> ElementBuilder<Self> {
-        self.menu.items.push(MenuItemBase::Separator);
-        self
-    }
-}
-
-impl<ID: Clone + Eq + Ord + Hash + 'static> Element for Menu<ID> {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
-        self.menu.measure(layout_input)
-    }
-
-    fn layout(&mut self, size: Size) -> LayoutOutput {
-        self.menu.layout(size)
-    }
-
-    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        self.menu.hit_test(ctx, point)
-    }
-
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        let bounds = self.ctx.rect();
-        self.menu.paint(ctx, bounds)
-    }
-
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
-        let bounds = self.ctx.rect();
-        let result = self.menu.event(bounds, event);
-        if let Some(item_index) = result.activated_item {
-            if let Some(id) = self.items.get(&item_index) {
-                self.ctx.emit(MenuEntryActivated(id.clone()));
-            }
-            self.ctx.mark_needs_paint();
-        }
-        if let Some(item_index) = result.highlighted_item {
-            if let Some(id) = self.items.get(&item_index) {
-                self.ctx.emit(MenuEntryHighlighted(id.clone()));
-            }
-            self.ctx.mark_needs_paint();
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-pub enum MenuItem<'a, ID> {
-    Entry { label: &'a str, id: ID },
+#[derive(Clone)]
+pub enum MenuItem<ID> {
+    Entry {
+        label: String,
+        id: ID,
+        submenu: Vec<MenuItem<ID>>,
+    },
     Separator,
 }
 
 pub struct ContextMenu<ID> {
-    window: Window,
-    menu: WeakElement<Menu<ID>>,
+    popup: Window,
+    index_to_id: BTreeMap<usize, ID>,
+    _phantom: PhantomData<ID>,
 }
 
 impl<ID: Clone + 'static> ContextMenu<ID> {
     pub async fn entry_activated(&self) -> ID {
-        let MenuEntryActivated(id) = self.menu.wait_event().await;
-        id
+        // There should be only one context menu with a specific ID type active at any given time,
+        // so it should be OK to use a global event here.
+        loop {
+            let InternalMenuEntryActivated { index, .. } = wait_event_global().await;
+            if let Some(id) = self.index_to_id.get(&index) {
+                return id.clone();
+            }
+        }
     }
 
     pub async fn entry_highlighted(&self) -> ID {
-        let MenuEntryHighlighted(id) = self.menu.wait_event().await;
-        id
+        loop {
+            let InternalMenuEntryHighlighted { index, .. } = wait_event_global().await;
+            if let Some(id) = self.index_to_id.get(&index) {
+                return id.clone();
+            }
+        }
     }
 }
 
-/// Fit a menu in available space.
-///
-/// Returns the anchor point on the menu rectangle.
-fn calc_menu_anchor(monitor: Size, click: Point, menu: Size) -> Vec2 {
-    let x = (click.x + menu.width - monitor.width).max(0.0);
-    // y-anchor is either top or bottom, never in the middle
-    let y = if click.y + menu.height > monitor.height {
-        menu.height
-    } else {
-        0.0
-    };
-    Vec2 { x, y }
-}
-
-pub fn context_menu<'a, ID: Clone + Eq + Ord + Hash + 'static>(
+pub fn context_menu<'a, ID: Clone + 'static>(
     parent_window: Window,
     click_position: Point,
-    items: impl IntoIterator<Item = MenuItem<'a, ID>>,
+    items: impl IntoIterator<Item = MenuItem<ID>>,
 ) -> ContextMenu<ID> {
-    let mut menu = Menu::new();
-    for item in items {
-        match item {
-            MenuItem::Entry { label, id } => {
-                menu = menu.entry(label, id.clone());
-            }
-            MenuItem::Separator => {
-                menu = menu.separator();
-            }
-        }
-    }
-
-    let size = menu.measure(&LayoutInput::default());
-    let menu_weak = menu.weak();
-
-    // get position in screen coordinates
-
-    let click_screen_position = parent_window.map_to_screen(click_position);
-    // TODO wrapper for monitor handles
-    // FIXME logical monitor size
-    let anchor = if let Some(monitor_size) = parent_window.monitor().map(|m| {
-        let size = m.size();
-        Size {
-            width: size.width as f64,
-            height: size.height as f64,
-        }
-    }) {
-        calc_menu_anchor(monitor_size, click_screen_position, size)
-    } else {
-        Vec2::ZERO
-    };
-    let menu_position = click_screen_position - anchor;
-
-    // create popup window
-    let window = Window::new(
-        &WindowOptions {
-            title: "",
-            size,
-            parent: Some(parent_window.raw_window_handle()),
-            decorations: false,
-            visible: true,
-            background: STATIC_BACKGROUND,
-            position: Some(menu_position),
-            no_focus: false,
-        },
-        menu,
-    );
+    let mut index_to_id = BTreeMap::new();
+    let tree = Rc::new(flatten_menu_items(
+        &items.into_iter().collect::<Vec<_>>(),
+        &mut 0,
+        &mut index_to_id,
+    ));
+    let range = 0..tree.len();
+    let monitor = parent_window.monitor().unwrap();
+    let popup = MenuBase::new(parent_window, monitor, tree, range).open(click_position);
 
     ContextMenu {
-        window,
-        menu: menu_weak,
+        index_to_id,
+        popup,
+        _phantom: PhantomData,
     }
 }
