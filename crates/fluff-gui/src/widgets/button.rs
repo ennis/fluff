@@ -104,14 +104,13 @@ impl Element for Button {
         ctx.draw_text_layout(pos, &self.label);
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
         let repaint = match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
                 self.ctx.set_focus();
                 self.ctx.set_pointer_capture();
-
-
+                
                 self.weak.emit(ActivatedEvent(true));
                 true
             }

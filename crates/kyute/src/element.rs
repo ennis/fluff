@@ -24,7 +24,7 @@ use std::{fmt, mem, ptr};
 pub mod prelude {
     pub use crate::element::{
         ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny,
-        WindowCtx, WeakElement,
+        WeakElement,
     };
     pub use crate::event::Event;
     pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
@@ -111,7 +111,6 @@ pub fn clear_keyboard_focus() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-pub struct WindowCtx {}
 
 pub struct HitTestCtx {
     pub hits: Vec<WeakElementAny>,
@@ -175,13 +174,20 @@ pub trait Element: Any {
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
     ///
-    ///
+    /// FIXME: I really don't like having to pass `ElementCtx` because it's **always** stored
+    ///        next to `self` in memory (we can guarantee that by passing `self: &mut ElemBox<Self>`
+    ///        and control the creation of `ElemBox`).
+    ///        Also, it makes mutating methods not usable during creation because we can't call them
+    ///        directly on an `ElementBuilder`.
+    ///        Unfortunately, rust memory semantics don't make it easy.
+    ///        Storing the context in `ElemBox` wouldn't work because we want it to be shareable,
+    ///        but `&mut ElemBox<Self>` would give exclusive access to it (barring stuff like UnsafePinned).
     #[allow(unused_variables)]
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {}
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {}
 }
 
 impl dyn Element + 'static {
@@ -219,8 +225,30 @@ impl dyn Element + 'static {
 //        so that we can have `run_later` or `watch_once` methods, which need the Self type
 //        and thus can't be implemented on `ElementCtxAny` directly.
 // Possible solution: remove the implicit deref to the inner element
-//                    This has some syntactical overhead but at least it avoids surprises with borrowing. 
+//                    This has some syntactical overhead but at least it avoids surprises with borrowing.
 pub struct ElemBox<T: ?Sized> {
+    // `Aliasable` needed because `Element` methods get `&mut ElemBox`, because elements get exclusive
+    // access to the element, but we **don't** want to give exclusive access to `ElementCtx`.
+    //
+    // This leaves us with a few options:
+    // - store ElementCtx outside the ElemBox, and remove ElemBox
+    //      - this is not great because now methods have two parameters (`&mut Self, &ElementCtx`)
+    // - retrieve the ElementCtx from a weak self-reference inside the element
+    //      - not super ergonomic, not efficient because we need to upgrade the weak reference
+    // - store ElementCtx inside the ElemBox, but make it `UnsafePinned`
+    //      - we pass only one pointer (`&mut ElemBox`)
+    // - pass `&mut ElemBox` but store the ElementCtx just before in memory
+    //      - uncheckable by miri, needs exposed provenance
+    // - wrap ElementCtx in Rc, parent pointers point to this Rc
+    //      - needs a separate allocation, and another indirection to access ctx + extra refcell clones
+    //      - parent pointers point to the ElementCtx
+    //      - blame the rust memory semantics for this crap
+    // - Store a raw pointer to the ElementCtx in the ElemBox
+    //      - the raw pointer points to the ElementCtx behind the ElemBox
+    //      - the raw pointer has shared read permissions on the ElementCtx
+    //      - redundant data, necessary to appease miri
+    //      - self-referential, so will probably need pinning
+
     pub ctx: ElementCtx,
     pub element: T,
 }
@@ -474,6 +502,9 @@ impl PartialOrd for WeakElementAny {
 /// Strong reference to an element in the element tree.
 // Yes it's a big fat Rc<RefCell>, deal with it.
 // We don't publicly allow mut access.
+
+
+
 pub struct ElementRc<T: ?Sized>(Rc<RefCell<ElemBox<T>>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
@@ -655,7 +686,7 @@ impl ElementAny {
 
     pub fn send_event(&self, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
-        inner.event(&mut WindowCtx {}, event);
+        inner.event(event);
         inner.ctx.propagate_dirty_flags();
     }
 
@@ -668,6 +699,8 @@ impl ElementAny {
         inner.ctx.window_transform = parent_ctx.current_transform();
         inner.paint(parent_ctx);
         parent_ctx.restore();
+
+        // TODO: propagate flags up the tree
 
         inner.ctx.change_flags.remove(ChangeFlags::PAINT);
     }
@@ -715,6 +748,7 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Context associated to each element and passed to `Element` methods.
 pub struct ElementCtx {
     parent: WeakElementAny,
     /// Weak pointer to this element (~= `Weak<RefCell<dyn Element>>`)

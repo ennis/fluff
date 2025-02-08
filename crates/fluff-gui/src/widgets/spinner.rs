@@ -1,10 +1,10 @@
-use kyute::drawing::PlacementExt;
 use crate::colors;
 use crate::colors::DISPLAY_TEXT;
-use crate::widgets::menu::{MenuItem, context_menu};
-use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use crate::widgets::menu::{context_menu, MenuItem};
+use crate::widgets::{PaintExt, DISPLAY_TEXT_STYLE, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::application::spawn;
-use kyute::drawing::{BorderPosition, RIGHT_CENTER, place, vec2};
+use kyute::drawing::PlacementExt;
+use kyute::drawing::{vec2, BorderPosition, RIGHT_CENTER};
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
@@ -12,7 +12,7 @@ use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::EventSource;
 use kyute::text::Selection;
-use kyute::{Color, Point, Rect, Size, select};
+use kyute::{select, Color, Point, Rect, Size};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -280,7 +280,7 @@ impl Element for SpinnerBase {
         buttons.paint(ctx);
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
         let buttons = self.place_buttons(self.ctx.rect());
         if buttons.up_clicked(event) {
             self.set_value(self.value + self.increment);

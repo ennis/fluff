@@ -117,7 +117,7 @@ where
         //});
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {
+    fn event(self: &mut ElemBox<Self>, _event: &mut Event) {
         // TODO
         //self.visual.event(&mut self.ctx, event);
     }

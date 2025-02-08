@@ -1,14 +1,13 @@
-use std::ops::Range;
-use bitflags::bitflags;
-use kyute::kurbo::{Line, PathEl, Vec2};
-use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
-use kyute::drawing::point;
-use kyute::element::{ElemBox, ElementBuilder, ElementCtx, HitTestCtx, WeakElement, WindowCtx};
-use kyute::elements::ValueChangedEvent;
-use kyute::event::ScrollDelta;
-use kyute::layout::{LayoutInput, LayoutOutput};
 use crate::colors;
 use crate::widgets::{PaintExt, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use kyute::drawing::point;
+use kyute::element::{ElemBox, ElementBuilder, HitTestCtx, WeakElement};
+use kyute::elements::ValueChangedEvent;
+use kyute::event::ScrollDelta;
+use kyute::kurbo::{Line, PathEl, Vec2};
+use kyute::layout::{LayoutInput, LayoutOutput};
+use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
+use std::ops::Range;
 
 pub struct SliderBase {
     pub value: f64,
@@ -197,7 +196,7 @@ impl Element for Slider {
         self.element.base.paint(ctx, self.ctx.rect());
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
         match event {
             Event::PointerDown(_) => {
                 self.ctx.set_pointer_capture();

@@ -213,7 +213,7 @@ impl MenuBase {
         create_menu_popup(self, position)
     }
 
-    fn open_submenu(self: &mut ElemBox<Self>, display_rect: Rect, index: usize) {
+    fn open_submenu(&mut self, display_rect: Rect, index: usize) {
         let range = submenu_range(&self.tree, index);
         if range.is_empty() {
             return;
@@ -230,7 +230,7 @@ impl MenuBase {
         let popup = create_menu_popup(submenu, position);
 
         // Close menu when focus is lost
-        let weak_this = self.weak();
+        let weak_this = self.weak_this.clone();
         popup.subscribe(move |&FocusChanged(focused)| {
             if !focused {
                 if let Some(this) = weak_this.upgrade() {
@@ -390,7 +390,7 @@ impl Element for MenuBase {
     }
 
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
         let bounds = self.ctx.rect();
         match event {
             Event::PointerMove(event) => {
@@ -403,7 +403,8 @@ impl Element for MenuBase {
                             index,
                         });
 
-                        self.open_submenu(Rect::from_origin_size(self.ctx.map_to_monitor(entry_bounds.origin()), entry_bounds.size()), index);
+                        let rect = Rect::from_origin_size(self.ctx.map_to_monitor(entry_bounds.origin()), entry_bounds.size());
+                        self.open_submenu(rect, index);
                         self.ctx.mark_needs_paint();
                     }
                 } else {

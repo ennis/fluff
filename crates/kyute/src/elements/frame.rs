@@ -1,6 +1,6 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WeakElement, WindowCtx};
+use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
@@ -465,8 +465,8 @@ impl Element for Frame {
         }
     }
 
-    fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {
-        fn update_state(this: &mut ElemBox<Frame>, _ctx: &mut WindowCtx, state: ElementState) {
+    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
+        fn update_state(this: &mut ElemBox<Frame>, state: ElementState) {
             this.state = state;
             this.weak.emit(ElementStateChanged(state));
             if this.state_affects_style {
@@ -478,24 +478,24 @@ impl Element for Frame {
         match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
-                update_state(self, ctx, self.state);
+                update_state(self, self.state);
                 self.weak.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
                     self.weak.emit(ActivatedEvent(false));
-                    update_state(self, ctx, self.state);
+                    update_state(self, self.state);
                     self.weak.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
-                update_state(self, ctx, self.state);
+                update_state(self, self.state);
                 self.weak.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
-                update_state(self, ctx, self.state);
+                update_state(self, self.state);
                 self.weak.emit(HoveredEvent(false));
             }
             _ => {}

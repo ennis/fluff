@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{ElemBox, Element, ElementBuilder, HitTestCtx, WindowCtx};
+use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, HitTestCtx,};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
@@ -70,5 +70,5 @@ impl Element for Text {
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {}
+    fn event(self: &mut ElemBox<Self>, _event: &mut Event) {}
 }
