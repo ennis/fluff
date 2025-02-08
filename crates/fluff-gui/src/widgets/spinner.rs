@@ -1,10 +1,7 @@
-use crate::colors;
 use crate::colors::DISPLAY_TEXT;
-use crate::widgets::menu::{context_menu, MenuItem};
+use crate::widgets::menu::ContextMenuExt;
 use crate::widgets::{PaintExt, DISPLAY_TEXT_STYLE, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
-use kyute::application::spawn;
-use kyute::drawing::PlacementExt;
-use kyute::drawing::{vec2, BorderPosition, RIGHT_CENTER};
+use kyute::drawing::{vec2, BorderPosition, PlacementExt, RIGHT_CENTER};
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
@@ -12,7 +9,7 @@ use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::EventSource;
 use kyute::text::Selection;
-use kyute::{select, Color, Point, Rect, Size};
+use kyute::{Color, Point, Rect, Size};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -109,7 +106,7 @@ impl SpinnerBase {
         text_edit.set_text_style(DISPLAY_TEXT_STYLE.clone());
         text_edit.set_caret_color(DISPLAY_TEXT);
 
-        let mut spinner = ElementBuilder::new_cyclic(|weak|SpinnerBase {
+        let mut spinner = ElementBuilder::new_cyclic(|weak| SpinnerBase {
             weak,
             value: options.initial_value,
             value_before_editing: options.initial_value,
@@ -178,10 +175,7 @@ impl SpinnerBase {
 
     fn place_buttons(&self, rect: Rect) -> SpinnerButtons {
         SpinnerButtons {
-            pos: SpinnerButtons::SIZE.place_into(
-                rect - Insets::new(0., 0., 2., 0.),
-                RIGHT_CENTER
-            ),
+            pos: SpinnerButtons::SIZE.place_into(rect - Insets::new(0., 0., 2., 0.), RIGHT_CENTER),
         }
     }
 
@@ -317,76 +311,36 @@ impl Element for SpinnerBase {
 
                     // context menu
                     if p.buttons.test(PointerButton::RIGHT) {
-                        let mut this = self.weak.clone();
-                        let Some(parent_window) = cx.get_parent_window().upgrade() else {
-                            // no parent window
-                            panic!("context_menu: no parent window in context");
-                        };
-                        let position = p.position;
+                        use crate::widgets::menu::ContextMenuExt;
+                        use crate::widgets::menu::MenuItem::{Entry, Separator, Submenu};
+                        
+                        let weak = self.weak.clone();
 
-                        spawn(async move {
-                            let menu = context_menu(
-                                parent_window,
-                                position,
-                                [
-                                    MenuItem::Entry { id: 0, label: "Copy".to_string(), submenu: vec![] },
-                                    MenuItem::Entry { id: 1, label: "Cut".to_string(), submenu: vec![] },
-                                    MenuItem::Entry { id: 2, label: "Paste".to_string(), submenu: vec![] },
-                                    MenuItem::Separator,
-                                    MenuItem::Entry { id: 3, label: "Delete".to_string(), submenu: vec![] },
-                                    MenuItem::Separator,
-                                    MenuItem::Entry { id: 4, label: "Advanced".to_string(), submenu: vec![
-                                        MenuItem::Entry { id: 5, label: "Advanced 1".to_string(), submenu: vec![] },
-                                        MenuItem::Entry { id: 6, label: "Advanced 2".to_string(), submenu: vec![
-                                            MenuItem::Entry { id: 7, label: "Advanced 2.1".to_string(), submenu: vec![] },
-                                            MenuItem::Entry { id: 8, label: "Advanced 2.2".to_string(), submenu: vec![] },
-                                        ] },
-                                    ] },
-                                ],
-                            );
-
-                            loop {
-                                select! {
-                                    entry = menu.entry_activated() => {
-                                        this.run_later(move |this, cx| this.handle_context_menu(entry));
-                                        break
-                                    }
-                                    entry = menu.entry_highlighted() => {
-                                        //this.run_later(move |this| this.handle_context_menu(entry));
-                                    }
+                        cx.open_context_menu(
+                            p.position,
+                            &[
+                                Entry("Copy", 0),
+                                Entry("Cut", 1),
+                                Entry("Paste", 2),
+                                Separator,
+                                Entry("Delete", 3),
+                                Separator,
+                                Submenu(
+                                    "Advanced",
+                                    &[
+                                        Entry("Advanced 1", 5),
+                                        Submenu("Advanced 2", &[Entry("Advanced 2.1", 7), Entry("Advanced 2.2", 8)]),
+                                        Submenu("Advanced 3", &[Entry("Advanced 3.1", 9), Entry("Advanced 3.2", 10)]),
+                                        Entry("Advanced 4", 11),
+                                    ],
+                                ),
+                            ],
+                            move |entry| {
+                                if let Some(this) = weak.upgrade() {
+                                    this.invoke(move |this, _cx| this.handle_context_menu(entry));
                                 }
-                            }
-                        });
-
-                        //TODO
-
-                        // facts:
-                        // - it's possible for this widget to still receive events (like pointer over/out)
-                        // - ideally it would be a synchronous function call
-                        //     - but it's not possible, since this function `event` isn't suspendable
-                        //     - even if it was suspendable, awaiting there would block all other events to this widget
-
-                        // self.run_async(async |this| {
-                        //     // `this` is `&mut Self` borrowed for the duration of the modal proc
-                        //     // issue: no events are sent, but we cannot `paint` either
-
-                        //     // Fundamentally, we can't have exclusive access to the widget
-                        //     // during the modal, since we must be able to call `paint` and respond
-                        //     // to certain events at all times.
-                        //     //
-                        //     // Alternative: widgets could use interior mutability, but this ship has sailed.
-                        //     // Alternative: paint, etc. are invoked in the modal closure somehow
-                        //     // Alternative: paint, etc. are not called at all while inside the modal closure
-                        //     // Alternative: when awaiting in the modal closure, release access to the widget
-                        //     //   - this is almost impossible, as it would invalidate any mut ref held
-                        //     //     across await points
-                        //     // Alternative: spawn an async task that does the async stuff and
-                        //     // then sends an event to the widget to update itself.
-                        //     // `this` is thus an `ElementRc<Self>`, and we can call run_later on it
-
-                        //     let menu = show_context_menu().await;
-                        //     this.run_later(move |this| this.handle_context_menu(menu));
-                        // });
+                            },
+                        );
                     }
                 }
 
@@ -433,10 +387,10 @@ impl Element for SpinnerBase {
                 // Parse value and update
                 let text = self.text_edit.text();
                 if let Some(value) = text.parse().ok() {
-                    self.set_value(cx,value);
+                    self.set_value(cx, value);
                 } else {
                     // restore the text
-                    self.update_text(cx,);
+                    self.update_text(cx);
                 }
             }
             if r.cancelled() {

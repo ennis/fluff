@@ -5,8 +5,8 @@ use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{
     watch_multi_once_with_location, with_tracking_scope, EventSource,
 };
-use crate::window::WeakWindow;
-use crate::PaintCtx;
+use crate::window::WindowHandle;
+use crate::{PaintCtx, Window};
 use bitflags::{bitflags, Flags};
 use kurbo::{Affine, Point, Rect, Size, Vec2};
 use std::any::Any;
@@ -42,10 +42,10 @@ bitflags! {
 /// Represents the element that has the keyboard focus.
 #[derive(Clone)]
 pub struct FocusedElement {
-    /// The window in which the element is located.
-    pub window: WeakWindow,
+    // The window in which the element is located.
+    //pub window: WindowHandle,
     /// The element that has focus.
-    pub element: ElementAny,
+    pub element: WeakElementAny,
 }
 
 thread_local! {
@@ -62,9 +62,9 @@ pub fn get_keyboard_focus() -> Option<FocusedElement> {
 }
 
 /// Called to set the global keyboard focus to the specified element.
-pub fn set_keyboard_focus(target: ElementAny) {
+pub fn set_keyboard_focus(target: WeakElementAny) {
     run_queued(move || {
-        let parent_window = target.get_parent_window();
+        //let parent_window = target.get_parent_window();
         let prev_focus = FOCUSED_ELEMENT.take();
         if let Some(prev_focus) = prev_focus {
             if prev_focus.element == target {
@@ -74,26 +74,31 @@ pub fn set_keyboard_focus(target: ElementAny) {
                 return;
             }
 
-            // Send a FocusLost event to the previously focused element.
-            prev_focus.element.0.ctx.focused.set(false);
-            prev_focus.element.send_event(&mut Event::FocusLost);
+            // Send FocusLost event
+            if let Some(prev_focus) = prev_focus.element.upgrade() {
+                prev_focus.0.ctx.focused.set(false);
+                prev_focus.send_event(&mut Event::FocusLost);
+            }
         }
 
-        // Send a FocusGained event to the newly focused element.
-        target.0.ctx.focused.set(true);
-        target.send_event(&mut Event::FocusGained);
-
-        // If necessary, activate the target window.
-        if let Some(_parent_window) = parent_window.shared.upgrade() {
-            //parent_window.
-            //war!("activate window")
+        if let Some(target) = target.upgrade() {
+            // Send a FocusGained event to the newly focused element.
+            target.0.ctx.focused.set(true);
+            target.send_event(&mut Event::FocusGained);
         }
 
         // Update the global focus.
         FOCUSED_ELEMENT.replace(Some(FocusedElement {
-            window: parent_window,
+            //window: parent_window,
             element: target,
         }));
+
+        // If necessary, activate the target window.
+        //if let Some(_parent_window) = parent_window.shared.upgrade() {
+            //parent_window.
+            //war!("activate window")
+        //}
+
     });
 }
 
@@ -101,8 +106,10 @@ pub fn clear_keyboard_focus() {
     run_queued(|| {
         let prev_focus = FOCUSED_ELEMENT.take();
         if let Some(prev_focus) = prev_focus {
-            prev_focus.element.0.ctx.focused.set(false);
-            prev_focus.element.send_event(&mut Event::FocusLost);
+            if let Some(prev_focus) = prev_focus.element.upgrade() {
+                prev_focus.0.ctx.focused.set(false);
+                prev_focus.send_event(&mut Event::FocusLost);
+            }
         }
         FOCUSED_ELEMENT.replace(None);
     });
@@ -536,7 +543,7 @@ impl ElementAny {
     ///
     /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
     /// root to get the window handle.
-    pub fn get_parent_window(&self) -> WeakWindow {
+    pub fn get_parent_window(&self) -> WindowHandle {
         let mut current = self.clone();
         // climb up to the root element which holds a valid window pointer
         while let Some(parent) = current.parent() {
@@ -642,7 +649,7 @@ impl ElementAny {
 pub trait IntoElementAny {
     type Element: Element;
     fn into_element(self, parent: WeakElementAny) -> ElementRc<Self::Element>;
-    fn into_root_element(self, parent_window: WeakWindow) -> ElementRc<Self::Element>;
+    fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element>;
 
     fn into_element_any(self, parent: WeakElementAny) -> ElementAny
     where
@@ -652,7 +659,7 @@ pub trait IntoElementAny {
         self.into_element(parent).as_dyn()
     }
 
-    fn into_root_element_any(self, parent_window: WeakWindow) -> ElementAny
+    fn into_root_element_any(self, parent_window: WindowHandle) -> ElementAny
     where
         Self: Sized,
         Self::Element: Sized,
@@ -674,7 +681,7 @@ where
         ElementRc(UniqueRc::into_rc(urc))
     }
 
-    fn into_root_element(self, parent_window: WeakWindow) -> ElementRc<Self::Element> {
+    fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element> {
         let mut urc = ElemCell::new(self);
         urc.ctx.window = parent_window;
         ElementRc(UniqueRc::into_rc(urc))
@@ -695,7 +702,7 @@ pub struct ElementCtx {
     weak_this_any: Weak<dyn Any>,
     change_flags: Cell<ChangeFlags>,
     /// Pointer to the parent owner window. Valid only for the root element the window.
-    pub(crate) window: WeakWindow,
+    pub(crate) window: WindowHandle,
     /// Layout: transform from local to parent coordinates.
     transform: Cell<Affine>,
     /// Transform from local to window coordinates.
@@ -717,7 +724,7 @@ impl ElementCtx {
             weak_this: WeakElementAny::default(),
             weak_this_any: Weak::<()>::default(),
             change_flags: Default::default(),
-            window: WeakWindow::default(),
+            window: WindowHandle::default(),
             transform: Default::default(),
             window_transform: Default::default(),
             geometry: Default::default(),
@@ -772,14 +779,15 @@ impl ElementCtx {
         self.change_flags |= ChangeFlags::STRUCTURE;
     }*/
 
+    /// Maps a point in local coordinates to window coordinates.
     pub fn map_to_window(&self, local_point: Point) -> Point {
         self.window_transform.get() * local_point
     }
 
+    /// Maps a point in local coordinates to screen coordinates.
     pub fn map_to_monitor(&self, local_point: Point) -> Point {
         let window_point = self.map_to_window(local_point);
-        let window = self.get_parent_window().upgrade().unwrap();
-        window.map_to_screen(window_point)
+        self.get_parent_window().map_to_screen(window_point)
     }
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
@@ -787,7 +795,7 @@ impl ElementCtx {
     /// This doesn't immediately set the `focused` flag: if the element didn't have
     /// focus, `has_focus` will still return `false` until the next event loop iteration.
     pub fn set_focus(&self) {
-        set_keyboard_focus(self.weak_this.upgrade().unwrap());
+        set_keyboard_focus(self.weak_this.clone());
     }
 
     /// Relinquishes the keyboard focus from this widget.
@@ -803,9 +811,7 @@ impl ElementCtx {
         run_queued(move || {
             if let Some(this) = weak_this.upgrade() {
                 let window = this.get_parent_window();
-                if let Some(window) = window.upgrade() {
-                    window.set_pointer_capture(weak_this);
-                }
+                window.set_pointer_capture(weak_this);
             }
         })
     }
@@ -827,23 +833,23 @@ impl ElementCtx {
             parent.0.ctx.propagate_dirty_flags();
         }
 
-        if let Some(window) = self.window.upgrade() {
-            if flags.contains(ChangeFlags::LAYOUT) {
-                window.mark_needs_layout();
-            } else if flags.contains(ChangeFlags::PAINT) {
-                window.mark_needs_paint();
-            }
+        if flags.contains(ChangeFlags::LAYOUT) {
+            self.window.mark_needs_layout();
+        } else if flags.contains(ChangeFlags::PAINT) {
+            self.window.mark_needs_paint();
         }
+
     }
 
     /// Returns the parent window of this element.
     ///
     /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
     /// root to get the window handle.
-    pub fn get_parent_window(&self) -> WeakWindow {
+    pub fn get_parent_window(&self) -> WindowHandle {
         if let Some(parent) = self.parent.upgrade() {
             parent.get_parent_window()
         } else {
+            // no parent, this is the root element
             self.window.clone()
         }
     }
@@ -898,6 +904,11 @@ impl<T: Element> ElementBuilder<T> {
 
     pub fn set_tab_focusable(self) -> Self {
         todo!("set_tab_focusable")
+    }
+
+    pub fn set_focus(self) -> Self {
+        self.0.ctx.set_focus();
+        self
     }
 
     /// Assigns a name to the element, for debugging purposes.
@@ -1004,7 +1015,7 @@ impl<T: Element> IntoElementAny for ElementBuilder<T> {
         ElementRc(UniqueRc::into_rc(self.0))
     }
 
-    fn into_root_element(mut self, parent_window: WeakWindow) -> ElementRc<Self::Element> {
+    fn into_root_element(mut self, parent_window: WindowHandle) -> ElementRc<Self::Element> {
         self.0.ctx.window = parent_window;
         ElementRc(UniqueRc::into_rc(self.0))
     }
@@ -1013,7 +1024,7 @@ impl<T: Element> IntoElementAny for ElementBuilder<T> {
         self.into_element(parent).as_dyn()
     }
 
-    fn into_root_element_any(self, parent_window: WeakWindow) -> ElementAny {
+    fn into_root_element_any(self, parent_window: WindowHandle) -> ElementAny {
         self.into_root_element(parent_window).as_dyn()
     }
 }

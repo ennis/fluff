@@ -76,15 +76,18 @@ pub fn run_queued(f: impl FnOnce() + 'static) {
 }
 
 /// Registers a closure to run at a certain point in the future.
-pub fn run_after(after: Duration, f: impl FnOnce() + 'static) {
+///
+/// Returns a cancellation token that can be used to cancel the timer.
+pub fn run_after(after: Duration, f: impl FnOnce() + 'static) -> AbortHandle {
     let deadline = Instant::now() + after;
 
     // using async tasks is not strictly necessary but it's a way to exercise the async machinery
     spawn(async move {
         wait_until(deadline).await;
         run_queued(f);
-    });
+    })
 }
+
 
 /// Handler for window events.
 pub trait WindowHandler {

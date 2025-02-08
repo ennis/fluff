@@ -3,7 +3,7 @@
 use crate::element::{ElementRc, IntoElementAny, WeakElementAny};
 use crate::elements::text::Text;
 use crate::text::StyleProperty;
-use crate::window::WeakWindow;
+use crate::window::WindowHandle;
 
 /// String slice with associated style attributes.
 #[derive(Copy, Clone)]
@@ -233,7 +233,7 @@ impl<const N: usize> IntoElementAny for &[TextRun<'_>; N] {
         Text::new(self).into_element(parent)
     }
 
-    fn into_root_element(self, parent_window: WeakWindow) -> ElementRc<Self::Element> {
+    fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element> {
         Text::new(self).into_root_element(parent_window)
     }
 }

@@ -16,6 +16,7 @@ use kurbo::{Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
+use tracing::warn;
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::KeyLocation;
 use winit::monitor::MonitorHandle;
@@ -85,6 +86,9 @@ pub struct CloseRequested;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resized(pub Size);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PopupCancelled;
 
 /// Stores information about the last click (for double-click handling)
 #[derive(Clone, Debug)]
@@ -194,15 +198,17 @@ impl WindowInner {
         // Send the event to the element that has the focus.
 
         // FIXME: we assume that the element that has the focus is contained within this window's
-        // element tree. This is *usually* the case because `set_keyboard_focus` is typically called
-        // in response to a pointer event that activates the target window. However, this
-        // is not a guarantee (the focus could be set programmatically).
-        //
-        // We should probably add a check to see if the window of the focus target is our window.
-        // Also, `set_keyboard_focus` should also focus the window.
-
-        if let Some(FocusedElement { window: _, element }) = get_keyboard_focus() {
-            dispatch_event(element, &mut event, true);
+        //        element tree. This is *usually* the case because `set_keyboard_focus` is typically called
+        //        in response to a pointer event that activates the target window. However, this
+        //        is not a guarantee (the focus could be set programmatically).
+        //        We should probably add a check to see if the window of the focus target is our window.
+        //        Also, `set_keyboard_focus` should also focus the window.
+        // FIXME: actually the focused element may be in another window altogether, in case there's
+        //        a non-focusable popup window.
+        if let Some(FocusedElement { element }) = get_keyboard_focus() {
+            if let Some(element) = element.upgrade() {
+                dispatch_event(element, &mut event, true);
+            }
         }
 
         // TODO do this only if the event was not consumed
@@ -555,22 +561,25 @@ impl WindowInner {
                 if let Some(event) = self.convert_mouse_input(*device_id, *button, *state) {
                     self.dispatch_pointer_event(event, self.cursor_pos.get());
                 }
+                //self.weak_this.emit(PopupCancelled);
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(FocusedElement { window: _, element }) = get_keyboard_focus() {
-                    dispatch_event(
-                        element,
-                        &mut Event::Wheel(WheelEvent {
-                            delta: match *delta {
-                                MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines {
-                                    x: x as f64,
-                                    y: y as f64,
+                if let Some(FocusedElement {  element }) = get_keyboard_focus() {
+                    if let Some(element) = element.upgrade() {
+                        dispatch_event(
+                            element,
+                            &mut Event::Wheel(WheelEvent {
+                                delta: match *delta {
+                                    MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines {
+                                        x: x as f64,
+                                        y: y as f64,
+                                    },
+                                    MouseScrollDelta::PixelDelta(pos) => ScrollDelta::Pixels { x: pos.x, y: pos.y },
                                 },
-                                MouseScrollDelta::PixelDelta(pos) => ScrollDelta::Pixels { x: pos.x, y: pos.y },
-                            },
-                        }),
-                        true,
-                    );
+                            }),
+                            true,
+                        );
+                    }
                 }
             }
             WindowEvent::CloseRequested => {
@@ -587,6 +596,7 @@ impl WindowInner {
             }
             WindowEvent::Focused(focused) => {
                 self.weak_this.emit(FocusChanged(*focused));
+                self.weak_this.emit(PopupCancelled);
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -670,7 +680,6 @@ impl WindowHandler for WindowInner {
     }
 }
 
-#[derive(Clone)]
 pub struct Window {
     shared: Rc<WindowInner>,
 }
@@ -689,7 +698,7 @@ impl EventSource for Weak<WindowInner> {
 
 /// A weak reference to a window.
 #[derive(Clone)]
-pub struct WeakWindow {
+pub struct WindowHandle {
     pub(crate) shared: Weak<WindowInner>,
 }
 
@@ -700,34 +709,76 @@ impl PartialEq for WeakWindow {
     }
 }*/
 
-impl Default for WeakWindow {
+impl Default for WindowHandle {
     fn default() -> Self {
         Self { shared: Weak::new() }
     }
 }
 
-impl WeakWindow {
-    pub fn upgrade(&self) -> Option<Window> {
-        self.shared.upgrade().map(|shared| Window { shared })
-    }
-
+impl WindowHandle {
     pub fn request_repaint(&self) {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.request_redraw();
         }
     }
 
-    /*pub fn set_focus(&self, element: WeakElementAny) {
+    pub fn mark_needs_layout(&self) {
         if let Some(shared) = self.shared.upgrade() {
-            shared.set_focus(element);
+            shared.mark_needs_layout();
+        } else {
+            warn!("mark_needs_layout: window has been dropped");
         }
-    }*/
+    }
 
-    /*pub fn set_pointer_capture(&self, element: WeakElementAny) {
+    pub fn mark_needs_paint(&self) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.mark_needs_paint();
+        } else {
+            warn!("mark_needs_paint: window has been dropped");
+        }
+    }
+
+    pub fn set_pointer_capture(&self, element: WeakElementAny) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_pointer_capture(element);
+        } else {
+            warn!("mark_needs_paint: window has been dropped");
         }
-    }*/
+    }
+
+    pub fn set_popup(&self, window: &Window) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.set_popup(window);
+        } else {
+            warn!("set_popup: window has been dropped");
+        }
+    }
+
+    pub fn map_to_screen(&self, pos: Point) -> Point {
+        self.shared
+            .upgrade()
+            .map(|shared| shared.map_to_screen(pos))
+            .unwrap_or_default()
+    }
+
+    pub fn monitor(&self) -> Option<Monitor> {
+        self.shared
+            .upgrade()
+            .and_then(|shared| shared.window.current_monitor())
+            .map(Monitor)
+    }
+
+    pub fn raw_window_handle(&self) -> Option<RawWindowHandle> {
+        Some(self.shared.upgrade()?.window.window_handle().ok()?.as_raw())
+    }
+
+    pub fn is_opened(&self) -> bool {
+        self.shared.upgrade().is_some()
+    }
+
+    pub async fn popup_cancelled(&self) {
+        self.shared.wait_event::<PopupCancelled>().await;
+    }
 
     /*/// Returns a reference to the currently focused element.
     pub fn is_focused(&self, element: &Node) -> bool {
@@ -819,7 +870,9 @@ impl Window {
         let window_id = window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
-            root: root.into_root_element_any(WeakWindow { shared: weak_this.clone() }),
+            root: root.into_root_element_any(WindowHandle {
+                shared: weak_this.clone(),
+            }),
             layer,
             window,
             hidden_before_first_draw: Cell::new(true),
@@ -842,8 +895,8 @@ impl Window {
         self.shared.set_pointer_capture(element);
     }
 
-    pub fn as_weak(&self) -> WeakWindow {
-        WeakWindow {
+    pub fn as_weak(&self) -> WindowHandle {
+        WindowHandle {
             shared: Rc::downgrade(&self.shared),
         }
     }

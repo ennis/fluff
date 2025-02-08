@@ -35,6 +35,7 @@ pub use skia_safe;
 pub use window::{Window, WindowOptions};
 
 pub use tokio::select;
+pub use futures::future::AbortHandle;
 
 #[doc(hidden)]
 pub use inventory;

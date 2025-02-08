@@ -2,20 +2,20 @@
 
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
-use kyute::application::spawn;
+use kyute::application::{run_after, spawn};
 use kyute::drawing::{BorderPosition, Image, point};
+use kyute::element::WeakElement;
 use kyute::element::prelude::*;
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::{emit_global, subscribe_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::window::{FocusChanged, Monitor};
-use kyute::{Element, Point, Rect, Size, Window, WindowOptions, text, EventSource};
+use kyute::window::{FocusChanged, Monitor, WindowHandle};
+use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions, text, select};
 use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::rc::Rc;
-use kyute::element::WeakElement;
 
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryActivated {
@@ -26,6 +26,9 @@ pub struct InternalMenuEntryActivated {
 pub struct InternalMenuEntryHighlighted {
     pub index: usize,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct InternalMenuCancelled;
 
 enum InternalMenuItem {
     Entry {
@@ -53,54 +56,39 @@ impl InternalMenuItem {
 
 fn submenu_range(nodes: &[Node], index: usize) -> Range<usize> {
     match nodes[index] {
-        Node::Entry { submenu_count, .. } => index + 1..index + 1 + submenu_count,
+        Node::Entry {
+            item_count: submenu_count,
+            ..
+        } => index + 1..index + 1 + submenu_count,
         Node::Separator => Range::default(),
     }
 }
 
-fn flatten_menu_items<ID: Clone>(
-    items: &[MenuItem<ID>],
-    mut base_index: &mut usize,
-    index_to_id: &mut BTreeMap<usize, ID>,
-) -> Vec<Node> {
-    let mut flat = Vec::new();
-    for item in items.iter() {
-        match item {
-            MenuItem::Entry { label, id, submenu } => {
-                index_to_id.insert(*base_index, id.clone());
-                *base_index += 1;
-                let submenu_flat = flatten_menu_items(submenu, base_index, index_to_id);
-                flat.push(Node::Entry {
-                    label: label.clone(),
-                    submenu_count: submenu_flat.len(),
-                });
-                flat.extend(submenu_flat);
-            }
-            MenuItem::Separator => {
-                flat.push(Node::Separator);
-                *base_index += 1;
-            }
-        }
-    }
-    flat
-}
-
-fn create_menu_popup(mut content: ElementBuilder<MenuBase>, menu_position: Point) -> Window {
+fn create_menu_popup(mut content: ElementBuilder<MenuBase>, parent_menu: Option<WindowHandle>, menu_position: Point) -> Window {
     // create popup window
     let size = content.measure(&LayoutInput::default());
-    Window::new(
+    let parent_window = content.parent_window.clone();
+
+    // the parent of the menu is the main window,
+    // but the menu will be set as a popup of the parent menu
+    // not sure if this is necessary
+    let window = Window::new(
         &WindowOptions {
             title: "",
             size,
-            parent: Some(content.parent_window.raw_window_handle()),
+            parent: Some(content.parent_window.raw_window_handle().expect("parent window closed")),
             decorations: false,
             visible: true,
             background: STATIC_BACKGROUND,
             position: Some(menu_position),
-            no_focus: false,
+            no_focus: true,
         },
         content,
-    )
+    );
+
+    let popup_parent = parent_menu.unwrap_or(parent_window);
+    //popup_parent.set_popup(&window);
+    window
 }
 
 /// Fit a menu in available space.
@@ -128,21 +116,33 @@ fn calc_menu_position(monitor: Size, rect: Rect, menu: Size, allow_x_overlap: bo
     Point { x, y }
 }
 
+/// Menu node.
 enum Node {
-    Entry { label: String, submenu_count: usize },
+    Entry {
+        label: String,
+        /// Number of submenu items, 0 for no submenu.
+        ///
+        /// Submenu item nodes follow immediately after this node.
+        item_count: usize,
+    },
     Separator,
 }
 
+/// Flattened tree of menu items, shared between all submenu windows.
+type MenuTree = Rc<Vec<Node>>;
+
 pub struct MenuBase {
     weak_this: WeakElement<Self>,
-    parent_window: Window,
+    parent_window: WindowHandle,
     monitor: Monitor,
     items: Vec<InternalMenuItem>,
     range: Range<usize>,
-    tree: Rc<Vec<Node>>,
+    tree: MenuTree,
     insets: Insets,
     highlighted: Option<usize>,
     submenu: Option<Window>,
+    // Timer for submenu closing on focus loss
+    abort_submenu_closing: Option<AbortHandle>,
 }
 
 fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
@@ -164,12 +164,15 @@ fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
 }
 
 impl MenuBase {
-    fn new(parent_window: Window, monitor: Monitor, tree: Rc<Vec<Node>>, range: Range<usize>) -> ElementBuilder<Self> {
+    fn new(parent_window: WindowHandle, monitor: Monitor, tree: MenuTree, range: Range<usize>) -> ElementBuilder<Self> {
         let mut items = Vec::new();
         let mut i = range.start;
         while i < range.end {
             match &tree[i] {
-                Node::Entry { label, submenu_count } => {
+                Node::Entry {
+                    label,
+                    item_count: submenu_count,
+                } => {
                     let (label, shortcut_letter) = format_menu_label(&label);
                     items.push(InternalMenuItem::Entry {
                         icon: None,
@@ -198,6 +201,7 @@ impl MenuBase {
             insets: Insets::uniform(4.0),
             highlighted: None,
             submenu: None,
+            abort_submenu_closing: None,
         })
     }
 
@@ -210,29 +214,26 @@ impl MenuBase {
             size,
             false,
         );
-        create_menu_popup(self, position)
+        create_menu_popup(self, None, position)
     }
 
-    fn open_submenu(&mut self, display_rect: Rect, index: usize) {
-        let range = submenu_range(&self.tree, index);
-        if range.is_empty() {
-            return;
-        }
-
+    /// Opens a submenu.
+    fn open_submenu(&mut self, cx: &ElementCtx, display_rect: Rect, range: Range<usize>) {
         let mut submenu = MenuBase::new(
             self.parent_window.clone(),
             self.monitor.clone(),
             self.tree.clone(),
             range,
-        );
+        ).set_focus();
         let size = submenu.measure(&LayoutInput::default());
         let position = calc_menu_position(self.monitor.logical_size(), display_rect, size, false);
-        let popup = create_menu_popup(submenu, position);
+        let popup = create_menu_popup(submenu, Some(cx.get_parent_window()), position);
 
         // Close menu when focus is lost
         let weak_this = self.weak_this.clone();
         popup.subscribe(move |&FocusChanged(focused)| {
             if !focused {
+                eprintln!("Submenu focus lost");
                 if let Some(this) = weak_this.upgrade() {
                     this.borrow_mut().submenu = None;
                 }
@@ -242,7 +243,35 @@ impl MenuBase {
             }
         });
 
+        // Cancel submenu close timer
+        if let Some(submenu_closing) = self.abort_submenu_closing.take() {
+            submenu_closing.abort();
+        }
+
+        // This will close any existing submenu
         self.submenu = Some(popup);
+    }
+
+    /// Closes the currently opened submenu after a delay.
+    fn close_submenu_delayed(&mut self) {
+        if self.submenu.is_none() {
+            return;
+        }
+        // there's already a close pending
+        if self.abort_submenu_closing.is_some() {
+            return;
+        }
+
+        let weak_this = self.weak_this.clone();
+        let abort = run_after(SUBMENU_CLOSE_DELAY, move || {
+            if let Some(this) = weak_this.upgrade() {
+                let mut this = this.borrow_mut();
+                this.submenu = None;
+                this.abort_submenu_closing = None;
+            }
+        });
+
+        self.abort_submenu_closing = Some(abort);
     }
 
     /// Returns the index and the bounds of the entry at the given point.
@@ -280,18 +309,15 @@ impl MenuBase {
     }
 
     fn rect_to_display(&self, rect: Rect) -> Rect {
-        Rect::from_origin_size(
-            self.parent_window.map_to_screen(rect.origin()),
-            rect.size(),
-        )
+        Rect::from_origin_size(self.parent_window.map_to_screen(rect.origin()), rect.size())
     }
 }
-
 
 const MENU_ICON_PADDING_LEFT: f64 = 4.0;
 const MENU_ICON_PADDING_RIGHT: f64 = 4.0;
 const MENU_ICON_SIZE: f64 = 16.0;
 const MENU_ICON_SPACE: f64 = MENU_ICON_PADDING_LEFT + MENU_ICON_SIZE + MENU_ICON_PADDING_RIGHT;
+const SUBMENU_CLOSE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl Element for MenuBase {
     fn measure(&mut self, _input: &LayoutInput) -> Size {
@@ -389,7 +415,6 @@ impl Element for MenuBase {
         }
     }
 
-
     fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
         let bounds = cx.rect();
         match event {
@@ -399,13 +424,19 @@ impl Element for MenuBase {
                 if let Some((index, entry_bounds)) = self.entry_at_position(bounds, pos) {
                     if self.highlighted != Some(index) {
                         self.highlighted = Some(index);
-                        emit_global(InternalMenuEntryHighlighted {
-                            index,
-                        });
+                        emit_global(InternalMenuEntryHighlighted { index });
 
-                        let rect = Rect::from_origin_size(cx.map_to_monitor(entry_bounds.origin()), entry_bounds.size());
-                        self.open_submenu(rect, index);
-                        cx.mark_needs_paint();
+                        // If the newly highlighted item is a submenu, open it
+                        let range = submenu_range(&self.tree, index);
+                        if !range.is_empty() {
+                            let rect =
+                                Rect::from_origin_size(cx.map_to_monitor(entry_bounds.origin()), entry_bounds.size());
+                            self.open_submenu(cx, rect, range);
+                            cx.mark_needs_paint();
+                        } else {
+                            // Otherwise, wait & close the current submenu
+                            self.close_submenu_delayed();
+                        }
                     }
                 } else {
                     if self.highlighted.is_some() {
@@ -413,16 +444,21 @@ impl Element for MenuBase {
                         cx.mark_needs_paint();
                     }
                 }
-
             }
             Event::PointerUp(event) => {
                 // trigger item
                 let pos = event.local_position();
-                if let Some((item, bounds)) = self.entry_at_position(bounds, pos) {
-                    emit_global(InternalMenuEntryActivated {
-                        index: item,
-                    });
+                if let Some((item, _bounds)) = self.entry_at_position(bounds, pos) {
+                    emit_global(InternalMenuEntryActivated { index: item });
                     cx.mark_needs_paint();
+                }
+            }
+            Event::KeyDown(event) => {
+                match event.key {
+                    kyute::event::Key::Escape => {
+                        emit_global(InternalMenuCancelled);
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -433,19 +469,71 @@ impl Element for MenuBase {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Clone)]
-pub enum MenuItem<ID> {
-    Entry {
-        label: String,
-        id: ID,
-        submenu: Vec<MenuItem<ID>>,
-    },
+pub enum MenuItem<'a, ID> {
+    Entry(&'a str, ID),
+    Submenu(&'a str, &'a [MenuItem<'a, ID>]),
     Separator,
 }
 
+fn flatten_menu_rec<ID>(
+    items: &[MenuItem<ID>],
+    base_index: &mut usize,
+    index_to_id: &mut BTreeMap<usize, ID>,
+) -> Vec<Node>
+where
+    ID: Clone,
+{
+    let mut flat = Vec::new();
+    for item in items.iter() {
+        match item {
+            MenuItem::Entry(label, id) => {
+                index_to_id.insert(*base_index, id.clone());
+                flat.push(Node::Entry {
+                    label: (*label).to_owned(),
+                    item_count: 0,
+                });
+                *base_index += 1;
+            }
+            MenuItem::Submenu(label, items) => {
+                *base_index += 1;
+                let items_flat = flatten_menu_rec(items, base_index, index_to_id);
+                flat.push(Node::Entry {
+                    label: (*label).to_owned(),
+                    item_count: items_flat.len(),
+                });
+                flat.extend(items_flat);
+            }
+            MenuItem::Separator => {
+                flat.push(Node::Separator);
+                *base_index += 1;
+            }
+        }
+    }
+    flat
+}
+
+/// Flattens a subtree of `MenuItem`s into a flat list of `Node`s.
+///
+/// `index_to_id` is a map from node index to corresponding entry ID.
+fn flatten_menu<ID>(items: &[MenuItem<ID>]) -> (Vec<Node>, BTreeMap<usize, ID>)
+where
+    ID: Clone,
+{
+    let mut base_index = 0;
+    let mut index_to_id = BTreeMap::new();
+    let flat = flatten_menu_rec(items, &mut base_index, &mut index_to_id);
+    (flat, index_to_id)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Represents an open context menu.
+///
+/// Drop to close the context menu.
 pub struct ContextMenu<ID> {
+    parent_window: WindowHandle,
     popup: Window,
     index_to_id: BTreeMap<usize, ID>,
-    _phantom: PhantomData<ID>,
 }
 
 impl<ID: Clone + 'static> ContextMenu<ID> {
@@ -468,26 +556,74 @@ impl<ID: Clone + 'static> ContextMenu<ID> {
             }
         }
     }
+
+    pub async fn cancelled(&self) {
+        select! {
+            _ = wait_event_global::<InternalMenuCancelled>() => {}
+            _ = self.popup.close_requested() => {}
+            _ = self.parent_window.popup_cancelled() => {}
+        }
+    }
+
+    /*pub async fn close_requested(&self) {
+        self.popup.close_requested().await;
+    }*/
 }
 
-pub fn context_menu<'a, ID: Clone + 'static>(
-    parent_window: Window,
-    click_position: Point,
-    items: impl IntoIterator<Item = MenuItem<ID>>,
-) -> ContextMenu<ID> {
-    let mut index_to_id = BTreeMap::new();
-    let tree = Rc::new(flatten_menu_items(
-        &items.into_iter().collect::<Vec<_>>(),
-        &mut 0,
-        &mut index_to_id,
-    ));
+fn open_context_menu_popup(parent_window: WindowHandle, click_position: Point, tree: MenuTree) -> Window {
     let range = 0..tree.len();
     let monitor = parent_window.monitor().unwrap();
-    let popup = MenuBase::new(parent_window, monitor, tree, range).open(click_position);
+    let popup = MenuBase::new(parent_window, monitor, tree, range)
+        .set_focus()
+        .open(click_position);
+    popup
+}
 
-    ContextMenu {
-        index_to_id,
-        popup,
-        _phantom: PhantomData,
+pub fn context_menu<ID: Clone + 'static>(
+    parent_window: WindowHandle,
+    click_position: Point,
+    items: &[MenuItem<ID>],
+) -> ContextMenu<ID> {
+    let (tree, index_to_id) = flatten_menu(items);
+    let popup = open_context_menu_popup(parent_window.clone(), click_position, Rc::new(tree));
+    ContextMenu { parent_window, index_to_id, popup }
+}
+
+/// Extension trait on `ElementCtx` to open a context menu.
+pub trait ContextMenuExt {
+    /// Opens a context menu at the specified position.
+    fn open_context_menu<ID: Clone + 'static>(&self, click_position: Point, items: &[MenuItem<ID>],
+                                              on_entry_activated: impl FnOnce(ID) + 'static,);
+}
+
+impl ContextMenuExt for ElementCtx {
+    fn open_context_menu<ID: Clone + 'static>(
+        &self,
+        click_position: Point,
+        items: &[MenuItem<ID>],
+        on_entry_activated: impl FnOnce(ID) + 'static,
+    )
+    {
+        let parent_window = self.get_parent_window();
+        let (tree, index_to_id) = flatten_menu(items);
+        // tree is shared between all submenu windows
+        let tree = Rc::new(tree);
+        spawn(async move {
+            let menu = ContextMenu {
+                parent_window: parent_window.clone(),
+                index_to_id,
+                popup: open_context_menu_popup(parent_window, click_position, tree),
+            };
+            // FIXME: there's no way to cancel it?
+            select! {
+                id = menu.entry_activated() => {
+                    on_entry_activated(id);
+                }
+                _ = menu.cancelled() => {
+                    eprintln!("Context menu cancelled");
+                }
+            }
+        });
+
     }
 }
