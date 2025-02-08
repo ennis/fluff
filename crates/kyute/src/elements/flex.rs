@@ -1,7 +1,6 @@
-use crate::element::{ElemBox, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny};
+use crate::element::{ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
-use crate::model::with_tracking_scope;
 use crate::{Element, PaintCtx};
 use kurbo::{Point, Size};
 use tracing::trace_span;
@@ -188,6 +187,10 @@ impl Flex {
 }
 
 impl Element for Flex {
+    fn children(&self) -> Vec<ElementAny> {
+        self.children.iter().map(|child| child.element.clone()).collect()
+    }
+
     fn measure(&mut self, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
@@ -210,10 +213,6 @@ impl Element for Flex {
             width: output.width,
             height: output.height,
         }
-    }
-
-    fn children(&self) -> Vec<ElementAny> {
-        self.children.iter().map(|child| child.element.clone()).collect()
     }
 
     fn layout(&mut self, size: Size) -> LayoutOutput {
@@ -245,7 +244,7 @@ impl Element for Flex {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, cx: &ElementCtx, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
             child.element.paint(ctx);
         }

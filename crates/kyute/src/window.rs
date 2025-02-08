@@ -777,7 +777,7 @@ impl<'a> Default for WindowOptions<'a> {
 impl Window {
     /// TODO builder
     pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
-        let root = root.into_element_any(WeakElementAny::default());
+        //let root = root.into_element_any(WeakElementAny::default());
         let window = with_event_loop_window_target(|event_loop| {
             // the window is initially invisible, we show it after the first frame is painted.
             let mut builder = winit::window::WindowBuilder::new()
@@ -819,7 +819,7 @@ impl Window {
         let window_id = window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
-            root: root.clone(),
+            root: root.into_root_element_any(WeakWindow { shared: weak_this.clone() }),
             layer,
             window,
             hidden_before_first_draw: Cell::new(true),
@@ -834,13 +834,6 @@ impl Window {
         });
 
         application::register_window(window_id, shared.clone());
-
-        // Note: I don't really like the fact that elements themselves call back into the window
-        // to request a redraw. It would be better if the window could just listen for changes
-        // to the dirty flags. But since only one window is supposed to watch dirty flags,
-        // that would probably be an unnecessary complication.
-        let weak = Rc::downgrade(&shared);
-        root.set_parent_window(WeakWindow { shared: weak });
 
         Window { shared }
     }

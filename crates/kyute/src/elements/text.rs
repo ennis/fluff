@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{ElemBox, Element, ElementBuilder, ElementCtx, HitTestCtx,};
+use crate::element::{Element, ElementBuilder, ElementCtx, ElementRc, HitTestCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
@@ -24,7 +24,7 @@ impl Text {
     /// use kyute::elements::text::Text;
     /// use kyute::text::TextRun;
     ///
-    /// let text = Text::new(text![size(20.0) "Hello, " { b "world!" }]);
+    /// let text = Text::new(text![FontSize(20.0) "Hello, " { FontWeight(FontWeight::BOLD) "world!" }]);
     /// ```
     pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
         let paragraph = text.into().inner;
@@ -33,10 +33,10 @@ impl Text {
         })
     }
 
-    pub fn set_text(self: &mut ElemBox<Self>, text_style: &TextStyle, text: &[TextRun]) {
+    pub fn set_text(&mut self, cx: &ElementCtx, text_style: &TextStyle, text: &[TextRun]) {
         let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
-        self.ctx.mark_needs_layout();
+        cx.mark_needs_layout();
     }
 }
 
@@ -66,9 +66,9 @@ impl Element for Text {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _cx: &ElementCtx, ctx: &mut PaintCtx) {
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(self: &mut ElemBox<Self>, _event: &mut Event) {}
+    fn event(&mut self, _cx: &ElementCtx, _event: &mut Event) {}
 }

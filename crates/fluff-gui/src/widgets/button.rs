@@ -1,14 +1,12 @@
-use std::any::Any;
-use std::rc::Weak;
 use crate::colors;
 use crate::widgets::TEXT_STYLE;
 use kyute::drawing::{vec2, Image, PlacementExt, BASELINE_CENTER};
 use kyute::element::prelude::*;
-use kyute::element::{ElemBox, WeakElement};
+use kyute::element::WeakElement;
+use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
 use kyute::{text, ElementState, Event, EventSource, PaintCtx, Point, Size};
-use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 
 const BUTTON_RADIUS: f64 = 4.;
 const BUTTON_MIN_WIDTH: f64 = 80.;
@@ -70,8 +68,8 @@ impl Element for Button {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        let mut rect = self.ctx.rect();
+    fn paint(&mut self, cx: &ElementCtx,  ctx: &mut PaintCtx) {
+        let mut rect = cx.rect();
         rect.y1 -= 1.;
         let rect = rect.to_rounded_rect(BUTTON_RADIUS);
 
@@ -100,17 +98,17 @@ impl Element for Button {
         let pos = self
             .label
             .rect_with_baseline()
-            .place_into((self.ctx.rect(), BUTTON_BASELINE), BASELINE_CENTER);
+            .place_into((cx.rect(), BUTTON_BASELINE), BASELINE_CENTER);
         ctx.draw_text_layout(pos, &self.label);
     }
 
-    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
+    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
         let repaint = match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
-                self.ctx.set_focus();
-                self.ctx.set_pointer_capture();
-                
+                cx.set_focus();
+                cx.set_pointer_capture();
+
                 self.weak.emit(ActivatedEvent(true));
                 true
             }
@@ -137,7 +135,7 @@ impl Element for Button {
             _ => false,
         };
         if repaint {
-            self.ctx.mark_needs_paint();
+            cx.mark_needs_paint();
         }
     }
 }

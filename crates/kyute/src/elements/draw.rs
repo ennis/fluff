@@ -1,8 +1,6 @@
 //! Immediate drawing widget.
 use crate::element::prelude::*;
-use crate::element::ElemBox;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{with_tracking_scope, SubscriptionKey};
 use crate::{Event, PaintCtx};
 use kurbo::{Point, Size};
 
@@ -100,7 +98,7 @@ where
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _ectx: &ElementCtx, ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
         //self.draw_subscription.unsubscribe();
@@ -108,7 +106,7 @@ where
         // run the draw function within a tracking scope to collect the list of dependencies
         // (models that we read from).
         self.visual.paint(ctx); //with_tracking_scope(|| {
-            
+
         //});
 
         // subscribe again to changes
@@ -117,7 +115,7 @@ where
         //});
     }
 
-    fn event(self: &mut ElemBox<Self>, _event: &mut Event) {
+    fn event(&mut self, _ectx: &ElementCtx, _event: &mut Event) {
         // TODO
         //self.visual.event(&mut self.ctx, event);
     }

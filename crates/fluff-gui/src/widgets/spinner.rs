@@ -121,7 +121,8 @@ impl SpinnerBase {
             increment: options.increment,
             editing: false,
         });
-        spinner.update_text();
+        let str = spinner.format_value();
+        spinner.text_edit.set_text(str);
         spinner
     }
 
@@ -146,27 +147,33 @@ impl SpinnerBase {
     }
 
     /// Sets the current value of the spinner.
-    pub fn value(mut self: ElementBuilder<Self>, value: f64) -> ElementBuilder<Self> {
-        self.set_value(value);
+    pub fn value(mut self: ElementBuilder<Self>, mut value: f64) -> ElementBuilder<Self> {
+        // FIXME: deduplicate
+        if self.clamp_to_integer {
+            value = value.round();
+        }
+        self.value = value;
+        let str = self.format_value();
+        self.text_edit.set_text(str);
         self
     }
 
     /// Sets the current value of the spinner.
-    pub fn set_value(self: &mut ElemBox<Self>, mut value: f64) {
+    pub fn set_value(&mut self, cx: &ElementCtx, mut value: f64) {
         if self.clamp_to_integer {
             value = value.round();
         }
         self.value = value;
         self.weak.emit(ValueChangedEvent(value));
-        self.update_text();
+        self.update_text(cx);
     }
 
     /////////////////////////////
 
-    fn update_text(self: &mut ElemBox<Self>) {
+    fn update_text(&mut self, cx: &ElementCtx) {
         let str = self.format_value();
         self.text_edit.set_text(str);
-        self.ctx.mark_needs_layout();
+        cx.mark_needs_layout();
     }
 
     fn place_buttons(&self, rect: Rect) -> SpinnerButtons {
@@ -201,7 +208,7 @@ impl SpinnerBase {
         true
     }
 
-    fn handle_scroll(self: &mut ElemBox<Self>, scroll_delta_lines: f64) {
+    fn handle_scroll(&mut self, cx: &ElementCtx, scroll_delta_lines: f64) {
         if self.editing {
             let text = self.text_edit.text();
             if !text.parse::<f64>().is_ok() {
@@ -219,7 +226,7 @@ impl SpinnerBase {
             }
             let increment = 10_f64.powi(decimal_place) * scroll_delta_lines.signum();
             let new_value = self.value + increment;
-            self.set_value(new_value);
+            self.set_value(cx, new_value);
             // we may have added digits to the left, reset the cursor position
             // relative to the end
             let new_len = self.text_edit.text_len();
@@ -227,11 +234,11 @@ impl SpinnerBase {
                 .set_selection(Selection::empty(new_len - cursor_from_end));
         } else {
             let new_value = self.value + self.increment * scroll_delta_lines.signum();
-            self.set_value(new_value);
+            self.set_value(cx, new_value);
         }
     }
 
-    fn handle_context_menu(self: &mut ElemBox<Self>, entry: i32) {
+    fn handle_context_menu(&mut self, entry: i32) {
         eprintln!("Context menu entry: {:?}", entry);
     }
 }
@@ -258,8 +265,8 @@ impl Element for SpinnerBase {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        let rect = self.ctx.rect();
+    fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
+        let rect = ecx.rect();
         let rrect = rect.to_rounded_rect(0.);
 
         // paint background
@@ -270,9 +277,9 @@ impl Element for SpinnerBase {
         // contents
         self.text_edit.paint(ctx, rect);
 
-        if self.ctx.has_focus() {
+        if ecx.has_focus() {
             // draw the focus ring
-            ctx.draw_border(rrect, 1., BorderPosition::Inside, colors::DISPLAY_TEXT.darken(0.2));
+            ctx.draw_border(rrect, 1., BorderPosition::Inside, DISPLAY_TEXT.darken(0.2));
         }
 
         // paint buttons
@@ -280,12 +287,12 @@ impl Element for SpinnerBase {
         buttons.paint(ctx);
     }
 
-    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
-        let buttons = self.place_buttons(self.ctx.rect());
+    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+        let buttons = self.place_buttons(cx.rect());
         if buttons.up_clicked(event) {
-            self.set_value(self.value + self.increment);
+            self.set_value(cx, self.value + self.increment);
         } else if buttons.down_clicked(event) {
-            self.set_value(self.value - self.increment);
+            self.set_value(cx, self.value - self.increment);
         } else {
             match event {
                 // filter non-numeric input
@@ -298,20 +305,20 @@ impl Element for SpinnerBase {
                 // mouse wheel
                 Event::Wheel(wheel) => match wheel.delta {
                     ScrollDelta::Lines { y, .. } => {
-                        self.handle_scroll(y);
+                        self.handle_scroll(cx, y);
                     }
                     _ => {}
                 },
 
                 Event::PointerDown(p) => {
                     // acquire focus on pointer down
-                    self.ctx.set_focus();
-                    self.ctx.set_pointer_capture();
+                    cx.set_focus();
+                    cx.set_pointer_capture();
 
                     // context menu
                     if p.buttons.test(PointerButton::RIGHT) {
-                        let mut this = self.weak();
-                        let Some(parent_window) = self.ctx.get_parent_window().upgrade() else {
+                        let mut this = self.weak.clone();
+                        let Some(parent_window) = cx.get_parent_window().upgrade() else {
                             // no parent window
                             panic!("context_menu: no parent window in context");
                         };
@@ -341,7 +348,7 @@ impl Element for SpinnerBase {
                             loop {
                                 select! {
                                     entry = menu.entry_activated() => {
-                                        this.run_later(move |this| this.handle_context_menu(entry));
+                                        this.run_later(move |this, cx| this.handle_context_menu(entry));
                                         break
                                     }
                                     entry = menu.entry_highlighted() => {
@@ -388,7 +395,7 @@ impl Element for SpinnerBase {
                     // Go in editing mode
                     self.editing = true;
                     self.value_before_editing = self.value;
-                    self.update_text();
+                    self.update_text(cx);
                 }
 
                 _ => {}
@@ -410,10 +417,10 @@ impl Element for SpinnerBase {
                 // TODO: parse and update
             }
             if r.relayout() {
-                self.ctx.mark_needs_layout();
+                cx.mark_needs_layout();
             }
             if r.repaint() {
-                self.ctx.mark_needs_paint();
+                cx.mark_needs_paint();
             }
             if r.reset_blink() {
                 //self.text_edit.reset_blink();
@@ -422,22 +429,22 @@ impl Element for SpinnerBase {
                 // When the spinner loses focus, or the user presses enter
                 // keep the current value and exit editing mode
                 self.editing = false;
-                self.ctx.clear_focus();
+                cx.clear_focus();
                 // Parse value and update
                 let text = self.text_edit.text();
                 if let Some(value) = text.parse().ok() {
-                    self.set_value(value);
+                    self.set_value(cx,value);
                 } else {
                     // restore the text
-                    self.update_text();
+                    self.update_text(cx,);
                 }
             }
             if r.cancelled() {
                 // user pressed escape
                 // restore the previous value
                 self.editing = false;
-                self.ctx.clear_focus();
-                self.set_value(self.value_before_editing);
+                cx.clear_focus();
+                self.set_value(cx, self.value_before_editing);
             }
         }
     }

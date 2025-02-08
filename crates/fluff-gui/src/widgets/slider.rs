@@ -1,7 +1,7 @@
 use crate::colors;
 use crate::widgets::{PaintExt, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
-use kyute::element::{ElemBox, ElementBuilder, HitTestCtx, WeakElement};
+use kyute::element::{ElementBuilder, ElementCtx, HitTestCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
 use kyute::event::ScrollDelta;
 use kyute::kurbo::{Line, PathEl, Vec2};
@@ -173,9 +173,9 @@ impl Slider {
         })
     }
 
-    pub fn set_value(self: &mut ElemBox<Self>, value: f64) {
+    pub fn set_value(&mut self, cx: &ElementCtx, value: f64) {
         self.base.set_value(value);
-        self.ctx.mark_needs_paint();
+        cx.mark_needs_paint();
     }
 }
 
@@ -192,22 +192,22 @@ impl Element for Slider {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        self.element.base.paint(ctx, self.ctx.rect());
+    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
+        self.base.paint(ctx, ectx.rect());
     }
 
-    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
+    fn event(&mut self,  cx: &ElementCtx, event: &mut Event) {
         match event {
             Event::PointerDown(_) => {
-                self.ctx.set_pointer_capture();
-                self.ctx.set_focus();
+                cx.set_pointer_capture();
+                cx.set_focus();
             }
             _ => {}
         }
         let result = self.base.event(event);
         
         if let Some(value) = result.value_changed {
-            self.ctx.mark_needs_paint();
+            cx.mark_needs_paint();
             self.weak.emit(ValueChangedEvent(value));
         }
     }

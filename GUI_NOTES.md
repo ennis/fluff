@@ -1458,3 +1458,63 @@ Thus it is not copyable. However, to access an element you need an exclusive ref
 
 `&mut Node<Self>` is a mutable reference to an entry in the element table (i.e. a mutable reference to an element).
 It can be used to access other elements in the tree, given a `&mut ElementRef`.
+
+```
+
+    // `Aliasable` needed because `Element` methods get `&mut ElemBox`, because elements get exclusive
+    // access to the element, but we **don't** want to give exclusive access to `ElementCtx`.
+    //
+    // This leaves us with a few options:
+    // - store ElementCtx outside the ElemBox, and remove ElemBox
+    //      - this is not great because now methods have two parameters (`&mut Self, &ElementCtx`)
+    // - retrieve the ElementCtx from a weak self-reference inside the element
+    //      - not super ergonomic, not efficient because we need to upgrade the weak reference
+    // - store ElementCtx inside the ElemBox, but make it `UnsafePinned`
+    //      - we pass only one pointer (`&mut ElemBox`)
+    // - pass `&mut ElemBox` but store the ElementCtx just before in memory
+    //      - uncheckable by miri, needs exposed provenance
+    // - wrap ElementCtx in Rc, parent pointers point to this Rc
+    //      - needs a separate allocation, and another indirection to access ctx + extra rc clones
+    //      - parent pointers point to the ElementCtx
+    //      - blame the rust memory semantics for this crap
+    // - Store a raw pointer to the ElementCtx in the ElemBox
+    //      - the raw pointer points to the ElementCtx behind the ElemBox
+    //      - the raw pointer has shared read permissions on the ElementCtx
+    //      - redundant data, necessary to appease miri
+    //      - self-referential, so will probably need pinning
+    //      - => **can't work**, pinning means we can't have naked `&mut ElemBox`es (only `Pin<&mut ElemBox>`)
+    //           and the ergonomics of that are completely unacceptable
+    //      - without pinning, it's possible to make things unsound by swapping `ElemBoxes` as they
+    //          are built inside ElementBuilders (since ElementBuilder derefs-mut to ElemBox)
+    // - Store a raw pointer to the ElementCtx in the ElemBox, parent pointers point to this ctx
+    //      - its lifetime is tied to the ElemBox
+    //      - child elements point to this ElementCtx, but must be careful to also hold a weak ref to the parent
+    //      - the ElementCtx can't be stored alongside ElemBox because it could be moved
+    //      - the ElemBox "owns" the ElementCtx but doesn't have exclusive access to it
+    //      - still doesn't work: possible to swap ElemBoxes when a parent link has been established
+    // => Rule: parent links **cannot** point to something inside an elembox, be it either a field or a raw pointer owned by the elembox
+    // - Store the ElementCtx in a UnsafeAliased cell, get a pointer to it **without** constructing a mut reference
+
+
+    /// **NOTE**: access to this field may be aliased, even when accessed through an exclusive reference
+    /// to the `ElemBox`. The reason for that is a result of several considerations:
+    ///
+    /// 1. We want `Element` methods to receive both the element and its context.
+    /// 2. `Element` methods should receive an exclusive reference to the element (`&mut self`).
+    /// 3. `Element` methods have only one parameter for the element and the context (`&mut ElemBox<Self>` which bundles both the element and its context).
+    ///    This is because we want those methods to also work with the element as it is being built (via `ElementBuilder`) and it's not ergonomic to have to
+    ///    construct a dummy context at this point. Since `ElementBuilder` deref-muts to `ElemBox` this is no problem.
+    /// 4. Element contexts must be shared because it's possible for a child element to call `mark_needs_paint`
+    ///    (which accesses the contexts of parent elements) while a parent element is exclusively borrowed.
+    ///
+    /// So we have this situation where:
+    /// - the element and context are stored together
+    /// - methods take an exclusive reference to the element
+    /// - methods should only take one parameter for both the element and the context, thus `&mut Something` where `Something` bundles both the element and the context
+    /// 
+    /// Note: if (3.) wasn't a requirement, we could store the context outside the `ElemBox`
+    /// and pass it as a separate parameter to `Element` methods. This would make those methods
+    /// incompatible with `ElementBuilder`, but that might not be too important.
+    /// 
+    /// Another option is to store the context inside the Element itself, but it would still need to be aliased.
+```

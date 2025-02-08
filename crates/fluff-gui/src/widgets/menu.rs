@@ -342,8 +342,8 @@ impl Element for MenuBase {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
-        let bounds = self.ctx.rect();
+    fn paint(&mut self, cx: &ElementCtx, ctx: &mut PaintCtx) {
+        let bounds = cx.rect();
         let mut y = self.insets.y0;
 
         // menu border
@@ -390,8 +390,8 @@ impl Element for MenuBase {
     }
 
 
-    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
-        let bounds = self.ctx.rect();
+    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+        let bounds = cx.rect();
         match event {
             Event::PointerMove(event) => {
                 // update highlighted item
@@ -403,14 +403,14 @@ impl Element for MenuBase {
                             index,
                         });
 
-                        let rect = Rect::from_origin_size(self.ctx.map_to_monitor(entry_bounds.origin()), entry_bounds.size());
+                        let rect = Rect::from_origin_size(cx.map_to_monitor(entry_bounds.origin()), entry_bounds.size());
                         self.open_submenu(rect, index);
-                        self.ctx.mark_needs_paint();
+                        cx.mark_needs_paint();
                     }
                 } else {
                     if self.highlighted.is_some() {
                         self.highlighted = None;
-                        self.ctx.mark_needs_paint();
+                        cx.mark_needs_paint();
                     }
                 }
 
@@ -422,7 +422,7 @@ impl Element for MenuBase {
                     emit_global(InternalMenuEntryActivated {
                         index: item,
                     });
-                    self.ctx.mark_needs_paint();
+                    cx.mark_needs_paint();
                 }
             }
             _ => {}

@@ -1,6 +1,6 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement};
+use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
@@ -143,8 +143,7 @@ impl Frame {
     /// Adds a child item to this frame.
     #[must_use]
     pub fn content(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
-        let weak_self = self.weak_any();
-        self.content = Some(child.into_element_any(weak_self));
+        self.content = Some(child.into_element_any(self.weak.clone().as_dyn()));
         self
     }
 
@@ -240,10 +239,10 @@ impl Frame {
     }
 
     /// Sets the background color.
-    pub fn set_background_color(self: &mut ElemBox<Self>, color: Color) {
+    pub fn set_background_color(&mut self, cx: &ElementCtx, color: Color) {
         self.style.background_color = color;
         self.style_changed = true;
-        self.ctx.mark_needs_paint();
+        cx.mark_needs_paint();
     }
 
     fn resolve_style(&mut self) {
@@ -423,10 +422,10 @@ impl Element for Frame {
         ctx.rect.contains(point)
     }
 
-    fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
         self.resolve_style();
 
-        let rect = self.ctx.rect();
+        let rect = ecx.rect();
         let s = &self.resolved_style;
 
         let border_radius = s.border_radius;
@@ -465,37 +464,37 @@ impl Element for Frame {
         }
     }
 
-    fn event(self: &mut ElemBox<Self>, event: &mut Event) {
-        fn update_state(this: &mut ElemBox<Frame>, state: ElementState) {
+    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+        fn update_state(this: &mut Frame, cx: &ElementCtx, state: ElementState) {
             this.state = state;
             this.weak.emit(ElementStateChanged(state));
             if this.state_affects_style {
                 this.style_changed = true;
-                this.ctx.mark_needs_paint();
+                cx.mark_needs_paint();
             }
         }
 
         match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
-                update_state(self, self.state);
+                update_state(self,cx, self.state);
                 self.weak.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
                     self.weak.emit(ActivatedEvent(false));
-                    update_state(self, self.state);
+                    update_state(self,cx, self.state);
                     self.weak.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
-                update_state(self, self.state);
+                update_state(self,cx, self.state);
                 self.weak.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
-                update_state(self, self.state);
+                update_state(self,cx, self.state);
                 self.weak.emit(HoveredEvent(false));
             }
             _ => {}

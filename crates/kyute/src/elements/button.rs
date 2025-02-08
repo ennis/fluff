@@ -60,11 +60,11 @@ pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
         .content(Flex::row().gaps(SizeValue::Stretch, 0, SizeValue::Stretch).child(
             text!( FontSize(theme.font_size) FontFamily(theme.font_family) Color(Color::from_hex("ffe580")) "{label}" ),
         ))
-        .on(|button, HoveredEvent(hovered)| {
+        .on(|button, cx, HoveredEvent(hovered)| {
             if *hovered {
-                button.set_background_color(Color::from_hex("474029"));
+                button.set_background_color(cx, Color::from_hex("474029"));
             } else {
-                button.set_background_color(Color::from_hex("211e13"));
+                button.set_background_color(cx, Color::from_hex("211e13"));
             }
         })
 }
