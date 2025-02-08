@@ -1,11 +1,14 @@
+use std::any::Any;
+use std::rc::Weak;
 use crate::colors;
 use crate::widgets::TEXT_STYLE;
 use kyute::drawing::{vec2, Image, PlacementExt, BASELINE_CENTER};
 use kyute::element::prelude::*;
-use kyute::element::ElemBox;
+use kyute::element::{ElemBox, WeakElement};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
-use kyute::{text, ElementState, Event, PaintCtx, Point, Size};
+use kyute::{text, ElementState, Event, EventSource, PaintCtx, Point, Size};
+use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 
 const BUTTON_RADIUS: f64 = 4.;
 const BUTTON_MIN_WIDTH: f64 = 80.;
@@ -16,21 +19,32 @@ const BUTTON_BASELINE: f64 = 16.;
 ///
 /// This element emits the standard events for buttons.
 pub struct Button {
+    weak: WeakElement<Self>,
     label: TextLayout,
     state: ElementState,
 }
 
 impl Button {
     /// Creates a new button with the specified label.
-    pub fn new(label: impl Into<String>) -> Button {
+    pub fn new(label: impl Into<String>) -> ElementBuilder<Button> {
         let label = label.into();
         let label = TextLayout::new(&TEXT_STYLE, text!["{label}"]);
-        Button {
-            label,
-            state: ElementState::default(),
-        }
+        ElementBuilder::new_cyclic(|weak| {
+            Button {
+                weak,
+                label,
+                state: ElementState::default(),
+            }
+        })
     }
 }
+
+/*
+impl EventSource for Button {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.weak.clone()
+    }
+}*/
 
 impl Element for Button {
     fn measure(&mut self, input: &LayoutInput) -> Size {
@@ -91,7 +105,39 @@ impl Element for Button {
     }
 
     fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
-        if self.ctx.update_element_state(&mut self.element.state, event) {
+        let repaint = match event {
+            Event::PointerDown(_) => {
+                self.state.set_active(true);
+                self.ctx.set_focus();
+                self.ctx.set_pointer_capture();
+
+
+                self.weak.emit(ActivatedEvent(true));
+                true
+            }
+            Event::PointerUp(_) => {
+                if self.state.is_active() {
+                    self.state.set_active(false);
+                    self.weak.emit(ActivatedEvent(false));
+                    self.weak.emit(ClickedEvent);
+                    true
+                } else {
+                    false
+                }
+            }
+            Event::PointerEnter(_) => {
+                self.state.set_hovered(true);
+                self.weak.emit(HoveredEvent(true));
+                true
+            }
+            Event::PointerLeave(_) => {
+                self.state.set_hovered(false);
+                self.weak.emit(HoveredEvent(false));
+                true
+            }
+            _ => false,
+        };
+        if repaint {
             self.ctx.mark_needs_paint();
         }
     }

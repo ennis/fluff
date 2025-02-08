@@ -3,7 +3,7 @@ use bitflags::bitflags;
 use kyute::kurbo::{Line, PathEl, Vec2};
 use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
 use kyute::drawing::point;
-use kyute::element::{ElemBox, ElementCtx, HitTestCtx, WindowCtx};
+use kyute::element::{ElemBox, ElementBuilder, ElementCtx, HitTestCtx, WeakElement, WindowCtx};
 use kyute::elements::ValueChangedEvent;
 use kyute::event::ScrollDelta;
 use kyute::layout::{LayoutInput, LayoutOutput};
@@ -162,14 +162,16 @@ impl SliderBase {
 
 /// Standalone slider widget.
 pub struct Slider {
+    weak: WeakElement<Self>,
     base: SliderBase,
 }
 
 impl Slider {
-    pub fn new(value: f64, range: Range<f64>) -> Self {
-        Slider {
+    pub fn new(value: f64, range: Range<f64>) -> ElementBuilder<Self> {
+        ElementBuilder::new_cyclic(|weak| Slider {
+            weak,
             base: SliderBase::new(value, range),
-        }
+        })
     }
 
     pub fn set_value(self: &mut ElemBox<Self>, value: f64) {
@@ -207,7 +209,7 @@ impl Element for Slider {
         
         if let Some(value) = result.value_changed {
             self.ctx.mark_needs_paint();
-            self.ctx.emit(ValueChangedEvent(value));
+            self.weak.emit(ValueChangedEvent(value));
         }
     }
 }

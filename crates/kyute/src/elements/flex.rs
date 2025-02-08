@@ -85,7 +85,7 @@ impl Flex {
         Self::new().direction(Axis::Vertical)
     }
 
-    fn update_dynamic_children(self: &mut ElemBox<Self>, mut children: impl DynamicFlexChildren + 'static) {
+    /*fn update_dynamic_children(self: &mut ElemBox<Self>, mut children: impl DynamicFlexChildren + 'static) {
         let (_, deps) = with_tracking_scope(|| children.update(self.ctx.weak_any(), &mut self.children));
         self.ctx.mark_needs_layout();
         if !deps.reads.is_empty() {
@@ -93,9 +93,9 @@ impl Flex {
                 this.update_dynamic_children(children);
             });
         }
-    }
+    }*/
 
-    /// Specifies the contents of the flex layout.
+    /*/// Specifies the contents of the flex layout.
     #[must_use]
     pub fn dynamic_children(
         mut self: ElementBuilder<Self>,
@@ -103,7 +103,7 @@ impl Flex {
     ) -> ElementBuilder<Self> {
         self.update_dynamic_children(children);
         self
-    }
+    }*/
 
     /// Adds a child element to the flex layout.
     #[must_use]

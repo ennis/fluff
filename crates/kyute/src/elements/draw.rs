@@ -33,7 +33,7 @@ pub trait Visual {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 pub struct Draw<V> {
-    draw_subscription: SubscriptionKey,
+    //draw_subscription: SubscriptionKey,
     width: Option<f64>,
     height: Option<f64>,
     baseline: f64,
@@ -47,7 +47,7 @@ where
     /// Creates a new draw element with the specified visual.
     pub fn new(visual: V) -> ElementBuilder<Self> {
         ElementBuilder::new(Self {
-            draw_subscription: Default::default(),
+            //draw_subscription: Default::default(),
             width: None,
             height: None,
             baseline: 0.0,
@@ -103,18 +103,18 @@ where
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
-        self.draw_subscription.unsubscribe();
+        //self.draw_subscription.unsubscribe();
 
         // run the draw function within a tracking scope to collect the list of dependencies
         // (models that we read from).
-        let (_, deps) = with_tracking_scope(|| {
-            self.visual.paint(ctx);
-        });
+        self.visual.paint(ctx); //with_tracking_scope(|| {
+            
+        //});
 
         // subscribe again to changes
-        self.draw_subscription = self.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
-            this.ctx.mark_needs_paint();
-        });
+        //self.draw_subscription = self.watch_once(deps.reads.into_iter().map(|w| w.0), |this, _| {
+        //    this.ctx.mark_needs_paint();
+        //});
     }
 
     fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, _event: &mut Event) {

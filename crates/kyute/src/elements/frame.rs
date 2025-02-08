@@ -1,6 +1,6 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WindowCtx};
+use crate::element::{ElemBox, Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, WeakElement, WindowCtx};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
@@ -79,6 +79,7 @@ impl FrameStyle {
 
 /// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
+    weak: WeakElement<Self>,
     width: SizeValue,
     height: SizeValue,
     min_width: SizeValue,
@@ -98,8 +99,9 @@ pub struct Frame {
 
 impl Frame {
     /// Creates a new `Frame` with the default styles.
-    pub fn new() -> ElementBuilder<Frame> {
-        ElementBuilder::new(Frame {
+    pub fn new() -> ElementBuilder<Self> {
+        ElementBuilder::new_cyclic(|weak_this| Frame {
+            weak: weak_this,
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -466,7 +468,7 @@ impl Element for Frame {
     fn event(self: &mut ElemBox<Self>, ctx: &mut WindowCtx, event: &mut Event) {
         fn update_state(this: &mut ElemBox<Frame>, _ctx: &mut WindowCtx, state: ElementState) {
             this.state = state;
-            this.ctx.emit(ElementStateChanged(state));
+            this.weak.emit(ElementStateChanged(state));
             if this.state_affects_style {
                 this.style_changed = true;
                 this.ctx.mark_needs_paint();
@@ -477,24 +479,24 @@ impl Element for Frame {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
                 update_state(self, ctx, self.state);
-                self.ctx.emit(ActivatedEvent(true));
+                self.weak.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
-                    self.ctx.emit(ActivatedEvent(false));
+                    self.weak.emit(ActivatedEvent(false));
                     update_state(self, ctx, self.state);
-                    self.ctx.emit(ClickedEvent);
+                    self.weak.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
                 update_state(self, ctx, self.state);
-                self.ctx.emit(HoveredEvent(true));
+                self.weak.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
                 update_state(self, ctx, self.state);
-                self.ctx.emit(HoveredEvent(false));
+                self.weak.emit(HoveredEvent(false));
             }
             _ => {}
         }

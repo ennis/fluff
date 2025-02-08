@@ -5,7 +5,6 @@ use crate::widgets::menu::{MenuItem, context_menu};
 use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::application::spawn;
 use kyute::drawing::{BorderPosition, RIGHT_CENTER, place, vec2};
-use kyute::element::ElemBox;
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
@@ -87,6 +86,7 @@ impl<'a> Default for SpinnerOptions<'a> {
 
 /// Numeric spinner input widget.
 pub struct SpinnerBase {
+    weak: WeakElement<Self>,
     /// The value to display.
     value: f64,
     /// The value before editing began.
@@ -109,7 +109,8 @@ impl SpinnerBase {
         text_edit.set_text_style(DISPLAY_TEXT_STYLE.clone());
         text_edit.set_caret_color(DISPLAY_TEXT);
 
-        let mut spinner = ElementBuilder::new(SpinnerBase {
+        let mut spinner = ElementBuilder::new_cyclic(|weak|SpinnerBase {
+            weak,
             value: options.initial_value,
             value_before_editing: options.initial_value,
             show_background: true,
@@ -156,7 +157,7 @@ impl SpinnerBase {
             value = value.round();
         }
         self.value = value;
-        self.ctx.emit(ValueChangedEvent(value));
+        self.weak.emit(ValueChangedEvent(value));
         self.update_text();
     }
 

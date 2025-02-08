@@ -15,6 +15,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::rc::Rc;
+use kyute::element::WeakElement;
 
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryActivated {
@@ -84,7 +85,7 @@ fn flatten_menu_items<ID: Clone>(
     flat
 }
 
-fn create_menu_popup(mut content: MenuBase, menu_position: Point) -> Window {
+fn create_menu_popup(mut content: ElementBuilder<MenuBase>, menu_position: Point) -> Window {
     // create popup window
     let size = content.measure(&LayoutInput::default());
     Window::new(
@@ -133,6 +134,7 @@ enum Node {
 }
 
 pub struct MenuBase {
+    weak_this: WeakElement<Self>,
     parent_window: Window,
     monitor: Monitor,
     items: Vec<InternalMenuItem>,
@@ -162,7 +164,7 @@ fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
 }
 
 impl MenuBase {
-    fn new(parent_window: Window, monitor: Monitor, tree: Rc<Vec<Node>>, range: Range<usize>) -> Self {
+    fn new(parent_window: Window, monitor: Monitor, tree: Rc<Vec<Node>>, range: Range<usize>) -> ElementBuilder<Self> {
         let mut items = Vec::new();
         let mut i = range.start;
         while i < range.end {
@@ -186,7 +188,8 @@ impl MenuBase {
             }
         }
 
-        MenuBase {
+        ElementBuilder::new_cyclic(|weak_this| MenuBase {
+            weak_this,
             parent_window,
             monitor,
             items,
@@ -195,10 +198,10 @@ impl MenuBase {
             insets: Insets::uniform(4.0),
             highlighted: None,
             submenu: None,
-        }
+        })
     }
 
-    fn open(mut self, at: Point) -> Window {
+    fn open(mut self: ElementBuilder<Self>, at: Point) -> Window {
         let size = self.measure(&LayoutInput::default());
         let at_display = self.parent_window.map_to_screen(at);
         let position = calc_menu_position(

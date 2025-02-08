@@ -24,7 +24,7 @@ use std::{fmt, mem, ptr};
 pub mod prelude {
     pub use crate::element::{
         ElemBox, Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny,
-        WindowCtx,
+        WindowCtx, WeakElement,
     };
     pub use crate::event::Event;
     pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
@@ -266,7 +266,7 @@ impl<T: Element> ElemBox<T> {
         rc
     }
 
-    fn new_cyclic(f: impl FnOnce(WeakElementAny) -> T) -> UniqueRc<RefCell<ElemBox<T>>> {
+    fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> UniqueRc<RefCell<ElemBox<T>>> {
         let mut urc = UniqueRc::new(RefCell::new(MaybeUninit::uninit()));
         // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
         // because the resulting weak pointer can't be upgraded anyway.
@@ -282,45 +282,30 @@ impl<T: Element> ElemBox<T> {
         urc
     }
 
-    fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut ElemBox<T>)) {
+    /*fn invoke_helper(weak_this: WeakElementAny, f: impl FnOnce(&mut ElemBox<T>)) {
         if let Some(this) = weak_this.upgrade() {
             this.invoke(move |this| {
                 let this = this.downcast_mut().expect("unexpected type of element");
                 f(this);
             });
         }
-    }
+    }*/
 
-    pub fn run_later(&mut self, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
+    /*pub fn run_later(&mut self, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
         let weak_this = self.ctx.weak_this.clone();
         run_queued(move || {
             Self::invoke_helper(weak_this, f);
         })
-    }
+    }*/
 
-    pub fn run_after(&mut self, duration: Duration, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
+    /*pub fn run_after(&mut self, duration: Duration, f: impl FnOnce(&mut ElemBox<T>) + 'static) {
         let weak_this = self.ctx.weak_this.clone();
         run_after(duration, move || {
             Self::invoke_helper(weak_this, f);
         })
-    }
+    }*/
 
-    // Impossible: V is a specific type, but the input closure might be generic over V via lifetimes
-    pub fn callback<V, R>(&self, mut f: impl FnMut(&mut ElemBox<T>, V) -> R) -> impl FnMut(V) -> R {
-        let weak_this = self.ctx.weak_this.clone();
-        move |value| {
-            if let Some(this) = weak_this.upgrade() {
-                this.invoke(|this| {
-                    let this = this.downcast_mut().expect("unexpected type of element");
-                    f(this, value)
-                })
-            } else {
-                panic!("element is dead")
-            }
-        }
-    }
-
-    #[track_caller]
+    /*#[track_caller]
     pub fn watch_once(
         &mut self,
         models: impl IntoIterator<Item = Weak<dyn Any>>,
@@ -335,9 +320,9 @@ impl<T: Element> ElemBox<T> {
                 });
             }
         })
-    }
+    }*/
 
-    pub fn with_tracking_scope<R>(
+    /*pub fn with_tracking_scope<R>(
         &mut self,
         scope: impl FnOnce() -> R,
         on_changed: impl FnOnce(&mut ElemBox<T>) + 'static,
@@ -349,7 +334,7 @@ impl<T: Element> ElemBox<T> {
             false
         });
         r
-    }
+    }*/
 }
 
 impl<T: 'static> ElemBox<T> {
@@ -410,6 +395,7 @@ impl<T: 'static> EventSource for WeakElement<T> {
     }
 }
 
+/*
 impl EventSource for WeakElementAny {
     fn as_weak(&self) -> Weak<dyn Any> {
         // FIXME: that's not great, we need to upgrade to get the Weak<Any> inside
@@ -418,7 +404,7 @@ impl EventSource for WeakElementAny {
         //        subscription system, we just need to be able to compare Weak pointers.
         self.0.upgrade().unwrap().borrow().ctx.weak_this_any.clone()
     }
-}
+}*/
 
 impl WeakElementAny {
     pub unsafe fn downcast_unchecked<T: 'static>(self) -> WeakElement<T> {
@@ -826,45 +812,6 @@ impl ElementCtx {
         let window = self.get_parent_window().upgrade().unwrap();
         window.map_to_screen(window_point)
     }
-    
-    /// Handles standard input events for activation, hovering, and clicks.
-    ///
-    /// Emits the corresponding events (ActivatedEvent, HoveredEvent, ClickedEvent)
-    /// when the state changed.
-    ///
-    /// Returns whether the state changed.
-    pub fn update_element_state(&mut self, state: &mut ElementState, event: &Event) -> bool {
-        match event {
-            Event::PointerDown(_) => {
-                state.set_active(true);
-                self.set_focus();
-                self.set_pointer_capture();
-                self.emit(ActivatedEvent(true));
-                true
-            }
-            Event::PointerUp(_) => {
-                if state.is_active() {
-                    state.set_active(false);
-                    self.emit(ActivatedEvent(false));
-                    self.emit(ClickedEvent);
-                    true
-                } else {
-                    false
-                }
-            }
-            Event::PointerEnter(_) => {
-                state.set_hovered(true);
-                self.emit(HoveredEvent(true));
-                true
-            }
-            Event::PointerLeave(_) => {
-                state.set_hovered(false);
-                self.emit(HoveredEvent(false));
-                true
-            }
-            _ => false,
-        }
-    }
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
     ///
@@ -931,11 +878,12 @@ impl ElementCtx {
     }
 }
 
+/*
 impl EventSource for ElementCtx {
     fn as_weak(&self) -> Weak<dyn Any> {
         self.weak_this_any.clone()
     }
-}
+}*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -963,7 +911,7 @@ impl<T: Element> ElementBuilder<T> {
         ElementBuilder(ElemBox::new(inner))
     }
 
-    pub fn new_cyclic(f: impl FnOnce(WeakElementAny) -> T) -> ElementBuilder<T> {
+    pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
         ElementBuilder(ElemBox::new_cyclic(f))
     }
 
