@@ -19,13 +19,11 @@ use std::rc::Rc;
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryActivated {
     pub index: usize,
-    pub display_rect: Rect,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryHighlighted {
     pub index: usize,
-    pub display_rect: Rect,
 }
 
 enum InternalMenuItem {
@@ -217,6 +215,7 @@ impl MenuBase {
         if range.is_empty() {
             return;
         }
+
         let mut submenu = MenuBase::new(
             self.parent_window.clone(),
             self.monitor.clone(),
@@ -243,8 +242,10 @@ impl MenuBase {
         self.submenu = Some(popup);
     }
 
-    /// Returns the index of the item at the given point.
-    fn item_at_position(&self, this_bounds: Rect, pos: Point) -> Option<usize> {
+    /// Returns the index and the bounds of the entry at the given point.
+    ///
+    /// Returns None if the point falls on a separator or outside the menu.
+    fn entry_at_position(&self, this_bounds: Rect, pos: Point) -> Option<(usize, Rect)> {
         let inset_bounds = this_bounds - self.insets;
         if !inset_bounds.contains(pos) {
             return None;
@@ -254,7 +255,13 @@ impl MenuBase {
             match item {
                 InternalMenuItem::Entry { index, .. } => {
                     if pos.y < y + MENU_ITEM_HEIGHT {
-                        return Some(*index);
+                        let rect = Rect {
+                            x0: inset_bounds.x0,
+                            x1: inset_bounds.x1,
+                            y0: y,
+                            y1: y + MENU_ITEM_HEIGHT,
+                        };
+                        return Some((*index, rect));
                     }
                     y += MENU_ITEM_HEIGHT;
                 }
@@ -268,17 +275,19 @@ impl MenuBase {
         }
         None
     }
+
+    fn rect_to_display(&self, rect: Rect) -> Rect {
+        Rect::from_origin_size(
+            self.parent_window.map_to_screen(rect.origin()),
+            rect.size(),
+        )
+    }
 }
 
-struct MenuEventResult {
-    highlighted_item: Option<usize>,
-    activated_item: Option<usize>,
-}
 
 const MENU_ICON_PADDING_LEFT: f64 = 4.0;
 const MENU_ICON_PADDING_RIGHT: f64 = 4.0;
 const MENU_ICON_SIZE: f64 = 16.0;
-
 const MENU_ICON_SPACE: f64 = MENU_ICON_PADDING_LEFT + MENU_ICON_SIZE + MENU_ICON_PADDING_RIGHT;
 
 impl Element for MenuBase {
@@ -330,42 +339,6 @@ impl Element for MenuBase {
         ctx.rect.contains(point)
     }
 
-    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
-        let bounds = self.ctx.rect();
-        match event {
-            Event::PointerMove(event) => {
-                // update highlighted item
-                let pos = event.local_position();
-                let item = self.item_at_position(bounds, pos);
-                if self.highlighted != item {
-                    self.highlighted = item;
-                    if let Some(item) = item {
-                        emit_global(InternalMenuEntryHighlighted {
-                            index: item,
-                            display_rect: bounds,
-                        });
-                    }
-
-                    //
-
-                    self.ctx.mark_needs_paint();
-                }
-            }
-            Event::PointerUp(event) => {
-                // trigger item
-                let pos = event.local_position();
-                if let Some(item) = self.item_at_position(bounds, pos) {
-                    emit_global(InternalMenuEntryActivated {
-                        index: item,
-                        display_rect: bounds,
-                    });
-                    self.ctx.mark_needs_paint();
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn paint(self: &mut ElemBox<Self>, ctx: &mut PaintCtx) {
         let bounds = self.ctx.rect();
         let mut y = self.insets.y0;
@@ -410,6 +383,45 @@ impl Element for MenuBase {
                     y += MENU_SEPARATOR_HEIGHT;
                 }
             }
+        }
+    }
+
+
+    fn event(self: &mut ElemBox<Self>, _ctx: &mut WindowCtx, event: &mut Event) {
+        let bounds = self.ctx.rect();
+        match event {
+            Event::PointerMove(event) => {
+                // update highlighted item
+                let pos = event.local_position();
+                if let Some((index, entry_bounds)) = self.entry_at_position(bounds, pos) {
+                    if self.highlighted != Some(index) {
+                        self.highlighted = Some(index);
+                        emit_global(InternalMenuEntryHighlighted {
+                            index,
+                        });
+
+                        self.open_submenu(Rect::from_origin_size(self.ctx.map_to_monitor(entry_bounds.origin()), entry_bounds.size()), index);
+                        self.ctx.mark_needs_paint();
+                    }
+                } else {
+                    if self.highlighted.is_some() {
+                        self.highlighted = None;
+                        self.ctx.mark_needs_paint();
+                    }
+                }
+
+            }
+            Event::PointerUp(event) => {
+                // trigger item
+                let pos = event.local_position();
+                if let Some((item, bounds)) = self.entry_at_position(bounds, pos) {
+                    emit_global(InternalMenuEntryActivated {
+                        index: item,
+                    });
+                    self.ctx.mark_needs_paint();
+                }
+            }
+            _ => {}
         }
     }
 }

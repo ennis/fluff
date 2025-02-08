@@ -679,6 +679,7 @@ impl ElementAny {
 
         parent_ctx.save();
         parent_ctx.transform(&transform);
+        inner.ctx.window_transform = parent_ctx.current_transform();
         inner.paint(parent_ctx);
         parent_ctx.restore();
 
@@ -741,6 +742,8 @@ pub struct ElementCtx {
     pub(crate) window: WeakWindow,
     /// Layout: transform from local to parent coordinates.
     transform: Affine,
+    /// Transform from local to window coordinates.
+    window_transform: Affine,
     /// Layout: geometry (size and baseline) of this element.
     geometry: LayoutOutput,
     /// Name of the element.
@@ -760,6 +763,7 @@ impl ElementCtx {
             change_flags: ChangeFlags::NONE,
             window: WeakWindow::default(),
             transform: Affine::default(),
+            window_transform: Default::default(),
             geometry: LayoutOutput {
                 width: 0.,
                 height: 0.,
@@ -813,6 +817,16 @@ impl ElementCtx {
         self.change_flags |= ChangeFlags::STRUCTURE;
     }
 
+    pub fn map_to_window(&self, local_point: Point) -> Point {
+        self.window_transform * local_point
+    }
+
+    pub fn map_to_monitor(&self, local_point: Point) -> Point {
+        let window_point = self.map_to_window(local_point);
+        let window = self.get_parent_window().upgrade().unwrap();
+        window.map_to_screen(window_point)
+    }
+    
     /// Handles standard input events for activation, hovering, and clicks.
     ///
     /// Emits the corresponding events (ActivatedEvent, HoveredEvent, ClickedEvent)

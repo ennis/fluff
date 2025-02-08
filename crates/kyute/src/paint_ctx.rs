@@ -11,6 +11,8 @@ pub struct PaintCtx<'a> {
     /// Drawable surface.
     surface: &'a DrawableSurface,
     skia: skia_safe::Surface,
+    /// Accumulated transforms.
+    transforms: Vec<Affine>,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -22,6 +24,7 @@ impl<'a> PaintCtx<'a> {
             scale_factor,
             surface,
             skia,
+            transforms: vec![Affine::IDENTITY],
         }
     }
 
@@ -117,14 +120,21 @@ impl<'a> PaintCtx<'a> {
         self.skia.canvas()
     }
 
+    /// Returns the current transform.
+    pub fn current_transform(&self) -> Affine {
+        *self.transforms.last().unwrap()
+    }
+
     /// Saves the current clip region, transform and paint bounds.
     pub fn save(&mut self) {
+        self.transforms.push(self.current_transform());
         self.skia.canvas().save();
     }
 
     /// Restores the current clip region, transform and paint bounds.
     pub fn restore(&mut self) {
         self.skia.canvas().restore();
+        self.transforms.pop();
     }
 
     /// Appends to the current transform and sets new paint bounds.
