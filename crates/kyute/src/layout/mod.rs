@@ -112,6 +112,18 @@ impl AxisSizeHelper for Size {
     }
 }
 
+/// Extension trait on `Rect`.
+pub trait RectExt {
+    /// Returns the size of the rectangle along the inline axis, given the specified inline axis.
+    fn inline_size(&self, inline_axis: Axis) -> f64;
+    /// Returns the size of the rectangle along the cross axis, given the specified inline axis.
+    fn cross_size(&self, inline_axis: Axis) -> f64;
+    
+
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Alignment
 ////////////////////////////////////////////////////////////////////////////////////////////////////

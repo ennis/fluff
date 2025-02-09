@@ -16,3 +16,7 @@ pub const SLIDER_LINE: Color = DISPLAY_TEXT;
 
 pub const MENU_SEPARATOR: Color = rgb(80, 80, 75);
 pub const MENU_BACKGROUND: Color = rgb(26, 26, 26);
+
+pub const SCROLL_BAR_BACKGROUND: Color = rgb(37, 37, 37);
+pub const SCROLL_BAR: Color = rgb(80, 80, 75);
+pub const SCROLL_BAR_ACCENT: Color = rgb(255, 202, 76);

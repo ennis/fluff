@@ -10,6 +10,7 @@ pub mod slider;
 mod fcurve;
 mod gradient;
 pub mod menu;
+pub mod scroll;
 
 /// Standard line height for widgets
 pub const WIDGET_LINE_HEIGHT: f64 = 23.;

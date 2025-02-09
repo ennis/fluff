@@ -6,8 +6,8 @@ use crate::model::{
     watch_multi_once_with_location, with_tracking_scope, EventSource,
 };
 use crate::window::WindowHandle;
-use crate::{PaintCtx, Window};
-use bitflags::{bitflags, Flags};
+use crate::{PaintCtx};
+use bitflags::{bitflags};
 use kurbo::{Affine, Point, Rect, Size, Vec2};
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -379,7 +379,7 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
 
-            fn paint(&mut self, ectx: &ElementCtx, _ctx: &mut PaintCtx) {
+            fn paint(&mut self, _ectx: &ElementCtx, _ctx: &mut PaintCtx) {
                 unimplemented!()
             }
         }
@@ -593,8 +593,8 @@ impl ElementAny {
         let ref mut inner = *self.borrow_mut();
         let this_ctx = &self.0.ctx;
         let transform = ctx.transform * this_ctx.transform.get();
-        let local_point = transform.inverse() * point;
         let prev_transform = mem::replace(&mut ctx.transform, transform);
+        let local_point = this_ctx.transform.get().inverse() * point;
         let prev_rect = ctx.rect;
         ctx.rect = this_ctx.rect();
         let hit = inner.hit_test(ctx, local_point);
@@ -831,14 +831,14 @@ impl ElementCtx {
             }
             parent.0.ctx.change_flags.set(parent_flags | flags);
             parent.0.ctx.propagate_dirty_flags();
+        } else {
+            // no parent, this is the root element and it should have a window
+            if flags.contains(ChangeFlags::LAYOUT) {
+                self.window.mark_needs_layout();
+            } else if flags.contains(ChangeFlags::PAINT) {
+                self.window.mark_needs_paint();
+            }
         }
-
-        if flags.contains(ChangeFlags::LAYOUT) {
-            self.window.mark_needs_layout();
-        } else if flags.contains(ChangeFlags::PAINT) {
-            self.window.mark_needs_paint();
-        }
-
     }
 
     /// Returns the parent window of this element.

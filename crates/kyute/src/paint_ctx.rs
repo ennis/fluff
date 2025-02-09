@@ -84,6 +84,14 @@ impl<'a> PaintCtx<'a> {
     pub fn round_to_device_pixel(&self, logical_coord:f64) -> f64 {
         round_to_device_pixel(logical_coord, self.scale_factor)
     }
+    
+    pub fn floor_to_device_pixel(&self, logical_coord:f64) -> f64 {
+        (logical_coord * self.scale_factor).floor() / self.scale_factor
+    }
+    
+    pub fn ceil_to_device_pixel(&self, logical_coord:f64) -> f64 {
+        (logical_coord * self.scale_factor).ceil() / self.scale_factor
+    }
 
     /// Rounds a logical coordinate to the center of the nearest physical pixel.
     ///
@@ -106,10 +114,10 @@ impl<'a> PaintCtx<'a> {
     pub fn snap_rect_to_device_pixel(&self, rect: Rect) -> Rect {
         // FIXME: either floor everything or floor/ceil
         Rect {
-            x0: self.round_to_device_pixel(rect.x0),
-            y0: self.round_to_device_pixel(rect.y0),
-            x1: self.round_to_device_pixel(rect.x1),
-            y1: self.round_to_device_pixel(rect.y1),
+            x0: self.floor_to_device_pixel(rect.x0),
+            y0: self.floor_to_device_pixel(rect.y0),
+            x1: self.ceil_to_device_pixel(rect.x1),
+            y1: self.ceil_to_device_pixel(rect.y1),
         }
     }
 

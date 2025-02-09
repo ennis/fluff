@@ -33,8 +33,7 @@ use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
-use crate::model::EventEmitter;
-use crate::{application, Color, EventSource, Notifier};
+use crate::{application, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -742,7 +741,7 @@ impl WindowHandle {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_pointer_capture(element);
         } else {
-            warn!("mark_needs_paint: window has been dropped");
+            warn!("set_pointer_capture: window has been dropped");
         }
     }
 

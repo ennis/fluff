@@ -51,7 +51,6 @@ pub trait EventSource: Any {
         emit_inner(self.as_weak(), Box::new(event), type_name::<E>())
     }
 
-    #[track_caller]
     async fn wait_event<E: 'static + Clone>(&self) -> E
     where
         Self: Sized,
