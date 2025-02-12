@@ -188,7 +188,7 @@ pub trait Element: Any {
     ///        Storing the context in `ElemBox` wouldn't work because we want it to be shareable,
     ///        but `&mut ElemBox<Self>` would give exclusive access to it (barring stuff like UnsafePinned).
     #[allow(unused_variables)]
-    fn paint(&mut self, ctx: &ElementCtx, ctx: &mut PaintCtx);
+    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]

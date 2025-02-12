@@ -435,3 +435,21 @@ Options (2) or (3) seem the most appropriate, but for (3) run in a separate proc
 Go with (2)
 
 
+# Next steps
+
+- figure out what we want to do
+  - "digital painting" but in 3D
+  - key point: not texture painting => it has volume and can go outside the silhouette of the object
+- ribbon brushes: hide/fade when looking at them from the ends
+  - i.e. fade when ribbon normal is perpendicular to view direction
+- do we always want ribbons aligned to the screen?
+  - no
+- consider negative strokes that cut into silhouettes
+
+TODO:
+- add normals to curves
+- **lights**
+- import geometry, and project strokes on it
+
+# Scalability
+When drawing close on a surface, should still look good when zooming **out**. Strokes should be properly filtered (anisotropic).

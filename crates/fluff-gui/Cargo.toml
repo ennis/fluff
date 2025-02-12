@@ -8,6 +8,7 @@ kyute = { workspace = true }
 tracing = "0.1.40"
 bitflags = "2.6.0"
 indexmap = "1.7.0"
+rand = "0.8.5"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.10", features = ["fmt", "env-filter"] }

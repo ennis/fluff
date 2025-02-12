@@ -3,11 +3,23 @@ use fluff_gui::widgets::button::Button;
 use fluff_gui::widgets::scroll::ScrollBarBase;
 use fluff_gui::widgets::slider::Slider;
 use fluff_gui::widgets::spinner::{SpinnerBase, SpinnerOptions};
+use fluff_gui::widgets::uniform_grid::UniformGrid;
+use kyute::drawing::rgb;
 use kyute::elements::{Flex, Frame};
-use kyute::{Size, Window, WindowOptions, application, select};
+use kyute::{IntoElementAny, Size, Window, WindowOptions, application, select};
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_tree::HierarchicalLayer;
+
+fn random_colored_square() -> impl IntoElementAny {
+    let color = rgb(rand::random(), rand::random(), rand::random());
+    Frame::new()
+        .background_color(color)
+        .width(50.)
+        .height(50.)
+        .border_width(1.)
+        .border_color(rgb(255, 255, 255))
+}
 
 fn main() {
     let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
@@ -34,6 +46,24 @@ fn main() {
                     .child(ScrollBarBase::horizontal().thumb_size(20.))
                     .child(ScrollBarBase::horizontal().thumb_size(50.))
                     .child(ScrollBarBase::horizontal().thumb_size(100.))
+                    .child(
+                        UniformGrid::new(Size::new(50., 50.))
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .child(random_colored_square())
+                            .v_gap(1.)
+                            .h_gap(1.),
+                    )
                     .gaps(0, 2, 0),
             )
             .padding(10.);

@@ -29,8 +29,8 @@
 //! 4. Use slang and the declaration-reflection API that someone's working on (https://github.com/shader-slang/slang/issues/4617).
 //!    It's not ready yet, and there's no time frame.
 //!
-//! In conclusion, the shader ecosystem is a dumpster fire. There's absolutely no concern for
-//! developer convenience and maintainability.
+//! In conclusion, the shader ecosystem is a dumpster fire. There's absolutely no coordinated effort
+//! to improve the developer experience across the whole pipeline.
 
 pub mod types;
 pub mod shared;

@@ -4,6 +4,8 @@ use crate::parse::parse_file;
 
 mod gen;
 mod parse;
+mod reflect;
+mod utils;
 
 /// Generates a GLSL include file containing definitions from the specified Rust file.
 ///
@@ -50,6 +52,26 @@ pub fn generate_shader_bridge(path: &str, output_path: &str) -> Result<(), Box<d
     fs::write(output_path, String::from_utf8(output)?)?;
     Ok(())
 }
+
+
+pub fn reflect_slang_shaders(shader_directory: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
+
+    let mut ctx = reflect::Ctx::new(&reflect::CtxOptions {
+        search_paths: &[shader_directory.as_ref()],
+    })?;
+
+    let tokens = ctx.reflect()?;
+    // write tokens to file
+    let output = tokens.to_string();
+    fs::write(output_path, output)?;
+    // run rustfmt
+    utils::rustfmt_file(output_path.as_ref());
+    
+    drop(ctx);
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod test {
@@ -131,5 +153,11 @@ mod test {
         let mut output = Vec::new();
         gen::write_module(&bridgemod, &mut output);
         eprintln!("{}", String::from_utf8(output).unwrap());
+    }
+    
+    #[test]
+    fn slang_shader() {
+        env_logger::init();
+        let _ = reflect_slang_shaders("../fluff/slang/", "src/shaders2.rs");
     }
 }
