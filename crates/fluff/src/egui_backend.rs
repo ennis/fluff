@@ -1,7 +1,7 @@
 use std::{collections::HashMap, mem, path::Path, slice};
 
 use egui::{epaint::Primitive, ClippedPrimitive, ImageData};
-use graal::{prelude::*, util::CommandStreamExt, vk::{AttachmentLoadOp, AttachmentStoreOp, ImageAspectFlags, Offset3D}, ColorAttachment, ImageAccess, ImageCopyView, RenderPassInfo, Size3D, Vertex, Barrier};
+use graal::{prelude::*, util::CommandStreamExt, vk::{ImageAspectFlags, Offset3D}, ColorAttachment, ImageCopyView, RenderPassInfo, Size3D, Vertex, Barrier};
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]

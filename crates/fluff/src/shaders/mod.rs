@@ -35,4 +35,6 @@
 pub mod types;
 pub mod shared;
 
+pub mod bindings;
+
 

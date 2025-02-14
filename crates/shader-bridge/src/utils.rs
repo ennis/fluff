@@ -5,7 +5,7 @@ use std::process::Command;
 /// Gets the rustfmt path to rustfmt the generated bindings.
 fn rustfmt_path<'a>() -> PathBuf {
     if let Ok(rustfmt) = env::var("RUSTFMT") {
-        return rustfmt.into();
+        rustfmt.into()
     } else {
         // just assume that it is in path
         "rustfmt".into()

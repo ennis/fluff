@@ -9,21 +9,15 @@ edition = "2021"
 winit = "0.29.3"
 obj = "0.10.2"
 glam = "0.24.2"
-#inline-spirv = "0.1.4"
 regex = "1.10.2"
-#imgui = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
-imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs.git", rev = "ca05418cb449dadaabf014487c5c965908dfcbdd" }
 tracing-subscriber = { version = "0.2.17", features = ["fmt"] }
 rfd = "0.12.1"
-lyon = "1.0.1"
-#openimageio = { workspace=true }
 graal = { workspace = true }
 houdinio = { workspace = true }
 image = "0.24.8"
 egui = { version = "0.25", features = ["persistence"] }
 egui-winit = "0.25"
 egui-phosphor = { version = "0.3.2", features = ["fill"] }
-egui_dnd = "0.6.0"
 egui_extras = { version = "0.25", features = ["syntect"] }
 serde_json = "1.0.113"
 serde = { version = "1.0.196", features = ["derive"] }
@@ -41,6 +35,7 @@ rand = "0.9.0-alpha.1"
 #splines = { version = "4.3.1", features = ["serde", "glam"] }
 uniform-cubic-splines = { version = "0.1.8", default-features = false, features = ["std"] }
 num-traits = "0.2.19"
+shader-bridge = { workspace = true }
 
 [build-dependencies]
 shader-bridge = { workspace = true }

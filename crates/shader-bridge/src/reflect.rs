@@ -1,16 +1,11 @@
 //! Generates rust code from slang reflection data.
-use anyhow::anyhow;
+use crate::reflect::Error::BindgenError;
+use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, TokenStreamExt};
 use slang::reflection::VariableLayout;
-use slang::{Downcast, GlobalSession, Module, Session};
 use std::collections::HashMap;
-use std::ffi::{CString, OsStr};
-use std::mem;
-use std::path::Path;
-use std::str::FromStr;
-use heck::ToSnakeCase;
-use tracing::{error, info, trace, warn};
+use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -18,6 +13,8 @@ pub enum Error {
     SlangError(slang::Error),
     #[error("I/O error: {0:?}")]
     IoError(#[from] std::io::Error),
+    #[error("binding generation error: {0:?}")]
+    BindgenError(String),
 }
 
 impl From<slang::Error> for Error {
@@ -27,9 +24,6 @@ impl From<slang::Error> for Error {
 }
 
 pub struct Ctx {
-    global_session: GlobalSession,
-    session: Session,
-    modules: Vec<Module>,
     /// Visibility of the generated types & fields.
     visibility: syn::Visibility,
     /// Map of user-defined types (structs) that have already been translated.
@@ -38,7 +32,7 @@ pub struct Ctx {
     counter: usize,
     output: TokenStream,
     /// Errors during translation.
-    errors: Vec<String>,
+    errors: Vec<Error>,
     /// Vector type remapping.
     ///
     /// By default, vector types are translated to `[T; N]` arrays, but if the `(scalar, count)`
@@ -49,6 +43,18 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    pub fn new() -> Self {
+        Self {
+            visibility: syn::parse_quote!(pub),
+            user_defined_types: HashMap::new(),
+            counter: 0,
+            output: TokenStream::new(),
+            errors: Vec::new(),
+            vector_type_map: HashMap::new(),
+            device_ptr_type: quote! { PhysicalAddress },
+        }
+    }
+
     fn translate_scalar_type(&mut self, ty: slang::ScalarType) -> TokenStream {
         match ty {
             slang::ScalarType::None => {
@@ -74,7 +80,8 @@ impl Ctx {
                 quote!(u64)
             }
             slang::ScalarType::Float16 => {
-                self.errors.push("unsupported scalar type: `float16`".to_owned());
+                self.errors
+                    .push(BindgenError("unsupported scalar type: `float16`".to_owned()));
                 quote!(())
             }
             slang::ScalarType::Float32 => {
@@ -119,8 +126,8 @@ impl Ctx {
 
     fn translate_matrix_type(&mut self, ty: &slang::reflection::TypeLayout) -> TokenStream {
         let scalar_ty = ty.scalar_type();
-        let rows = ty.row_count();
-        let cols = ty.column_count();
+        let rows = ty.row_count() as usize;
+        let cols = ty.column_count() as usize;
         let scalar_ty = self.translate_scalar_type(scalar_ty);
         quote! { [[#scalar_ty; #cols]; #rows] }
     }
@@ -158,10 +165,10 @@ impl Ctx {
 
         let vis = &self.visibility;
         self.output.append_all(quote! {
-            #[derive(Debug, Clone, Copy)]
+            #[derive(Clone, Copy)]
             #[repr(C)]
             #vis struct #ident {
-                #(#field_names: #field_types),*
+                #(#vis #field_names: #field_types),*
             }
 
             impl #ident {
@@ -226,13 +233,17 @@ impl Ctx {
             | slang::TypeKind::Feedback
             | slang::TypeKind::DynamicResource
             | slang::TypeKind::Count => {
-                self.errors.push(format!("unsupported type kind: {:?}", ty.kind()));
+                self.errors
+                    .push(BindgenError(format!("unsupported type kind: {:?}", ty.kind())));
                 quote! { () }
             }
         }
     }
 
-    fn write_interface_var(&mut self, var: &VariableLayout) {
+    fn generate_interface_var(&mut self, var: &VariableLayout) {
+
+        eprintln!("var: {:?}", var.ty().name());
+
         // Ignore varying inputs/outputs because they don't have a memory layout on the host
         if var.category() == slang::ParameterCategory::VaryingInput
             || var.category() == slang::ParameterCategory::VaryingOutput
@@ -241,16 +252,6 @@ impl Ctx {
         }
 
         let ty = var.type_layout();
-        let var = var.variable();
-        let name = var.name().unwrap_or("<unnamed>");
-        let tyname = ty.name().unwrap_or("<unnamed>");
-        let kind = ty.kind();
-        let category = ty.parameter_category();
-        let resource_shape = ty.resource_shape();
-        let resource_access = ty.resource_access();
-        let resource_result_type = ty.resource_result_type();
-        let resource_result_type_name = resource_result_type.name().unwrap_or("<unnamed>");
-        eprintln!("{name}: {tyname} (kind = {kind:?}, parameter_category = {category:?}, resource_shape = {resource_shape:?}, resource_access = {resource_access:?}, resource_result_type = {resource_result_type_name})");
 
         match ty.kind() {
             slang::TypeKind::None => {}
@@ -271,7 +272,7 @@ impl Ctx {
             slang::TypeKind::TextureBuffer => {}
             slang::TypeKind::ShaderStorageBuffer => {}
             slang::TypeKind::ParameterBlock => {
-                warn!("unimplemented parameter kind: {:?}", ty.kind());
+                eprintln!("unimplemented parameter kind: {:?}", ty.kind());
             }
             slang::TypeKind::GenericTypeParameter => {}
             slang::TypeKind::Interface => {}
@@ -286,115 +287,81 @@ impl Ctx {
     }
 
     /// Scans all types used in the shader interface and generates rust code for them.
-    fn write_interface(&mut self, reflection: &slang::reflection::Shader) {
+    pub fn generate_interface(&mut self, reflection: &slang::reflection::Shader) {
         // scan all parameters
         for param in reflection.parameters() {
-            self.write_interface_var(param);
+            self.generate_interface_var(param);
         }
 
         // scan uniforms in entry points arguments
         for entry_point in reflection.entry_points() {
             for param in entry_point.parameters() {
-                self.write_interface_var(param);
-            }
-        }
-    }
-}
-
-pub struct CtxOptions<'a> {
-    pub search_paths: &'a [&'a Path],
-}
-
-impl Ctx {
-    pub fn new(opts: &CtxOptions) -> Result<Self, Error> {
-        let global_session = slang::GlobalSession::new().unwrap();
-        let search_paths = opts
-            .search_paths
-            .iter()
-            .map(|p| CString::new((*p).to_str().unwrap()).unwrap())
-            .collect::<Vec<_>>();
-        let search_path_ptrs = search_paths.iter().map(|p| p.as_ptr()).collect::<Vec<_>>();
-
-        let session_options = slang::CompilerOptions::default()
-            .optimization(slang::OptimizationLevel::None)
-            .glsl_force_scalar_layout(true)
-            .matrix_layout_row(true);
-
-        let target_desc = slang::TargetDesc::default()
-            .format(slang::CompileTarget::Spirv)
-            .profile(global_session.find_profile("sm_6_5"));
-        let targets = [target_desc];
-
-        let session_desc = slang::SessionDesc::default()
-            .targets(&targets)
-            .search_paths(&search_path_ptrs)
-            .options(&session_options);
-
-        let session = //unsafe {
-          // this should be unsafe
-            global_session.create_session(&session_desc).expect("failed to create session");
-        //};
-
-        let mut this = Self {
-            global_session,
-            session,
-            modules: vec![],
-            visibility: syn::parse_quote!(pub),
-            user_defined_types: HashMap::new(),
-            counter: 0,
-            output: TokenStream::new(),
-            errors: Vec::new(),
-            vector_type_map: HashMap::new(),
-            device_ptr_type: quote!(::DeviceAddress),
-        };
-
-        // load all modules in the search paths
-        for sp in opts.search_paths {
-            // iterate in directory
-            for entry in std::fs::read_dir(sp)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    let Some(ext) = path.extension() else { continue };
-                    if ext == OsStr::new("slang") {
-                        let module_file_name = path.file_name().unwrap().to_str().unwrap();
-                        this.load_module(module_file_name).unwrap();
-                    }
-                }
+                self.generate_interface_var(param);
             }
         }
 
-        Ok(this)
+        // generate compile_error for each error
+        for error in &self.errors {
+            let error_str = error.to_string();
+            self.output.append_all(quote! {
+                ::std::compile_error!(#error_str);
+            });
+        }
     }
 
-    fn load_module(&mut self, module_file_name: &str) -> anyhow::Result<()> {
-        info!("loading module: {}", module_file_name);
-        let module = match self.session.load_module(module_file_name) {
-            Ok(module) => module,
-            Err(err) => {
-                error!("failed to load module: {:?}", err);
-                return Err(anyhow!("failed to load module: {:?}", err));
-            }
-        };
-        self.modules.push(module);
-        Ok(())
+    pub fn finish(self) -> TokenStream {
+        self.output
     }
+}
 
-    pub fn reflect(&mut self) -> Result<TokenStream, Error> {
-        // create composite of all modules and all their entry points
+
+/*
+fn generate_rust_bindings_inner(
+    session: &Session,
+    modules: &[Module],
+    device_address_type: &str,
+) -> Result<TokenStream, Error> {
+    let mut ctx = Ctx {
+        visibility: syn::parse_quote!(pub),
+        user_defined_types: HashMap::new(),
+        counter: 0,
+        output: TokenStream::new(),
+        errors: Vec::new(),
+        vector_type_map: HashMap::new(),
+        device_ptr_type: syn::parse_str(device_address_type).unwrap(),
+    };
+
+    generate_common_definitions(&mut ctx.output);
+
+    // --- generate rust bindings ---
+    {
+        // create composite of all modules and all their entry points for generating the reflection
         let mut components = Vec::new();
-        for module in &self.modules {
+        let mut all_entry_point_count = 0;
+        for module in modules {
             components.push(module.downcast().clone());
             let entry_point_count = module.entry_point_count();
             for i in 0..entry_point_count {
                 let entry_point = module.entry_point_by_index(i).unwrap();
                 components.push(entry_point.downcast().clone());
+                all_entry_point_count += 1;
             }
         }
+        let program = session.create_composite_component_type(&components)?;
 
-        let program = self.session.create_composite_component_type(&components)?;
+        // generate rust bindings
         let reflection = program.layout(0)?;
-        self.write_interface(reflection);
-        Ok(mem::take(&mut self.output))
+        ctx.generate_interface(reflection);
     }
+
+    Ok(ctx.output)
 }
+
+pub fn generate_rust_bindings(session: &Session, modules: &[Module], device_address_type: &str) -> TokenStream {
+    generate_rust_bindings_inner(&session, modules, device_address_type).unwrap_or_else(|err| {
+        let err_str = err.to_string();
+        quote! {
+                ::std::compile_error!(#err_str);
+            }
+    })
+}*/

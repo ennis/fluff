@@ -1,12 +1,4 @@
-use std::{
-    borrow::Cow,
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-    rc::Rc,
-    slice,
-};
+use std::{borrow::Cow, cell::{Cell, RefCell}, collections::BTreeMap, fs, marker::PhantomData, path::{Path, PathBuf}, rc::Rc, slice};
 
 use graal::{
     BufferAccess, BufferRangeUntyped,
@@ -26,6 +18,7 @@ use spirv_reflect::types::{ReflectDescriptorType, ReflectTypeFlags};
 use tracing::{debug, error, warn};
 
 use crate::engine::shader::{CompilationInfo, compile_shader_stage};
+use crate::shaders::bindings::EntryPoint;
 
 //mod bindless;
 mod shader;
@@ -64,664 +57,6 @@ pub enum Error {
     VulkanError(Rc<graal::Error>),
 }
 
-/*
-/// Handle to a buffer object in a render graph.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct BufferHandle(u32);
-
-impl BufferHandle {
-    // TODO: type safety
-    pub fn device_address<T: ?Sized>(self) -> crate::shaders::types::BufferAddress<T> {
-        RENDER_GRAPH_RESOURCES.with(|resources| crate::shaders::types::BufferAddress {
-            address: resources.buffers[self.0 as usize].device_address(),
-            _phantom: PhantomData,
-        })
-    }
-
-    pub fn buffer(self) -> graal::BufferUntyped {
-        RENDER_GRAPH_RESOURCES.with(|resources| resources.buffers[self.0 as usize].buffer())
-    }
-}
-
-/// Handle to an image object in a render graph.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ImageHandle(u32);
-
-impl ImageHandle {
-    pub fn device_handle(self) -> crate::shaders::types::ImageHandle {
-        crate::shaders::types::ImageHandle { index: self.0 }
-    }
-
-    pub fn view(self) -> ImageView {
-        RENDER_GRAPH_RESOURCES.with(|resources| resources.images[self.0 as usize].view())
-    }
-
-    pub fn image(self) -> graal::Image {
-        RENDER_GRAPH_RESOURCES.with(|resources| resources.images[self.0 as usize].image())
-    }
-}
-
-/// Handle to a set of image objects in a render graph.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ImageSet {
-    pub start: ImageHandle,
-    pub count: u32,
-}
-
-impl ImageSet {
-    pub fn device_handle(self) -> crate::shaders::types::Texture2DHandleRange {
-        crate::shaders::types::Texture2DHandleRange {
-            index: self.start.0,
-            count: self.count,
-        }
-    }
-}
-
-/// Handle to a sampler object in a render graph.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[repr(transparent)]
-pub struct SamplerHandle(pub u32);
-
-impl SamplerHandle {
-    pub fn as_raw(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct ImageDesc {
-    pub width: u32,
-    pub height: u32,
-    pub format: vk::Format,
-}
-*/
-
-/*
-/// Describes an image resource.
-///
-/// # Dimensions
-///
-/// The dimensions of the image are either specified directly (using `width` and `height`),
-/// or expressed as a divisor of the main render target dimensions (using `width_divisor` and `height_divisor`).
-/// In the latter case, the dimensions are computed as follows:
-///
-/// ```
-/// width = main_rt_width.div_ceil(width_divisor)
-/// height = main_rt_height.div_ceil(height_divisor)
-/// ```
-#[derive(Clone, Debug)]
-struct ImageResource {
-    name: String,
-    desc: ImageDesc,
-    /// Inferred usage flags.
-    inferred_usage: Cell<ImageUsage>,
-    /// Index in the descriptor arrays.
-    descriptor_index: u32,
-    /// The allocated or imported image resource.
-    image: RefCell<Option<graal::Image>>,
-    /// Top-level image view.
-    view: RefCell<Option<ImageView>>,
-}
-
-/// Handle to an image resource.
-#[derive(Clone, Debug)]
-pub struct Image(Rc<ImageResource>);
-
-impl Image {
-    fn add_usage(&self, usage: ImageUsage) {
-        self.0.inferred_usage.set(self.0.inferred_usage.get() | usage);
-    }
-
-    fn descriptor_index(&self) -> u32 {
-        self.0.descriptor_index
-    }
-
-    fn ensure_allocated(&self, device: &Device) {
-        if self.0.image.borrow().is_none() {
-            let desc = self.0.desc;
-            let image = device.create_image(&ImageCreateInfo {
-                format: desc.format,
-                width: desc.width,
-                height: desc.height,
-                usage: self.0.inferred_usage.get(),
-                ..Default::default()
-            });
-            image.set_name(&self.0.name);
-            self.0.view.replace(Some(image.create_top_level_view()));
-            self.0.image.replace(Some(image));
-        }
-    }
-
-    fn view(&self) -> ImageView {
-        self.0.view.borrow().clone().expect("image view not created")
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn image(&self) -> graal::Image {
-        self.0.image.borrow().clone().expect("image not created")
-    }
-
-    pub fn width(&self) -> u32 {
-        self.0.desc.width
-    }
-
-    pub fn height(&self) -> u32 {
-        self.0.desc.height
-    }
-}
-
-impl PartialOrd for Image {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Rc::as_ptr(&self.0).partial_cmp(&Rc::as_ptr(&other.0))
-    }
-}
-
-impl Ord for Image {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        Rc::as_ptr(&self.0).cmp(&Rc::as_ptr(&other.0))
-    }
-}
-
-// Referential equality for images
-impl PartialEq for Image {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for Image {}
-
-impl std::hash::Hash for Image {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.0).hash(state);
-    }
-}*/
-
-/*
-
-/// Describes a buffer resource.
-///
-/// # Size
-///
-///
-#[derive(Clone, Debug)]
-struct BufferResource {
-    name: String,
-    /// Buffer usage flags.
-    inferred_usage: Cell<BufferUsage>,
-    /// Inferred memory properties.
-    inferred_memory_properties: Cell<vk::MemoryPropertyFlags>,
-    /// Explicit byte size.
-    byte_size: usize,
-    /// The allocated buffer resource.
-    buffer: RefCell<Option<graal::BufferUntyped>>,
-    descriptor_index: u32,
-}
-
-/// Handle to a buffer resource.
-#[derive(Clone, Debug)]
-pub struct Buffer(Rc<BufferResource>);
-
-impl Buffer {
-    fn add_usage(&self, usage: BufferUsage) {
-        self.0.inferred_usage.set(self.0.inferred_usage.get() | usage);
-    }
-
-    fn descriptor_index(&self) -> u32 {
-        self.0.descriptor_index
-    }
-
-    fn ensure_allocated(&self, device: &Device) {
-        if self.0.buffer.borrow().is_none() {
-            let buffer = device.create_buffer(self.0.inferred_usage.get(), MemoryLocation::GpuOnly, self.0.byte_size as u64);
-            buffer.set_name(&self.0.name);
-            self.0.buffer.replace(Some(buffer));
-        }
-    }
-
-    fn buffer(&self) -> graal::BufferUntyped {
-        self.0.buffer.borrow().clone().expect("buffer not created")
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn device_address(&self) -> vk::DeviceAddress {
-        self.buffer().device_address()
-    }
-}
-
-impl PartialOrd for Buffer {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Rc::as_ptr(&self.0).partial_cmp(&Rc::as_ptr(&other.0))
-    }
-}
-
-impl Ord for Buffer {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        Rc::as_ptr(&self.0).cmp(&Rc::as_ptr(&other.0))
-    }
-}
-
-impl PartialEq for Buffer {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for Buffer {}
-
-impl std::hash::Hash for Buffer {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.0).hash(state);
-    }
-}
-
-*/
-
-/*
-////////////////////////////////////////////////////////////////////////////////////////////////////
-struct AccessTracker {
-    used_images: BTreeMap<ImageHandle, ImageAccess>,
-    used_buffers: BTreeMap<BufferHandle, BufferAccess>,
-}
-
-impl AccessTracker {
-    fn sample_image(&mut self, image: ImageHandle) {
-        *self.used_images.entry(image).or_insert(ImageAccess::SAMPLED_READ) |= ImageAccess::SAMPLED_READ;
-    }
-
-    fn read_image(&mut self, image: ImageHandle) {
-        *self.used_images.entry(image).or_insert(ImageAccess::IMAGE_READ) |= ImageAccess::IMAGE_READ;
-    }
-
-    fn write_image(&mut self, image: ImageHandle) {
-        *self.used_images.entry(image).or_insert(ImageAccess::IMAGE_READ_WRITE) |= ImageAccess::IMAGE_READ_WRITE;
-    }
-
-    fn read_buffer(&mut self, buffer: BufferHandle) {
-        *self.used_buffers.entry(buffer).or_insert(BufferAccess::STORAGE_READ_WRITE) |= BufferAccess::STORAGE_READ_WRITE;
-    }
-
-    fn write_buffer(&mut self, buffer: BufferHandle) {
-        *self.used_buffers.entry(buffer).or_insert(BufferAccess::STORAGE_READ_WRITE) |= BufferAccess::STORAGE_READ_WRITE;
-    }
-
-    fn transition_resources(&self, ctx: &mut RecordContext) {
-        /*for (image, access) in self.used_images.iter() {
-            ctx.cmd.use_image_view(&image.view(), *access);
-        }
-        for (buffer, access) in self.used_buffers.iter() {
-            ctx.cmd.use_buffer(&buffer.buffer(), *access);
-        }*/
-    }
-}*/
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-/*pub struct ColorAttachmentDesc {
-    pub image: ImageHandle,
-    pub clear_value: Option<[f64; 4]>,
-}
-
-pub struct DepthStencilAttachmentDesc {
-    pub image: ImageHandle,
-    pub depth_clear_value: Option<f64>,
-    pub stencil_clear_value: Option<u32>,
-}*/
-
-//type UniformBlockLayout = BTreeMap<String, (u32, UniformType)>;
-
-/*
-struct MeshRenderPipelineInner {
-    desc: MeshRenderPipelineDesc,
-    pipeline: graal::GraphicsPipeline,
-}
-
-#[derive(Clone)]
-pub struct MeshRenderPipeline(Rc<MeshRenderPipelineInner>);
-*/
-
-/*
-struct MeshRenderPass {
-    tracker: AccessTracker,
-    pipeline: MeshRenderPipeline,
-    color_attachments: Vec<ColorAttachmentDesc>,
-    depth_stencil_attachment: Option<DepthStencilAttachmentDesc>,
-    func: Option<Box<dyn FnOnce(&mut RenderEncoder)>>,
-}
-
-struct RecordContext<'a> {
-    cmd: &'a mut CommandStream,
-    descriptors: ResourceDescriptors,
-}
-
-/// Builder for a mesh rendering pass.
-pub struct MeshRenderBuilder<'a> {
-    rg: &'a mut RenderGraph,
-    name: String,
-    pass: MeshRenderPass,
-}
-
-impl<'a> MeshRenderBuilder<'a> {
-    pub fn set_color_attachments(&mut self, desc: impl IntoIterator<Item=ColorAttachmentDesc>) {
-        self.pass.color_attachments = desc.into_iter().collect();
-        for desc in self.pass.color_attachments.iter() {
-            self.pass.tracker.used_images.insert(desc.image.clone(), ImageAccess::COLOR_TARGET);
-            self.rg.add_image_usage(desc.image, ImageUsage::COLOR_ATTACHMENT);
-        }
-    }
-
-    pub fn set_depth_stencil_attachment(&mut self, desc: DepthStencilAttachmentDesc) {
-        self.pass.tracker.used_images.insert(
-            desc.image.clone(),
-            ImageAccess::DEPTH_STENCIL_READ | ImageAccess::DEPTH_STENCIL_WRITE,
-        );
-        self.rg.add_image_usage(desc.image, ImageUsage::DEPTH_STENCIL_ATTACHMENT);
-        self.pass.depth_stencil_attachment = Some(desc);
-    }
-
-    pub fn set_render_func(&mut self, f: impl FnOnce(&mut RenderEncoder) + 'static) {
-        self.pass.func = Some(Box::new(f));
-    }
-
-    pub fn sample_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::SAMPLED);
-        self.pass.tracker.read_image(image);
-    }
-
-    pub fn read_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::STORAGE);
-        self.pass.tracker.read_image(image);
-    }
-
-    pub fn write_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::STORAGE);
-        self.pass.tracker.write_image(image);
-    }
-
-    pub fn read_buffer(&mut self, buffer: BufferHandle) {
-        self.rg.add_buffer_usage(buffer, BufferUsage::STORAGE_BUFFER);
-        self.pass.tracker.read_buffer(buffer);
-    }
-
-    pub fn write_buffer(&mut self, buffer: BufferHandle) {
-        self.rg.add_buffer_usage(buffer, BufferUsage::STORAGE_BUFFER);
-        self.pass.tracker.write_buffer(buffer);
-    }
-
-    pub fn finish(self) {
-        assert!(self.pass.func.is_some(), "render pass must have a render function");
-        self.rg.passes.push(Pass {
-            name: self.name,
-            kind: PassKind::MeshRender(self.pass),
-        })
-    }
-}
-
- */
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
-struct ComputePipelineInner {
-    desc: ComputePipelineDesc,
-    pipeline: graal::ComputePipeline,
-    push_constants_layout: UniformBlockLayout,
-    push_constants_size: usize,
-}*/
-
-//#[derive(Clone)]
-//pub struct ComputePipeline(Rc<ComputePipelineInner>);
-
-/*
-struct ComputePass {
-    base: AccessTracker,
-    pipeline: ComputePipeline,
-    //group_count: (u32, u32, u32),
-    func: Option<Box<dyn FnOnce(&mut ComputeEncoder)>>,
-}
-
-impl ComputePass {}
-
-pub struct ComputePassBuilder<'a> {
-    rg: &'a mut RenderGraph,
-    name: String,
-    pass: ComputePass,
-}
-
-impl<'a> ComputePassBuilder<'a> {
-    pub fn sample_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::SAMPLED);
-        self.pass.base.read_image(image);
-    }
-
-    pub fn read_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::STORAGE);
-        self.pass.base.read_image(image);
-    }
-
-    pub fn write_image(&mut self, image: ImageHandle) {
-        self.rg.add_image_usage(image, ImageUsage::STORAGE);
-        self.pass.base.write_image(image);
-    }
-
-    pub fn read_buffer(&mut self, buffer: BufferHandle) {
-        self.rg.add_buffer_usage(buffer, BufferUsage::STORAGE_BUFFER);
-        self.pass.base.read_buffer(buffer);
-    }
-
-    pub fn write_buffer(&mut self, buffer: BufferHandle) {
-        self.rg.add_buffer_usage(buffer, BufferUsage::STORAGE_BUFFER);
-        self.pass.base.write_buffer(buffer);
-    }
-
-    pub fn set_render_func(&mut self, f: impl FnOnce(&mut ComputeEncoder) + 'static) {
-        self.pass.func = Some(Box::new(f));
-    }
-
-    pub fn finish(self) {
-        assert!(self.pass.func.is_some(), "compute pass must have a render function");
-        self.rg.passes.push(Pass {
-            name: self.name,
-            kind: PassKind::Compute(self.pass),
-        })
-    }
-}
-*/
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
-/// `vkCmdBlitImage` pass.
-struct BlitPass {
-    src: ImageHandle,
-    dst: ImageHandle,
-}
-
-/// `vkCmdFillBuffer` pass.
-struct FillBufferPass {
-    buffer: BufferHandle,
-    value: u32,
-}
-
-enum PassKind {
-    FillBuffer(FillBufferPass),
-    Blit(BlitPass),
-    MeshRender(MeshRenderPass),
-    Compute(ComputePass),
-}
-
-struct Pass {
-    name: String,
-    kind: PassKind,
-}
-
-#[derive(Default)]
-struct RenderGraphResources {
-    buffers: Vec<Buffer>,
-    images: Vec<Image>,
-}
-
-scoped_thread_local!(static RENDER_GRAPH_RESOURCES: RenderGraphResources);
-
-/// Render graph builder.
-pub struct RenderGraph {
-    device: Device,
-    passes: Vec<Pass>,
-    resources: RenderGraphResources,
-    samplers: Vec<graal::Sampler>,
-}
-
-impl RenderGraph {
-    pub fn add_buffer_usage(&mut self, buffer: BufferHandle, usage: BufferUsage) {
-        self.resources.buffers[buffer.0 as usize].add_usage(usage);
-    }
-
-    pub fn add_image_usage(&mut self, image: ImageHandle, usage: ImageUsage) {
-        self.resources.images[image.0 as usize].add_usage(usage);
-    }
-
-    pub fn record_compute_pass(&mut self, pipeline: &ComputePipeline) -> ComputePassBuilder<'_> {
-        ComputePassBuilder {
-            rg: self,
-            name: "".into(),
-            pass: ComputePass {
-                base: AccessTracker {
-                    used_images: Default::default(),
-                    used_buffers: Default::default(),
-                },
-                pipeline: pipeline.clone(),
-                func: None,
-            },
-        }
-    }
-
-    pub fn record_mesh_render_pass(&mut self, pipeline: &MeshRenderPipeline) -> MeshRenderBuilder<'_> {
-        MeshRenderBuilder {
-            rg: self,
-            name: "".into(),
-            pass: MeshRenderPass {
-                tracker: AccessTracker {
-                    used_images: Default::default(),
-                    used_buffers: Default::default(),
-                },
-                pipeline: pipeline.clone(),
-                color_attachments: Default::default(),
-                depth_stencil_attachment: Default::default(),
-                func: None,
-            },
-        }
-    }
-
-    pub fn record_blit(&mut self, src: ImageHandle, dst: ImageHandle) {
-        self.add_image_usage(src, ImageUsage::TRANSFER_SRC);
-        self.add_image_usage(dst, ImageUsage::TRANSFER_DST);
-        self.passes.push(Pass {
-            name: "".into(),
-            kind: PassKind::Blit(BlitPass { src, dst }),
-        });
-    }
-
-    pub fn record_fill_buffer(&mut self, buffer: BufferHandle, value: u32) {
-        self.add_buffer_usage(buffer, BufferUsage::TRANSFER_DST);
-        self.passes.push(Pass {
-            name: "".into(),
-            kind: PassKind::FillBuffer(FillBufferPass { buffer, value }),
-        });
-    }
-
-    pub fn import_buffer(&mut self, buffer: &graal::BufferUntyped) -> BufferHandle {
-        let descriptor_index = self.resources.buffers.len() as u32;
-        let buffer_inner = BufferResource {
-            name: "".to_string(),
-            inferred_usage: Cell::new(buffer.usage()),
-            inferred_memory_properties: Default::default(),
-            byte_size: buffer.byte_size() as usize,
-            buffer: RefCell::new(Some(buffer.clone())),
-            descriptor_index,
-        };
-        let buffer = Buffer(Rc::new(buffer_inner));
-        self.resources.buffers.push(buffer.clone());
-        BufferHandle(descriptor_index)
-    }
-
-    pub fn import_image(&mut self, image: &graal::Image) -> ImageHandle {
-        let descriptor_index = self.resources.images.len() as u32;
-        let image_inner = ImageResource {
-            name: "".to_string(),
-            desc: ImageDesc {
-                width: image.width(),
-                height: image.height(),
-                format: image.format(),
-            },
-            inferred_usage: Cell::new(Default::default()),
-            descriptor_index,
-            image: RefCell::new(Some(image.clone())),
-            view: RefCell::new(Some(image.create_top_level_view())),
-        };
-        let image = Image(Rc::new(image_inner));
-        self.resources.images.push(image.clone());
-        ImageHandle(descriptor_index)
-    }
-
-    pub fn import_image_set(&mut self, images: impl IntoIterator<Item=graal::Image>) -> ImageSet {
-        let start = self.resources.images.len() as u32;
-        let mut count = 0;
-        for image in images.into_iter() {
-            self.import_image(&image);
-            count += 1;
-        }
-        ImageSet { start: ImageHandle(start), count }
-    }
-
-    pub fn create_image(&mut self, desc: ImageDesc) -> ImageHandle {
-        let descriptor_index = self.resources.images.len() as u32;
-        let image_inner = ImageResource {
-            name: "".to_string(),
-            desc,
-            inferred_usage: Default::default(),
-            descriptor_index,
-            image: RefCell::new(None),
-            view: RefCell::new(None),
-        };
-        let image = Image(Rc::new(image_inner));
-        self.resources.images.push(image.clone());
-        ImageHandle(descriptor_index)
-    }
-
-    pub fn create_buffer(&mut self, byte_size: usize) -> BufferHandle {
-        let descriptor_index = self.resources.buffers.len() as u32;
-        let buffer_inner = BufferResource {
-            name: "".to_string(),
-            inferred_usage: Cell::new(Default::default()),
-            inferred_memory_properties: Cell::new(Default::default()),
-            byte_size,
-            buffer: RefCell::new(None),
-            descriptor_index,
-        };
-        let buffer = Buffer(Rc::new(buffer_inner));
-        self.resources.buffers.push(buffer.clone());
-        BufferHandle(descriptor_index)
-    }
-
-    pub fn upload_data<T: Copy>(&mut self, data: &T) -> BufferHandle {
-        // no need to create a buffer in the render graph, upload the data directly in a
-        // host-visible buffer, and import it. It will be freed when the render graph is dropped.
-        let buffer = self.device.upload_array_buffer(BufferUsage::STORAGE_BUFFER, slice::from_ref(data));
-        self.import_buffer(&buffer.untyped)
-    }
-
-    pub fn create_sampler(&mut self, create_info: SamplerCreateInfo) -> SamplerHandle {
-        let sampler = self.device.create_sampler(&create_info);
-        self.samplers.push(sampler);
-        SamplerHandle(self.samplers.len() as u32 - 1)
-    }
-}
-*/
-
 pub struct MeshRenderPipelineDesc {
     pub task_shader: PathBuf,
     pub mesh_shader: PathBuf,
@@ -733,9 +68,8 @@ pub struct MeshRenderPipelineDesc {
     pub multisample_state: MultisampleState,
 }
 
-pub struct ComputePipelineDesc {
-    pub shader: PathBuf,
-    pub defines: BTreeMap<String, String>,
+pub struct ComputePipelineDesc2 {
+    pub entry_point: EntryPoint,
 }
 
 /// Rendering engine instance.
@@ -1027,6 +361,57 @@ impl Engine {
             }
             Err(err) => {
                 panic!("update_pipelines: failed to create mesh render pipeline: {:?}", err);
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub struct PipelineCache {
+    device: Device,
+    graphics_pipelines: BTreeMap<String, Result<GraphicsPipeline, Error>>,
+    compute_pipelines: BTreeMap<String, Result<ComputePipeline, Error>>,
+}
+
+impl PipelineCache {
+    
+    pub fn clear(&mut self) {
+        self.graphics_pipelines.clear();
+        self.compute_pipelines.clear();
+    }
+    
+    pub fn create_compute_pipeline(&mut self, name: &str, entry_point: EntryPoint) -> Result<ComputePipeline, Error> {
+        if let Some(pipeline) = self.compute_pipelines.get(name) {
+            return pipeline.clone();
+        }
+        
+        let code_buf;
+        let code = if let Some(path) = entry_point.path {
+            // always reload from path if provided
+            let path = PathBuf::from(path);
+            code_buf = fs::read(&path).map_err(|err| Error::ShaderReadError { path, error: Rc::new(err) })?;
+            &code_buf
+        } else {
+            entry_point.code
+        };
+
+        let cpci = ComputePipelineCreateInfo {
+            set_layouts: &[],
+            push_constants_size: ci.push_cst_size,
+            compute_shader: ShaderEntryPoint {
+                code: ShaderCode::Spirv(&compute_spv),
+                entry_point: "main",
+            },
+        };
+
+        match self.device.create_compute_pipeline(cpci) {
+            Ok(pipeline) => {
+                self.compute_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
+                Ok(pipeline)
+            }
+            Err(err) => {
+                panic!("update_pipelines: failed to create compute pipeline: {:?}", err);
             }
         }
     }

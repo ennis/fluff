@@ -229,7 +229,7 @@ pub struct App {
     color_target_format: Format,
     camera_control: CameraControl,
     overlay: OverlayRenderer,
-    pipelines: Pipelines,
+    global_shader_macros: BTreeMap<String, String>,
 
     animation: Option<Scene>,
 
@@ -462,7 +462,7 @@ impl App {
         let draw_curves_pipeline = engine.create_compute_pipeline(
             "draw_curves",
             ComputePipelineDesc {
-                shader: PathBuf::from("crates/fluff/shaders/draw_curves.comp"),
+                shader: shaders::DRAW_CURVES, //PathBuf::from("crates/fluff/shaders/draw_curves.comp"),
                 defines: Default::default(),
             },
         )?;
@@ -623,16 +623,12 @@ impl App {
         Ok(())
     }
 
-    fn reload_shaders(&mut self) {
-        fn check<T>(name: &str, p: Result<T, graal::Error>) -> Option<T> {
-            match p {
-                Ok(p) => Some(p),
-                Err(err) => {
-                    eprintln!("Error creating `{name}`: {}", err);
-                    None
-                }
-            }
-        }
+    fn recompile_shaders(&mut self) {
+        let dir = crate::shaders::bindings::SHADER_DIRECTORY;
+        let macro_definitions = self.global_shader_macros.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>();
+        info!("recompiling shaders in {dir}...");
+        shader_bridge::recompile_shaders(dir, &macro_definitions).unwrap();
+        self.pipeline_cache.clear();
     }
 
     fn reload_textures(&mut self, cmd: &mut CommandStream) {
@@ -784,7 +780,6 @@ impl App {
             color_target_format,
             camera_control,
             overlay: overlay_renderer,
-            pipelines: Default::default(),
             bin_rast_stroke_width: 1.0,
             current_frame: 0,
             oit_stroke_width: 0.0,
@@ -823,7 +818,6 @@ impl App {
             opacity_response_curve: Default::default(),
             frame_start_time: Instant::now(),
         };
-        app.reload_shaders();
         app
     }
 

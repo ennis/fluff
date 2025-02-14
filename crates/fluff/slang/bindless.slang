@@ -15,10 +15,3 @@
 //public float4 sampleTexture2D(texture2DHandle tex, samplerHandle samp, float2 P) {
 //    return bindless_texture2D[tex.idx].Sample(bindless_samplers[samp.idx], P);
 //}
-
-public static const uint BINNING_TILE_SIZE = 16;
-public static const uint DRAW_CURVES_WORKGROUP_SIZE_X = 16;
-public static const uint DRAW_CURVES_WORKGROUP_SIZE_Y = 2;
-public static const uint BINPACK_SUBGROUP_SIZE = 32;
-public static const uint SUBGROUP_SIZE = 32;
-public static const uint MAX_VERTICES_PER_CURVE = 64;
