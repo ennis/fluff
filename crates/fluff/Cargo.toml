@@ -36,6 +36,16 @@ rand = "0.9.0-alpha.1"
 uniform-cubic-splines = { version = "0.1.8", default-features = false, features = ["std"] }
 num-traits = "0.2.19"
 shader-bridge = { workspace = true }
+slang = { git = "https://github.com/ennis/slang-rs.git", optional = true }
 
 [build-dependencies]
 shader-bridge = { workspace = true }
+slang = { git = "https://github.com/ennis/slang-rs.git" }
+quote = "1.0"
+proc-macro2 = "1.0"
+heck = "0.5"
+logos = "0.12"
+
+[feature]
+default = ["shader-hot-reload"]
+shader-hot-reload = ["dep:slang"]

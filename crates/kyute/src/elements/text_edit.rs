@@ -638,7 +638,8 @@ impl TextEditBase {
     }
 
     pub fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        // TODO: self.offset!
+        ctx.bounds.contains(point)
     }
 
     pub fn paint(&mut self, ctx: &mut PaintCtx, bounds: Rect) {
@@ -650,7 +651,7 @@ impl TextEditBase {
 
         ctx.save();
         ctx.canvas()
-            .translate(-self.scroll_offset.to_skia() + self.offset.to_skia());
+            .translate(-self.scroll_offset.to_skia() + self.offset.to_skia() + bounds.origin().to_vec2().to_skia());
 
         // paint the paragraph
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
@@ -681,18 +682,19 @@ impl TextEditBase {
         ctx.restore();
     }
 
-    pub fn event(&mut self, event: &mut Event) -> TextEditEventResult {
-        event.with_offset(self.offset, |event| self.event_inner(event))
-    }
+    //pub fn event(&mut self, event: &mut Event) -> TextEditEventResult {
+    //    event.with_offset(self.offset, |event| self.event_inner(event))
+    //}
 
-    fn event_inner(&mut self, event: &mut Event) -> TextEditEventResult {
+    pub fn event(&mut self, bounds: Rect, event: &mut Event) -> TextEditEventResult {
         use TextEditEventFlags as F;
 
         let mut flags = TextEditEventFlags::empty();
+        let origin = bounds.origin().to_vec2() + self.offset;
 
         match event {
             Event::PointerDown(event) => {
-                let pos = event.local_position();
+                let pos = event.position - origin;
                 eprintln!("[text_edit] pointer down: {:?}", pos);
                 if event.repeat_count == 2 {
                     // select word under cursor
@@ -710,7 +712,7 @@ impl TextEditBase {
             }
             Event::PointerMove(event) => {
                 //eprintln!("pointer move point: {:?}", event.local_position());
-                let pos = event.local_position();
+                let pos = event.position - origin;
 
                 match self.gesture {
                     Some(Gesture::CharacterSelection) => {

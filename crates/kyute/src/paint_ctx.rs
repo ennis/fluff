@@ -11,8 +11,8 @@ pub struct PaintCtx<'a> {
     /// Drawable surface.
     surface: &'a DrawableSurface,
     skia: skia_safe::Surface,
-    /// Accumulated transforms.
-    transforms: Vec<Affine>,
+    /// Bounds of the element being painted, relative to the current drawing surface.
+    pub bounds: Rect,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -24,7 +24,7 @@ impl<'a> PaintCtx<'a> {
             scale_factor,
             surface,
             skia,
-            transforms: vec![Affine::IDENTITY],
+            bounds: Rect::ZERO,
         }
     }
 
@@ -67,6 +67,7 @@ impl<'a> PaintCtx<'a> {
     //       - i.e. no scaling or rotation
     // - (D) convert affine transforms to physical units before pushing them on the transform stack
     //       - not sure it solves anything
+    // - (E) let paint methods apply the transform and round the coordinates themselves
     //
     // The secondary pain point is the representation of logical pixels, aka "layout units"
     // - should we support fractional layout units? firefox & webkit use 1/60th of a CSS pixel
@@ -75,6 +76,11 @@ impl<'a> PaintCtx<'a> {
     // We make the assumption that the current transform is a translation with an offset that is a multiple of a physical pixel size in logical units
     // - all transformations are translations with an offset that is a multiple of a physical pixel
     //
+    // Alternate approach:
+    // It's extremely unlikely that we'll ever need to support scaling and rotation transformations
+    // in the paint context. So we could just replace `Affine` transforms with a simple offset,
+    // and let the paint methods round the values themselves.
+    // In case scaling / rotation is needed, we won't care about pixel snapping anyway.
 
     /// Rounds a logical coordinate to the nearest physical pixel boundary.
     ///
@@ -128,33 +134,29 @@ impl<'a> PaintCtx<'a> {
         self.skia.canvas()
     }
 
-    /// Returns the current transform.
-    pub fn current_transform(&self) -> Affine {
-        *self.transforms.last().unwrap()
-    }
+    // Returns the current transform.
+    //pub fn current_transform(&self) -> Affine {
+    //    *self.transforms.last().unwrap()
+    //}
 
     /// Saves the current clip region, transform and paint bounds.
     pub fn save(&mut self) {
-        self.transforms.push(self.current_transform());
+        //self.transforms.push(self.current_transform());
         self.skia.canvas().save();
     }
 
     /// Restores the current clip region, transform and paint bounds.
     pub fn restore(&mut self) {
         self.skia.canvas().restore();
-        self.transforms.pop();
     }
 
-    /// Appends to the current transform and sets new paint bounds.
+    /// Appends to the current transform.
     pub fn transform(&mut self, transform: &Affine) {
         self.skia.canvas().concat(&transform.to_skia());
     }
 
     /// Appends to the current transform and sets new paint bounds.
     pub fn translate(&mut self, offset: Vec2) {
-        if self.round_to_device_pixel(offset.x) != offset.x || self.round_to_device_pixel(offset.y) != offset.y {
-            warn!("translate(): offset value is not aligned to a device pixel: {:?}", offset);
-        }
         self.transform(&Affine::translate(offset));
     }
 

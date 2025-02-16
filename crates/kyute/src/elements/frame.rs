@@ -419,13 +419,13 @@ impl Element for Frame {
         if let Some(content) = &self.content {
             content.hit_test(ctx, point);
         }
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
         self.resolve_style();
 
-        let rect = ecx.rect();
+        let rect = ecx.bounds();
         let s = &self.resolved_style;
 
         let border_radius = s.border_radius;

@@ -1518,3 +1518,21 @@ It can be used to access other elements in the tree, given a `&mut ElementRef`.
     /// 
     /// Another option is to store the context inside the Element itself, but it would still need to be aliased.
 ```
+
+# TODO
+- figure out layout rounding policies.
+  - it's already a problem for menus: MenuBase::measure returns a fractional size which is used as a window size, and
+    rounded to the nearest integer. This can lead to a window that is too small or too large.
+    - Q: should MenuBase::measure return a rounded size?
+    - Q: should the parent container round the size of its children?
+    - Q: should neither of them round, and let Window should round the size of the window?
+  - Q: in what units should windows be sized? logical pixels or physical pixels?
+    - A: it should be logical, like everything else.
+ - A: no rounding of layouts, but paint methods may round to pixels if they want
+   - also, paint methods should receive bounds in window coordinates, not coordinates relative to the parent
+   - this way paint methods can round to device pixels regardless of the current transformation on the canvas, 
+     because there is *no* transformation on the canvas
+   - remove arbitrary affine transformations on widgets
+     - scaling, rotations are largely untested so far
+     - unlikely to be of any use in the future
+       - arbitrary transforms will be used in zoom&pan views, but they are separate from the widget hierarchy

@@ -205,11 +205,11 @@ fn push_constant_buffer_size(entry_point: &slang::reflection::EntryPoint) -> usi
     // push constant are entry point function parameters with kind uniform
     let mut size = 0;
     for p in entry_point.parameters() {
-        eprintln!("param category: {:?}", p.category());
+        //eprintln!("param category: {:?}", p.category());
         // There's a PushConstantBuffer category, but it doesn't seem to be used
         if p.category() == slang::ParameterCategory::Uniform {
             size += p.type_layout().size(slang::ParameterCategory::Uniform);
-            eprintln!("param size: {}", size);
+            //eprintln!("param size: {}", size);
         }
     }
     size
@@ -285,9 +285,7 @@ fn process_shaders(
             bindings.append_all(tokens);
         }
     }
-
-    let mut ctx = reflect::Ctx::new();
-
+    
     // Compile shaders
     {
         for module in modules.iter() {
@@ -300,11 +298,6 @@ fn process_shaders(
             }
             let program = session.create_composite_component_type(&components).unwrap();
             let reflection = program.layout(0).expect("failed to get reflection");
-
-            if binding_options.is_some() {
-                // generate interface bindings
-                ctx.generate_interface(reflection);
-            }
 
             for i in 0..entry_point_count {
                 let ep = module.entry_point_by_index(i).unwrap();
@@ -344,7 +337,6 @@ fn process_shaders(
     // Write bindings to file
     if let Some(options) = binding_options {
         let path = output_directory.join(options.output);
-        bindings.append_all(ctx.finish());
         fs::write(&path, bindings.to_string())?;
         utils::rustfmt_file(&path);
     }

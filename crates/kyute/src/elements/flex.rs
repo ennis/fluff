@@ -241,7 +241,7 @@ impl Element for Flex {
         for child in self.children.iter() {
             child.element.hit_test(ctx, point);
         }
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, _cx: &ElementCtx, ctx: &mut PaintCtx) {

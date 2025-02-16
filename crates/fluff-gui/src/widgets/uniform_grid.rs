@@ -86,7 +86,7 @@ impl Element for UniformGrid {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, _ectx: &ElementCtx, ctx: &mut PaintCtx) {

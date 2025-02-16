@@ -10,6 +10,17 @@ pub enum Alignment {
     Baseline,
 }
 
+impl Alignment {
+    pub fn to_pos(self, x0: f64, x1: f64, baseline: f64) -> f64 {
+        match self {
+            Alignment::Start => x0,
+            Alignment::Center => 0.5 * (x0 + x1),
+            Alignment::End => x1,
+            Alignment::Baseline => x0 + baseline,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct Anchor {
     pub alignment: Alignment,
@@ -29,8 +40,8 @@ impl Anchor {
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct Anchor2D {
-    pub x: Anchor,
-    pub y: Anchor,
+    pub x: Alignment,
+    pub y: Alignment,
 }
 
 impl Anchor2D {
@@ -42,52 +53,52 @@ impl Anchor2D {
     }
 
     pub const TOP_LEFT: Self = Self {
-        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        x: Alignment::Start,
+        y: Alignment::Start,
     };
     pub const TOP_RIGHT: Self = Self {
-        x: Anchor { alignment: Alignment::End, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        x: Alignment::End,
+        y: Alignment::Start,
     };
     pub const BOTTOM_LEFT: Self = Self {
-        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
-        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+        x: Alignment::Start,
+        y: Alignment::End,
     };
     pub const BOTTOM_RIGHT: Self = Self {
-        x: Anchor { alignment: Alignment::End, offset: 0.0 },
-        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+        x: Alignment::End,
+        y: Alignment::End,
     };
     pub const TOP: Self = Self {
-        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Start, offset: 0.0 },
+        x: Alignment::Center,
+        y: Alignment::Start,
     };
     pub const BOTTOM: Self = Self {
-        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
-        y: Anchor { alignment: Alignment::End, offset: 0.0 },
+        x: Alignment::Center,
+        y: Alignment::End,
     };
     pub const LEFT: Self = Self {
-        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        x: Alignment::Start,
+        y: Alignment::Center,
     };
     pub const RIGHT: Self = Self {
-        x: Anchor { alignment: Alignment::End, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        x: Alignment::End,
+        y: Alignment::Center,
     };
     pub const CENTER: Self = Self {
-        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Center, offset: 0.0 },
+        x: Alignment::Center,
+        y: Alignment::Center,
     };
     pub const BASELINE_LEFT: Self = Self {
-        x: Anchor { alignment: Alignment::Start, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+        x: Alignment::Start,
+        y: Alignment::Baseline,
     };
     pub const BASELINE_RIGHT: Self = Self {
-        x: Anchor { alignment: Alignment::End, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+        x: Alignment::End,
+        y: Alignment::Baseline,
     };
     pub const BASELINE: Self = Self {
-        x: Anchor { alignment: Alignment::Center, offset: 0.0 },
-        y: Anchor { alignment: Alignment::Baseline, offset: 0.0 },
+        x: Alignment::Center,
+        y: Alignment::Baseline,
     };
 }
 

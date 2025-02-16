@@ -124,19 +124,24 @@ impl SliderBase {
         }
     }
 
-    pub fn set_offset(&mut self, offset: Vec2) {
-        self.offset = offset;
-    }
+    // Sets the position of the slider in window coordinates.
+    //pub fn set_offset(&mut self, offset: Vec2) {
+    //    self.offset = offset;
+    //}
 
-    pub fn event(&mut self, event: &mut Event) -> SliderBaseEventResult {
+    pub fn event(&mut self, bounds: Rect, event: &mut Event) -> SliderBaseEventResult {
         let mut value_changed = None;
 
         match event {
             Event::PointerDown(p) => {
-                value_changed = self.set_value_from_pos(p.local_position().x);
+                // TODO self.offset!
+                let local_pos = p.position - bounds.origin();
+                value_changed = self.set_value_from_pos(local_pos.x);
             }
             Event::PointerMove(p) if p.capturing_pointer() => {
-                value_changed = self.set_value_from_pos(p.local_position().x);
+                // TODO self.offset!
+                let local_pos = p.position - bounds.origin();
+                value_changed = self.set_value_from_pos(local_pos.x);
             }
             Event::Wheel(w) => {
                 match w.delta {
@@ -189,14 +194,14 @@ impl Element for Slider {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
-        self.base.paint(ctx, ectx.rect());
+        self.base.paint(ctx, ectx.bounds());
     }
 
-    fn event(&mut self,  cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
         match event {
             Event::PointerDown(_) => {
                 cx.set_pointer_capture();
@@ -204,7 +209,7 @@ impl Element for Slider {
             }
             _ => {}
         }
-        let result = self.base.event(event);
+        let result = self.base.event(cx.bounds(), event);
         
         if let Some(value) = result.value_changed {
             cx.mark_needs_paint();

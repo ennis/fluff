@@ -11,7 +11,9 @@ use kyute::{Point, Rect, Size};
 pub struct ScrollBarBase {
     direction: Axis,
     thumb_size: f64,
+    /// Current thumb position relative to the layout bounds.
     thumb_pos: f64,
+    /// Where the user started dragging the thumb.
     thumb_drag: Option<f64>,
     cross_size: f64,
     track_length: f64,
@@ -137,9 +139,14 @@ impl ScrollBarBase {
         }
     }
 
+    /// Sets the position of the thumb.
+    ///
+    /// # Arguments
+    /// * `pos` - The new position of the thumb in logical pixels, relative to the layout bounds.
     fn set_thumb_pos(&mut self, pos: f64) {
         let max_pos = self.track_length - self.thumb_size;
         self.thumb_pos = pos.max(0.0).min(max_pos);
+        eprintln!("thumb_pos: {}", self.thumb_pos);
     }
 }
 
@@ -164,11 +171,11 @@ impl Element for ScrollBarBase {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
-        let bounds = ectx.rect();
+        let bounds = ectx.bounds();
 
         // paint scrollbar background
         ctx.fill_rect(bounds, SCROLL_BAR_BACKGROUND);
@@ -188,23 +195,29 @@ impl Element for ScrollBarBase {
         //ctx.fill_rect(end_button, SCROLL_BAR);
 
         // knob
-        let thumb_rect = rect_from_inline_cross(self.direction, self.thumb_pos, 0.0, self.thumb_size, self.cross_size);
-        let thumb_rect = ctx.snap_rect_to_device_pixel(thumb_rect);
+        let mut thumb_rect = rect_from_inline_cross(self.direction, self.thumb_pos, 0.0, self.thumb_size, self.cross_size);
+        thumb_rect.x0 += bounds.x0;
+        thumb_rect.y0 += bounds.y0;
+        thumb_rect.x1 += bounds.x0;
+        thumb_rect.y1 += bounds.y0;
+        thumb_rect = ctx.snap_rect_to_device_pixel(thumb_rect);
         ctx.fill_rect(thumb_rect, SCROLL_BAR);
     }
 
     fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
-        let bounds = cx.rect();
+        let bounds = cx.bounds();
 
         match event {
             Event::PointerDown(p) => {
-                let local = p.local_position();
-                let inline = self.inline_pos(local);
-                match self.hit_test_track(p.local_position(), bounds) {
+                let pos = p.position;
+                match self.hit_test_track(pos, bounds) {
                     Some(ScrollbarPart::Thumb) => {
-                        self.thumb_drag = Some(inline - self.thumb_pos);
+                        let local_pos = (pos - bounds.origin()).to_point();
+                        let x = self.inline_pos(local_pos);
+                        self.thumb_drag = Some(x - self.thumb_pos);
                         cx.set_pointer_capture();
                         cx.set_focus();
+                        cx.mark_needs_paint();
                     }
                     Some(ScrollbarPart::Track) => {
                         // TODO
@@ -224,9 +237,11 @@ impl Element for ScrollBarBase {
                 self.thumb_drag = None;
             }
             Event::PointerMove(p) => {
-                let local = p.local_position();
+                let pos = p.position;
+                let local_pos = (pos - bounds.origin()).to_point();
                 if let Some(drag) = self.thumb_drag {
-                    self.set_thumb_pos(self.inline_pos(local) - drag);
+                    self.set_thumb_pos(self.inline_pos(local_pos) - drag);
+                    cx.mark_needs_paint();
                 }
             }
             _ => {}

@@ -1,5 +1,6 @@
 use fluff_gui::colors;
 use fluff_gui::widgets::button::Button;
+use fluff_gui::widgets::menu::{MenuBar, MenuItem};
 use fluff_gui::widgets::scroll::ScrollBarBase;
 use fluff_gui::widgets::slider::Slider;
 use fluff_gui::widgets::spinner::{SpinnerBase, SpinnerOptions};
@@ -68,6 +69,24 @@ fn main() {
             )
             .padding(10.);
 
+        use MenuItem::*;
+
+        let main_menu = MenuBar::new(&[
+            Submenu(
+                "File",
+                &[
+                    Entry("New", 0),
+                    Entry("Open", 1),
+                    Entry("Save", 2),
+                    Separator,
+                    Entry("Exit", 3),
+                ],
+            ),
+            Submenu("Edit", &[Entry("Cut", 4), Entry("Copy", 5), Entry("Paste", 6)]),
+        ]);
+
+        let top = Flex::column().child(main_menu).child(row).gaps(0, 2, 0);
+
         let main_window = Window::new(
             &WindowOptions {
                 title: "Hello, world!",
@@ -75,7 +94,7 @@ fn main() {
                 background: colors::STATIC_BACKGROUND,
                 ..Default::default()
             },
-            row,
+            top,
         );
 
         loop {

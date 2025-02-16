@@ -114,8 +114,8 @@ pub struct PointerEvent {
     /// The repeat count for double, triple (and more) for button press events (`Event::PointerDown`).
     /// Otherwise, the value is unspecified.
     pub repeat_count: u8,
-    /// Global-to-local transform
-    pub transform: Affine,
+    // Global-to-local transform
+    //pub transform: Affine,
     /// Whether the receiver has captured the pointer.
     pub request_capture: bool,
 }
@@ -138,20 +138,19 @@ impl PointerEvent {
         self.request_capture
     }
 
-    /// Local position
-    pub fn local_position(&self) -> Point {
-        self.transform.inverse() * self.position
-    }
+    // Local position
+    //pub fn local_position(&self) -> Point {
+     //   self.transform.inverse() * self.position
+    //}
 
-    /// Local position with offset
-    pub fn local_position_with_offset(&self, offset: Vec2) -> Point {
-        self.transform.inverse() * (self.position - offset)
-    }
-
-    pub fn transformed(self, transform: Affine) -> PointerEvent {
-        let transform = self.transform * transform;
-        PointerEvent { transform, ..self }
-    }
+    //pub fn local_position_with_offset(&self, offset: Vec2) -> Point {
+    //    self.transform.inverse() * (self.position - offset)
+    //}
+//
+    //pub fn transformed(self, transform: Affine) -> PointerEvent {
+    //    let transform = self.transform * transform;
+    //    PointerEvent { transform, ..self }
+    //}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -207,34 +206,34 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn append_transform(&mut self, transform: &Affine) -> Option<Affine> {
-        if let Some(p) = self.pointer_event_mut() {
-            let prev = p.transform;
-            p.transform *= *transform;
-            Some(prev)
-        } else {
-            None
-        }
-    }
+    //pub fn append_transform(&mut self, transform: &Affine) -> Option<Affine> {
+    //    if let Some(p) = self.pointer_event_mut() {
+    //        let prev = p.transform;
+    //        p.transform *= *transform;
+    //        Some(prev)
+    //    } else {
+    //        None
+    //    }
+    //}
 
-    pub fn set_transform(&mut self, transform: &Affine) {
-        if let Some(p) = self.pointer_event_mut() {
-            p.transform = *transform;
-        }
-    }
+    //pub fn set_transform(&mut self, transform: &Affine) {
+    //    if let Some(p) = self.pointer_event_mut() {
+    //        p.transform = *transform;
+    //    }
+    //}
+//
+   //pub fn with_offset<R>(&mut self, offset: Vec2, f: impl FnOnce(&mut Event) -> R) -> R {
+   //    self.with_transform(&Affine::translate(offset), f)
+   //}
 
-    pub fn with_offset<R>(&mut self, offset: Vec2, f: impl FnOnce(&mut Event) -> R) -> R {
-        self.with_transform(&Affine::translate(offset), f)
-    }
-
-    pub fn with_transform<R>(&mut self, transform: &Affine, f: impl FnOnce(&mut Event) -> R) -> R {
-        let prev_transform = self.append_transform(transform);
-        let r = f(self);
-        if let Some(prev_transform) = prev_transform {
-            self.set_transform(&prev_transform);
-        }
-        r
-    }
+   //pub fn with_transform<R>(&mut self, transform: &Affine, f: impl FnOnce(&mut Event) -> R) -> R {
+   //    let prev_transform = self.append_transform(transform);
+   //    let r = f(self);
+   //    if let Some(prev_transform) = prev_transform {
+   //        self.set_transform(&prev_transform);
+   //    }
+   //    r
+   //}
 
     /// Returns the pointer event if this is a pointer event.
     pub fn pointer_event(&self) -> Option<&PointerEvent> {
@@ -260,17 +259,6 @@ impl Event {
             | Event::PointerEnter(ref mut pe)
             | Event::PointerLeave(ref mut pe) => Some(pe),
             _ => None,
-        }
-    }
-
-    /// Returns whether the event coordinates fall inside the specified bounds.
-    ///
-    /// Returns false if the event is not a pointer event.
-    pub fn is_inside(&self, bounds: Rect) -> bool {
-        if let Some(p) = self.pointer_event() {
-            bounds.contains(p.local_position())
-        } else {
-            false
         }
     }
 

@@ -1,27 +1,9 @@
 //! Generates rust code from slang reflection data.
-use crate::reflect::Error::BindgenError;
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, TokenStreamExt};
 use slang::reflection::VariableLayout;
 use std::collections::HashMap;
-use tracing::error;
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("slang error: {0:?}")]
-    SlangError(slang::Error),
-    #[error("I/O error: {0:?}")]
-    IoError(#[from] std::io::Error),
-    #[error("binding generation error: {0:?}")]
-    BindgenError(String),
-}
-
-impl From<slang::Error> for Error {
-    fn from(err: slang::Error) -> Self {
-        Error::SlangError(err)
-    }
-}
 
 pub struct Ctx {
     /// Visibility of the generated types & fields.
@@ -31,8 +13,6 @@ pub struct Ctx {
     /// Counter for generating unique names.
     counter: usize,
     output: TokenStream,
-    /// Errors during translation.
-    errors: Vec<Error>,
     /// Vector type remapping.
     ///
     /// By default, vector types are translated to `[T; N]` arrays, but if the `(scalar, count)`
@@ -49,7 +29,6 @@ impl Ctx {
             user_defined_types: HashMap::new(),
             counter: 0,
             output: TokenStream::new(),
-            errors: Vec::new(),
             vector_type_map: HashMap::new(),
             device_ptr_type: quote! { PhysicalAddress },
         }
@@ -80,9 +59,7 @@ impl Ctx {
                 quote!(u64)
             }
             slang::ScalarType::Float16 => {
-                self.errors
-                    .push(BindgenError("unsupported scalar type: `float16`".to_owned()));
-                quote!(())
+                panic!("unsupported scalar type: {:?}", ty);
             }
             slang::ScalarType::Float32 => {
                 quote!(f32)
@@ -233,9 +210,7 @@ impl Ctx {
             | slang::TypeKind::Feedback
             | slang::TypeKind::DynamicResource
             | slang::TypeKind::Count => {
-                self.errors
-                    .push(BindgenError(format!("unsupported type kind: {:?}", ty.kind())));
-                quote! { () }
+                panic!("unsupported type kind: {:?}", ty.kind());
             }
         }
     }
@@ -298,14 +273,6 @@ impl Ctx {
             for param in entry_point.parameters() {
                 self.generate_interface_var(param);
             }
-        }
-
-        // generate compile_error for each error
-        for error in &self.errors {
-            let error_str = error.to_string();
-            self.output.append_all(quote! {
-                ::std::compile_error!(#error_str);
-            });
         }
     }
 

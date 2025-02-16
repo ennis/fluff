@@ -12,7 +12,7 @@ use std::thread::sleep;
 use std::time::Instant;
 
 use keyboard_types::{Key, KeyboardEvent};
-use kurbo::{Point, Size};
+use kurbo::{Point, Rect, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
@@ -112,12 +112,88 @@ struct InputState {
     //prev_hit_test_result: Vec<HitTestEntry>,
 }
 
+/// How to place a popup window (like a context menu) relative to an anchor rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupPlacement {
+    /// Tries to place the popup window to the right of the anchor rectangle, with its top
+    /// aligned with the top of the anchor rectangle.
+    ///
+    /// If there's not enough space, then it will fall back to placing the popup to the left
+    /// of the anchor rectangle.
+    RightThenLeft,
+    /// Tries to place the popup window to the right of the anchor rectangle. If not possible,
+    /// then the popup may overlap the anchor rectangle.
+    RightOrOverlap,
+    BottomThenUp,
+}
+
+fn place_popup_right_or_left(monitor: Size, rect: Rect, menu: Size, allow_x_overlap: bool) -> Point {
+    let mut x = rect.x1;
+    if x + menu.width > monitor.width {
+        // overflows on the right
+        if allow_x_overlap {
+            // shift menu to the left
+            x = rect.x1 - (x + menu.width - monitor.width);
+        } else {
+            // place menu to the left
+            x = rect.x0 - menu.width;
+        }
+        x = x.max(0.0);
+    }
+    let mut y = rect.y0;
+    if y + menu.height > monitor.height {
+        // overflows on the bottom
+        y = rect.y0 - menu.height;
+        y = y.max(0.0);
+    }
+    Point { x, y }
+}
+
+fn place_popup_bottom_or_top(monitor: Size, rect: Rect, menu: Size) -> Point {
+    let mut y = rect.y1;
+    if y + menu.height > monitor.height {
+        // overflows on the bottom, fallback to positioning above the menu bar
+        y = rect.y0 - menu.height;
+        y = y.max(0.0);
+    }
+    let mut x = rect.x0;
+    if x + menu.width > monitor.width {
+        // overflows on the right, position menu to the left
+        x = rect.x0 - menu.width;
+        x = x.max(0.0);
+    }
+    Point { x, y }
+}
+
+/// Places a popup window relative to an anchor rectangle.
+///
+/// # Arguments
+/// * `monitor` - The monitor on which the popup is going to be placed. 
+///               Can be `None` if not known, in which case the popup may be placed outside the monitor. 
+/// * `popup_size` - The size of the popup window.
+/// * `anchor_rect` - The rectangle that the popup should be placed relative to, in monitor coordinates.
+/// * `popup_placement` - How to place the popup window.
+pub fn place_popup(monitor: Option<Monitor>, popup_size: Size, anchor_rect: Rect, popup_placement: PopupPlacement) -> Point {
+    let monitor_size = if let Some(ref monitor) = monitor {
+        monitor.logical_size()
+    } else {
+        Size::new(f64::INFINITY, f64::INFINITY)
+    };
+    match popup_placement {
+        PopupPlacement::RightThenLeft => {
+            place_popup_right_or_left(monitor_size, anchor_rect, popup_size, false)
+        }
+        PopupPlacement::RightOrOverlap => {
+            place_popup_right_or_left(monitor_size, anchor_rect, popup_size, true)
+        }
+        PopupPlacement::BottomThenUp => {
+            place_popup_bottom_or_top(monitor_size, anchor_rect, popup_size)
+        }
+    }
+}
+
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
-
-    //close_requested: Notifier<()>, //RefCell<Option<Box<dyn Fn()>>>,
-    //focus_changed: Notifier<bool>, // RefCell<Option<Box<dyn Fn(bool)>>>,
-    //resized: Notifier<Size>,       // RefCell<Option<Box<dyn Fn(Size)>>>,
     root: ElementAny,
     layer: Layer,
     window: winit::window::Window,
@@ -179,11 +255,14 @@ impl WindowInner {
     }
 
     fn map_to_screen(&self, point: Point) -> Point {
+        // FIXME: this assumes that the scale factor of the window is the same
+        //        as the scale factor of the monitor. I'm not sure if this is always the case.
         let window_pos = self
             .window
             .inner_position()
             .expect("failed to get window position")
             .to_logical::<f64>(self.window.scale_factor());
+
         Point {
             x: point.x + window_pos.x,
             y: point.y + window_pos.y,
@@ -283,7 +362,6 @@ impl WindowInner {
             buttons: input_state.pointer_buttons,
             button: None,
             repeat_count: 0,
-            transform: Default::default(),
             request_capture: false,
         };
 
@@ -391,7 +469,6 @@ impl WindowInner {
             buttons: input_state.pointer_buttons,
             button: Some(button),
             repeat_count: repeat_count as u8,
-            transform: Default::default(),
             request_capture: false,
         };
 
@@ -500,6 +577,11 @@ impl WindowInner {
         self.window.request_redraw();
     }
 
+    fn monitor(&self) -> Monitor {
+        Monitor(self.window.current_monitor().expect("could not retrieve monitor for window"))
+    }
+
+
     fn mark_needs_paint(&self) {
         self.window.request_redraw();
     }
@@ -521,7 +603,8 @@ impl WindowInner {
 
         match event {
             WindowEvent::CursorMoved { position, .. } => {
-                let pos = Point::new(position.x, position.y);
+                let scale_factor = self.window.scale_factor();
+                let pos = Point::new(position.x / scale_factor, position.y / scale_factor);
                 //eprintln!("[{:?}] CursorMoved: {:?}", self.window.id(), pos);
                 self.cursor_pos.set(pos);
                 let modifiers = self.input_state.borrow().modifiers;
@@ -533,7 +616,6 @@ impl WindowInner {
                         buttons,
                         button: None,
                         repeat_count: 0,
-                        transform: Default::default(),
                         request_capture: false,
                     }),
                     pos,
@@ -695,7 +777,9 @@ impl EventSource for Weak<WindowInner> {
     }
 }
 
-/// A weak reference to a window.
+/// A weak handle to a window.
+///
+/// This doesn't prevent the window from being dropped.
 #[derive(Clone)]
 pub struct WindowHandle {
     pub(crate) shared: Weak<WindowInner>,
@@ -715,6 +799,16 @@ impl Default for WindowHandle {
 }
 
 impl WindowHandle {
+    
+    pub fn scale_factor(&self) -> f64 {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.window.scale_factor()
+        } else {
+            warn!("scale_factor: window has been dropped");
+            1.0
+        }
+    }
+
     pub fn request_repaint(&self) {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.request_redraw();
@@ -899,6 +993,7 @@ impl Window {
             shared: Rc::downgrade(&self.shared),
         }
     }
+
 
     pub fn map_to_screen(&self, pos: Point) -> Point {
         self.shared.map_to_screen(pos)

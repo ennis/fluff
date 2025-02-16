@@ -1,7 +1,7 @@
 use crate::colors::DISPLAY_TEXT;
 use crate::widgets::menu::ContextMenuExt;
-use crate::widgets::{PaintExt, DISPLAY_TEXT_STYLE, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
-use kyute::drawing::{vec2, BorderPosition, PlacementExt, RIGHT_CENTER};
+use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use kyute::drawing::{BorderPosition, PlacementExt, RIGHT_CENTER, vec2};
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
@@ -23,6 +23,12 @@ struct SpinnerButtons {
 }
 
 const PADDING: Vec2 = vec2(4., 2.);
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Part {
+    UpButton,
+    DownButton,
+}
 
 impl SpinnerButtons {
     const SIZE: Size = Size::new(13., 16.);
@@ -50,12 +56,14 @@ impl SpinnerButtons {
         );
     }
 
-    fn up_clicked(&self, event: &mut Event) -> bool {
-        event.is_inside(Rect::new(0., 0., 13., 8.) + self.pos.to_vec2()) && event.is_pointer_down()
-    }
-
-    fn down_clicked(&self, event: &mut Event) -> bool {
-        event.is_inside(Rect::new(0., 8., 13., 16.) + self.pos.to_vec2()) && event.is_pointer_down()
+    fn hit_test(&self, point: Point) -> Option<Part> {
+        if Rect::new(0., 0., 13., 8.).contains(point - self.pos.to_vec2()) {
+            Some(Part::UpButton)
+        } else if Rect::new(0., 8., 13., 16.).contains(point - self.pos.to_vec2()) {
+            Some(Part::DownButton)
+        } else {
+            None
+        }
     }
 }
 
@@ -208,6 +216,14 @@ impl SpinnerBase {
             if !text.parse::<f64>().is_ok() {
                 return;
             }
+
+            // TODO: edge case:
+            //       -1.00
+            //       ^ cursor here
+            //       If we scroll up the increment is determined to be 10 (we're two characters away from the decimal point)
+            //       and the value becomes 9.00. Not sure what we should do when scrolling at the minus sign.
+            // TODO: there should be unit tests; this is not complicated to test
+
             // determine which decimal place to change
             // determine position relative to the decimal point
             let selection = self.text_edit.selection();
@@ -225,7 +241,7 @@ impl SpinnerBase {
             // relative to the end
             let new_len = self.text_edit.text_len();
             self.text_edit
-                .set_selection(Selection::empty(new_len - cursor_from_end));
+                .set_selection(Selection::empty(new_len.saturating_sub(cursor_from_end)));
         } else {
             let new_value = self.value + self.increment * scroll_delta_lines.signum();
             self.set_value(cx, new_value);
@@ -256,20 +272,20 @@ impl Element for SpinnerBase {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
-        let rect = ecx.rect();
-        let rrect = rect.to_rounded_rect(0.);
+        let bounds = ecx.bounds();
+        let rrect = bounds.to_rounded_rect(0.);
 
         // paint background
         if self.show_background {
-            ctx.draw_display_background(rect);
+            ctx.draw_display_background(bounds);
         }
 
         // contents
-        self.text_edit.paint(ctx, rect);
+        self.text_edit.paint(ctx, bounds);
 
         if ecx.has_focus() {
             // draw the focus ring
@@ -277,129 +293,143 @@ impl Element for SpinnerBase {
         }
 
         // paint buttons
-        let buttons = self.place_buttons(rect);
+        let buttons = self.place_buttons(bounds);
         buttons.paint(ctx);
     }
 
     fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
-        let buttons = self.place_buttons(cx.rect());
-        if buttons.up_clicked(event) {
-            self.set_value(cx, self.value + self.increment);
-        } else if buttons.down_clicked(event) {
-            self.set_value(cx, self.value - self.increment);
-        } else {
-            match event {
-                // filter non-numeric input
-                Event::KeyDown(key) | Event::KeyUp(key) => {
-                    if !Self::is_valid_key_input(&key.key) {
+        let bounds = cx.bounds();
+        let buttons = self.place_buttons(cx.bounds());
+
+        match event {
+            // filter non-numeric input
+            Event::KeyDown(key) | Event::KeyUp(key) => {
+                if !Self::is_valid_key_input(&key.key) {
+                    return;
+                }
+            }
+
+            // mouse wheel
+            Event::Wheel(wheel) => match wheel.delta {
+                ScrollDelta::Lines { y, .. } => {
+                    self.handle_scroll(cx, y);
+                }
+                _ => {}
+            },
+
+            Event::PointerDown(p) => {
+                // acquire focus on pointer down
+                cx.set_focus();
+                cx.set_pointer_capture();
+
+                // check for button clicks
+               // let local_pos = (p.position - cx.bounds().origin()).to_point();
+
+                match buttons.hit_test(p.position) {
+                    Some(Part::UpButton) => {
+                        self.set_value(cx, self.value + self.increment);
+                        cx.mark_needs_layout();
                         return;
                     }
-                }
-
-                // mouse wheel
-                Event::Wheel(wheel) => match wheel.delta {
-                    ScrollDelta::Lines { y, .. } => {
-                        self.handle_scroll(cx, y);
+                    Some(Part::DownButton) => {
+                        self.set_value(cx, self.value - self.increment);
+                        cx.mark_needs_layout();
+                        return;
                     }
-                    _ => {}
-                },
-
-                Event::PointerDown(p) => {
-                    // acquire focus on pointer down
-                    cx.set_focus();
-                    cx.set_pointer_capture();
-
-                    // context menu
-                    if p.buttons.test(PointerButton::RIGHT) {
-                        use crate::widgets::menu::ContextMenuExt;
-                        use crate::widgets::menu::MenuItem::{Entry, Separator, Submenu};
-                        
-                        let weak = self.weak.clone();
-
-                        cx.open_context_menu(
-                            p.position,
-                            &[
-                                Entry("Copy", 0),
-                                Entry("Cut", 1),
-                                Entry("Paste", 2),
-                                Separator,
-                                Entry("Delete", 3),
-                                Separator,
-                                Submenu(
-                                    "Advanced",
-                                    &[
-                                        Entry("Advanced 1", 5),
-                                        Submenu("Advanced 2", &[Entry("Advanced 2.1", 7), Entry("Advanced 2.2", 8)]),
-                                        Submenu("Advanced 3", &[Entry("Advanced 3.1", 9), Entry("Advanced 3.2", 10)]),
-                                        Entry("Advanced 4", 11),
-                                    ],
-                                ),
-                            ],
-                            move |entry| {
-                                if let Some(this) = weak.upgrade() {
-                                    this.invoke(move |this, _cx| this.handle_context_menu(entry));
-                                }
-                            },
-                        );
-                    }
+                    None => {}
                 }
 
-                Event::FocusGained => {
-                    // Focus gained either by pointer down or by tabbing
-                    // Go in editing mode
-                    self.editing = true;
-                    self.value_before_editing = self.value;
-                    self.update_text(cx);
-                }
+                // context menu
+                if p.buttons.test(PointerButton::RIGHT) {
+                    use crate::widgets::menu::ContextMenuExt;
+                    use crate::widgets::menu::MenuItem::{Entry, Separator, Submenu};
 
-                _ => {}
-            }
+                    let weak = self.weak.clone();
 
-            let r = self.text_edit.event(event);
-
-            // clamp selection to the actual numbers, not the unit
-            if r.selection_changed() {
-                //let mut selection = self.text_edit.selection();
-                //let unit_len = self.unit.len() + 1; // +1 for the space
-                //let text_len = self.text_edit.text().len();
-                //let text_without_unit = text_len - unit_len;
-                //selection.start = selection.start.min(text_without_unit);
-                //selection.end = selection.end.min(text_without_unit);
-                //self.text_edit.set_selection(selection);
-            }
-            if r.text_changed() {
-                // TODO: parse and update
-            }
-            if r.relayout() {
-                cx.mark_needs_layout();
-            }
-            if r.repaint() {
-                cx.mark_needs_paint();
-            }
-            if r.reset_blink() {
-                //self.text_edit.reset_blink();
-            }
-            if matches!(event, Event::FocusLost) || r.confirmed() {
-                // When the spinner loses focus, or the user presses enter
-                // keep the current value and exit editing mode
-                self.editing = false;
-                cx.clear_focus();
-                // Parse value and update
-                let text = self.text_edit.text();
-                if let Some(value) = text.parse().ok() {
-                    self.set_value(cx, value);
-                } else {
-                    // restore the text
-                    self.update_text(cx);
+                    cx.open_context_menu(
+                        p.position,
+                        &[
+                            Entry("Copy", 0),
+                            Entry("Cut", 1),
+                            Entry("Paste", 2),
+                            Separator,
+                            Entry("Delete", 3),
+                            Separator,
+                            Submenu(
+                                "Advanced",
+                                &[
+                                    Entry("Advanced 1", 5),
+                                    Submenu("Advanced 2", &[Entry("Advanced 2.1", 7), Entry("Advanced 2.2", 8)]),
+                                    Submenu("Advanced 3", &[Entry("Advanced 3.1", 9), Entry("Advanced 3.2", 10)]),
+                                    Entry("Advanced 4", 11),
+                                ],
+                            ),
+                        ],
+                        move |entry| {
+                            if let Some(this) = weak.upgrade() {
+                                this.invoke(move |this, _cx| this.handle_context_menu(entry));
+                            }
+                        },
+                    );
                 }
             }
-            if r.cancelled() {
-                // user pressed escape
-                // restore the previous value
-                self.editing = false;
-                cx.clear_focus();
-                self.set_value(cx, self.value_before_editing);
+
+            Event::FocusGained => {
+                // Focus gained either by pointer down or by tabbing
+                // Go in editing mode
+                self.editing = true;
+                self.value_before_editing = self.value;
+                self.update_text(cx);
             }
+
+            _ => {}
+        }
+
+        // pass events to the text edit
+        let r = self.text_edit.event(bounds, event);
+
+        // clamp selection to the actual numbers, not the unit
+        if r.selection_changed() {
+            //let mut selection = self.text_edit.selection();
+            //let unit_len = self.unit.len() + 1; // +1 for the space
+            //let text_len = self.text_edit.text().len();
+            //let text_without_unit = text_len - unit_len;
+            //selection.start = selection.start.min(text_without_unit);
+            //selection.end = selection.end.min(text_without_unit);
+            //self.text_edit.set_selection(selection);
+        }
+        if r.text_changed() {
+            // TODO: parse and update
+        }
+        if r.relayout() {
+            cx.mark_needs_layout();
+        }
+        if r.repaint() {
+            cx.mark_needs_paint();
+        }
+        if r.reset_blink() {
+            //self.text_edit.reset_blink();
+        }
+        if matches!(event, Event::FocusLost) || r.confirmed() {
+            // When the spinner loses focus, or the user presses enter
+            // keep the current value and exit editing mode
+            self.editing = false;
+            cx.clear_focus();
+            // Parse value and update
+            let text = self.text_edit.text();
+            if let Some(value) = text.parse().ok() {
+                self.set_value(cx, value);
+            } else {
+                // restore the text
+                self.update_text(cx);
+            }
+        }
+        if r.cancelled() {
+            // user pressed escape
+            // restore the previous value
+            self.editing = false;
+            cx.clear_focus();
+            self.set_value(cx, self.value_before_editing);
         }
     }
 }

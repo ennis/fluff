@@ -63,7 +63,7 @@ impl Element for Text {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        ctx.rect.contains(point)
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, _cx: &ElementCtx, ctx: &mut PaintCtx) {

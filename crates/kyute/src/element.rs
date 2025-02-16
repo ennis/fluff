@@ -119,16 +119,16 @@ pub fn clear_keyboard_focus() {
 
 pub struct HitTestCtx {
     pub hits: Vec<WeakElementAny>,
-    pub rect: Rect,
-    transform: Affine,
+    /// Bounds of the current element in window space.
+    pub bounds: Rect,
+    //offset: Vec2,
 }
 
 impl HitTestCtx {
     pub fn new() -> HitTestCtx {
         HitTestCtx {
             hits: Vec::new(),
-            rect: Rect::ZERO,
-            transform: Affine::default(),
+            bounds: Rect::ZERO,
         }
     }
 }
@@ -553,8 +553,8 @@ impl ElementAny {
     }
 
     /// Returns the transform of this element.
-    pub fn transform(&self) -> Affine {
-        self.0.ctx.transform.get()
+    pub fn offset(&self) -> Vec2 {
+        self.0.ctx.offset.get()
     }
 
     pub fn measure(&self, layout_input: &LayoutInput) -> Size {
@@ -592,17 +592,19 @@ impl ElementAny {
     pub fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
         let ref mut inner = *self.borrow_mut();
         let this_ctx = &self.0.ctx;
-        let transform = ctx.transform * this_ctx.transform.get();
-        let prev_transform = mem::replace(&mut ctx.transform, transform);
-        let local_point = this_ctx.transform.get().inverse() * point;
-        let prev_rect = ctx.rect;
-        ctx.rect = this_ctx.rect();
-        let hit = inner.hit_test(ctx, local_point);
+        let old_bounds = ctx.bounds;
+        ctx.bounds = this_ctx.bounds();
+        //let new_origin = ctx.bounds.origin() + this_ctx.offset.get();
+        //let prev_transform = mem::replace(&mut ctx.transform, transform);
+        //let local_point = this_ctx.offset.get().inverse() * point;
+        //let prev_rect = ctx.rect;
+        //ctx.rect = this_ctx.bounds();
+        let hit = inner.hit_test(ctx, point);
         if hit {
             ctx.hits.push(self.downgrade());
         }
-        ctx.rect = prev_rect;
-        ctx.transform = prev_transform;
+        ctx.bounds = old_bounds;
+        //ctx.transform = prev_transform;
         hit
     }
 
@@ -617,18 +619,19 @@ impl ElementAny {
     pub fn paint(&self, parent_ctx: &mut PaintCtx) {
         let ref mut inner = *self.borrow_mut();
         let ctx = &self.0.ctx;
-        let transform = ctx.transform.get();
+
+        let offset = ctx.offset.get();
+        ctx.window_position.set(parent_ctx.bounds.origin() + offset);
 
         // remove flags before painting, in case the element sets them again
         let mut f = ctx.change_flags.get();
         f.remove(ChangeFlags::PAINT);
         ctx.change_flags.set(f);
 
-        parent_ctx.save();
-        parent_ctx.transform(&transform);
-        ctx.window_transform.set(parent_ctx.current_transform());
+        let prev_bounds = parent_ctx.bounds;
+        parent_ctx.bounds = Rect::from_origin_size(ctx.window_position.get(), ctx.size());
         inner.paint(ctx, parent_ctx);
-        parent_ctx.restore();
+        parent_ctx.bounds = prev_bounds;
     }
 
     pub(crate) fn paint_on_surface(&self, surface: &DrawableSurface, scale_factor: f64) {
@@ -703,10 +706,10 @@ pub struct ElementCtx {
     change_flags: Cell<ChangeFlags>,
     /// Pointer to the parent owner window. Valid only for the root element the window.
     pub(crate) window: WindowHandle,
-    /// Layout: transform from local to parent coordinates.
-    transform: Cell<Affine>,
+    /// Layout: offset from local to parent coordinates.
+    offset: Cell<Vec2>,
     /// Transform from local to window coordinates.
-    window_transform: Cell<Affine>,
+    window_position: Cell<Point>,
     /// Layout: geometry (size and baseline) of this element.
     geometry: Cell<LayoutOutput>,
     /// Name of the element.
@@ -725,8 +728,8 @@ impl ElementCtx {
             weak_this_any: Weak::<()>::default(),
             change_flags: Default::default(),
             window: WindowHandle::default(),
-            transform: Default::default(),
-            window_transform: Default::default(),
+            offset: Default::default(),
+            window_position: Default::default(),
             geometry: Default::default(),
             name: String::new(),
             focusable: false,
@@ -740,16 +743,15 @@ impl ElementCtx {
     }
 
     pub fn set_offset(&self, offset: Vec2) {
-        self.transform.set(Affine::translate(offset));
+        self.offset.set(offset);
     }
 
     pub fn add_offset(&self, offset: Vec2) {
-        self.transform.set(self.transform.get() * Affine::translate(offset));
+        self.offset.set(self.offset.get() + offset);
     }
 
-    // FIXME: rename to "bounds"?
-    pub fn rect(&self) -> Rect {
-        self.size().to_rect()
+    pub fn bounds(&self) -> Rect {
+        Rect::from_origin_size(self.window_position.get(), self.size())
     }
 
     pub fn size(&self) -> Size {
@@ -761,8 +763,8 @@ impl ElementCtx {
         self.geometry.get().baseline.unwrap_or(0.0)
     }
 
-    pub fn transform(&self) -> Affine {
-        self.transform.get()
+    pub fn offset(&self) -> Vec2 {
+        self.offset.get()
     }
 
     pub fn mark_needs_layout(&self) {
@@ -780,14 +782,19 @@ impl ElementCtx {
     }*/
 
     /// Maps a point in local coordinates to window coordinates.
-    pub fn map_to_window(&self, local_point: Point) -> Point {
-        self.window_transform.get() * local_point
-    }
+   //pub fn map_to_window(&self, local_point: Point) -> Point {
+   //    local_point + self.window_position.get()
+   //}
 
-    /// Maps a point in local coordinates to screen coordinates.
-    pub fn map_to_monitor(&self, local_point: Point) -> Point {
-        let window_point = self.map_to_window(local_point);
+    /// Maps a point in window coordinates to screen coordinates.
+    pub fn map_to_monitor(&self, window_point: Point) -> Point {
+        //let window_point = self.map_to_window(local_point);
         self.get_parent_window().map_to_screen(window_point)
+    }
+    
+    /// Maps a rectangle in window coordinates to screen coordinates.
+    pub fn map_rect_to_monitor(&self, window_rect: Rect) -> Rect {
+        window_rect.with_origin(self.map_to_monitor(window_rect.origin()))
     }
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
@@ -1038,25 +1045,23 @@ pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bo
     // get dispatch chain
     let chain = target.ancestors_and_self();
 
-    // compute local-to-root transforms for each visual in the dispatch chain
-    // TODO: do this only for events that need it
-    let transforms: Vec<Affine> = chain
-        .iter()
-        .scan(Affine::default(), |acc, element| {
-            *acc = *acc * element.transform();
-            Some(*acc)
-        })
-        .collect();
+    //// compute local-to-root transforms for each visual in the dispatch chain
+    //// TODO: do this only for events that need it
+    //let transforms: Vec<Affine> = chain
+    //    .iter()
+    //    .scan(Affine::default(), |acc, element| {
+    //        *acc = *acc * element.transform();
+    //        Some(*acc)
+    //    })
+    //    .collect();
 
     if bubbling {
         // dispatch the event, bubbling from the target up the root
-        for (element, transform) in chain.iter().rev().zip(transforms.iter().rev()) {
-            event.set_transform(transform);
+        for element in chain.iter() {
             element.send_event(event);
         }
     } else {
         // dispatch the event to the target only
-        event.set_transform(transforms.last().unwrap());
         target.send_event(event);
     }
 }
