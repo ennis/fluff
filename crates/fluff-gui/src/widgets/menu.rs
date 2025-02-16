@@ -1,20 +1,18 @@
 //! Context menu
 
-use crate::colors::{DISPLAY_TEXT, MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
+use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
 use kyute::application::{run_after, spawn};
-use kyute::drawing::{Anchor, Anchor2D, BorderPosition, Image, point, round_to_device_pixel, vec2};
-use kyute::element::WeakElement;
+use kyute::drawing::{point, vec2, BorderPosition, Image};
 use kyute::element::prelude::*;
+use kyute::element::WeakElement;
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
-use kyute::model::{emit_global, subscribe_global, wait_event_global};
+use kyute::model::{emit_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::window::{FocusChanged, Monitor, PopupPlacement, WindowHandle, place_popup};
-use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions, select, text};
+use kyute::window::{place_popup, FocusChanged, PopupPlacement, WindowHandle};
+use kyute::{select, text, AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions};
 use std::collections::BTreeMap;
-use std::hash::Hash;
-use std::marker::PhantomData;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -66,33 +64,36 @@ fn submenu_range(nodes: &[MenuItemNode], index: usize) -> Range<usize> {
 }
 
 // FIXME this should take arbitrary widgets, not just MenuBase, and it should also call place_popup
-fn create_menu_popup(
-    mut content: ElementBuilder<MenuBase>,
-    parent_menu: Option<WindowHandle>,
-    menu_position: Point,
+fn open_anchored_popup<T: Element>(
+    parent_window: WindowHandle,
+    mut content: ElementBuilder<T>,
+    anchor_rect: Rect,
+    popup_placement: PopupPlacement
 ) -> Window {
     // create popup window
     let size = content.measure(&LayoutInput::default());
-    let parent_window = content.parent_window.clone();
+    let position = place_popup(parent_window.monitor(), size, anchor_rect, popup_placement);
+
+    let parent_window = parent_window.clone();
 
     // the parent of the menu is the main window,
     // but the menu will be set as a popup of the parent menu
-    // not sure if this is necessary
     let window = Window::new(
         &WindowOptions {
             title: "",
             size,
-            parent: Some(content.parent_window.raw_window_handle().expect("parent window closed")),
+            parent: Some(parent_window.raw_window_handle().expect("parent window closed")),
             decorations: false,
             visible: true,
             background: STATIC_BACKGROUND,
-            position: Some(menu_position),
+            position: Some(position),
             no_focus: true,
         },
         content,
     );
 
-    let popup_parent = parent_menu.unwrap_or(parent_window);
+    //let popup_parent = parent_menu.unwrap_or(parent_window);
+    // not sure if this is necessary
     //popup_parent.set_popup(&window);
     window
 }
@@ -240,15 +241,13 @@ impl MenuBase {
     /// * `rect` - The bounding rectangle of the parent menu item, in the coordinate space of
     ///            the monitor or the parent window (`self.parent_window`).
     fn open_around(mut self: ElementBuilder<Self>, rect: Rect, popup_placement: PopupPlacement) -> Window {
-        let size = self.calculate_size();
         // round size to device pixels
         //let scale_factor = self.parent_window.scale_factor();
         //let size = Size::new(
         //    round_to_device_pixel(size.width, scale_factor),
         //    round_to_device_pixel(size.height, scale_factor),
         //);
-        let position = place_popup(self.parent_window.monitor(), size, rect, popup_placement);
-        create_menu_popup(self, None, position)
+        open_anchored_popup(self.parent_window.clone(), self, rect, popup_placement)
     }
 
     /// Opens a submenu.
@@ -260,10 +259,6 @@ impl MenuBase {
     fn open_submenu(&mut self, cx: &ElementCtx, around: Rect, range: MenuItemNodeRange) {
         let submenu = MenuBase::new(self.parent_window.clone(), range).set_focus();
         let popup = submenu.open_around(around, PopupPlacement::RightThenLeft);
-
-        //let size = submenu.measure(&LayoutInput::default());
-        //let position = calc_menu_position(self.monitor.logical_size(), display_rect, size, false);
-        // let popup = create_menu_popup(submenu, Some(cx.get_parent_window()), position);
 
         // Close menu when focus is lost
         let weak_this = self.weak_this.clone();
