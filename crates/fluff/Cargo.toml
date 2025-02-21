@@ -46,6 +46,6 @@ proc-macro2 = "1.0"
 heck = "0.5"
 logos = "0.12"
 
-[feature]
+[features]
 default = ["shader-hot-reload"]
 shader-hot-reload = ["dep:slang"]

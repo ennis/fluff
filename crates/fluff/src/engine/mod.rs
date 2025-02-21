@@ -1,24 +1,26 @@
-use std::{borrow::Cow, cell::{Cell, RefCell}, collections::BTreeMap, fs, marker::PhantomData, path::{Path, PathBuf}, rc::Rc, slice};
+use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::{fs, slice};
 
+use graal::shaderc::{EnvVersion, ShaderKind, SpirvVersion, TargetEnv};
+use graal::util::DeviceExt;
+use graal::vk::{Pipeline, Viewport};
 use graal::{
-    BufferAccess, BufferRangeUntyped,
-    BufferUsage,
-    ColorTargetState,
-    CommandStream,
-    ComputeEncoder,
-    ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, DepthStencilState, Device, FragmentState, get_shader_compiler,
-    GraphicsPipeline, GraphicsPipelineCreateInfo, ImageAccess, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
-    ImageView, MemoryLocation, MultisampleState, Point3D, PreRasterizationShaders, RasterizationState, Rect3D,
-    RenderEncoder, RenderPassInfo, SamplerCreateInfo, shaderc, shaderc::{EnvVersion, ShaderKind, SpirvVersion, TargetEnv}, ShaderCode, ShaderEntryPoint, util::DeviceExt,
-    vk, vk::{Pipeline, Viewport},
+    get_shader_compiler, shaderc, vk, BufferAccess, BufferRangeUntyped, BufferUsage, ColorTargetState, CommandStream,
+    ComputeEncoder, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, DepthStencilState, Device,
+    FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, ImageAccess, ImageCreateInfo, ImageSubresourceLayers,
+    ImageUsage, ImageView, MemoryLocation, MultisampleState, Point3D, PreRasterizationShaders, RasterizationState,
+    Rect3D, RenderEncoder, RenderPassInfo, SamplerCreateInfo, ShaderCode, ShaderEntryPoint,
 };
-use scoped_tls::scoped_thread_local;
-use slotmap::SlotMap;
 use spirv_reflect::types::{ReflectDescriptorType, ReflectTypeFlags};
 use tracing::{debug, error, warn};
 
-use crate::engine::shader::{CompilationInfo, compile_shader_stage};
-use crate::shaders::bindings::EntryPoint;
+use crate::engine::shader::{compile_shader_stage, CompilationInfo};
+use crate::shaders::{compile_shader_module, CompilationError, EntryPoint};
 
 //mod bindless;
 mod shader;
@@ -27,7 +29,7 @@ mod shader;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Error type for the rendering engine.
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Failed to load configuration file")]
     ConfigLoadError,
@@ -53,25 +55,15 @@ pub enum Error {
     UnknownField(String),
     #[error("Invalid field type: {0}")]
     InvalidFieldType(String),
-    #[error("Vulkan error: {0}")]
-    VulkanError(Rc<graal::Error>),
+    #[error("graphics layer error: {0}")]
+    GraalError(#[from] graal::Error),
+    #[error("Compilation error: {0}")]
+    CompilationError(String),
+    #[error("the shader had previous compilation errors")]
+    PreviousCompilationErrors,
 }
 
-pub struct MeshRenderPipelineDesc {
-    pub task_shader: PathBuf,
-    pub mesh_shader: PathBuf,
-    pub fragment_shader: PathBuf,
-    pub defines: BTreeMap<String, String>,
-    pub color_targets: Vec<ColorTargetState>,
-    pub rasterization_state: RasterizationState,
-    pub depth_stencil_state: Option<DepthStencilState>,
-    pub multisample_state: MultisampleState,
-}
-
-pub struct ComputePipelineDesc2 {
-    pub entry_point: EntryPoint,
-}
-
+/*
 /// Rendering engine instance.
 pub struct Engine {
     device: Device,
@@ -100,148 +92,6 @@ impl Engine {
         self.mesh_render_pipelines.clear();
         self.compute_pipelines.clear();
     }
-
-    /*pub fn submit_graph(&mut self, graph: RenderGraph, cmd: &mut CommandStream) {
-        // 1. allocate resources
-        //let device = &self.engine.device;
-        for image in graph.resources.images.iter() {
-            image.ensure_allocated(&self.device);
-            // Not sure we need both here
-            cmd.reference_resource(&image.view());
-            cmd.reference_resource(&image.image());
-        }
-        for buffer in graph.resources.buffers.iter() {
-            buffer.ensure_allocated(&self.device);
-            // It's important to reference the buffers explicitly because often we use only use
-            // their addresses in push constant blocks, and we can't track those usages automatically.
-            cmd.reference_resource(&buffer.buffer());
-        }
-
-        // 2. build descriptors
-        // for buffers we use BDA
-        let descriptors = self
-            .bindless_layout
-            .create_descriptors(&self.device, &graph.resources.images, &graph.samplers);
-        cmd.reference_resource(&descriptors);
-
-        RENDER_GRAPH_RESOURCES.set(&graph.resources, || {
-            // 3. record passes
-            let mut ctx = RecordContext { cmd, descriptors };
-            let ctx = &mut ctx;
-
-            for pass in graph.passes {
-                match pass.kind {
-                    PassKind::FillBuffer(mut pass) => {
-                        ctx.cmd.fill_buffer(&pass.buffer.buffer().byte_range(..), pass.value);
-                    }
-                    PassKind::Blit(mut pass) => {
-                        let src = pass.src.image();
-                        let dst = pass.dst.image();
-                        let width = src.width() as i32;
-                        let height = src.height() as i32;
-                        ctx.cmd.blit_image(
-                            &src,
-                            ImageSubresourceLayers {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                mip_level: 0,
-                                base_array_layer: 0,
-                                layer_count: 1,
-                            },
-                            Rect3D {
-                                min: Point3D { x: 0, y: 0, z: 0 },
-                                max: Point3D { x: width, y: height, z: 1 },
-                            },
-                            &dst,
-                            ImageSubresourceLayers {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                mip_level: 0,
-                                base_array_layer: 0,
-                                layer_count: 1,
-                            },
-                            Rect3D {
-                                min: Point3D { x: 0, y: 0, z: 0 },
-                                max: Point3D { x: width, y: height, z: 1 },
-                            },
-                            vk::Filter::NEAREST,
-                        );
-                    }
-                    PassKind::MeshRender(mut pass) => {
-                        let color_attachments: Vec<_> = pass
-                            .color_attachments
-                            .iter()
-                            .map(|ca| graal::ColorAttachment {
-                                image_view: ca.image.view(),
-                                clear_value: ca.clear_value.unwrap_or_default(),
-                                load_op: if ca.clear_value.is_some() {
-                                    vk::AttachmentLoadOp::CLEAR
-                                } else {
-                                    vk::AttachmentLoadOp::LOAD
-                                },
-                                store_op: vk::AttachmentStoreOp::STORE,
-                            })
-                            .collect();
-
-                        let depth_stencil_attachment = if let Some(ref dsa) = pass.depth_stencil_attachment {
-                            Some(graal::DepthStencilAttachment {
-                                image_view: dsa.image.view(),
-                                depth_load_op: if dsa.depth_clear_value.is_some() {
-                                    vk::AttachmentLoadOp::CLEAR
-                                } else {
-                                    vk::AttachmentLoadOp::LOAD
-                                },
-                                depth_store_op: vk::AttachmentStoreOp::STORE,
-                                stencil_load_op: if dsa.stencil_clear_value.is_some() {
-                                    vk::AttachmentLoadOp::CLEAR
-                                } else {
-                                    vk::AttachmentLoadOp::LOAD
-                                },
-                                stencil_store_op: vk::AttachmentStoreOp::STORE,
-                                depth_clear_value: dsa.depth_clear_value.unwrap_or_default(),
-                                stencil_clear_value: dsa.stencil_clear_value.unwrap_or_default(),
-                            })
-                        } else {
-                            None
-                        };
-
-                        let extent;
-                        if let Some(color) = pass.color_attachments.first() {
-                            extent = color.image.view().size();
-                        } else if let Some(ref depth) = pass.depth_stencil_attachment {
-                            extent = depth.image.view().size();
-                        } else {
-                            panic!("render pass has no attachments");
-                        }
-
-                        pass.tracker.transition_resources(ctx);
-                        let mut encoder = ctx.cmd.begin_rendering(RenderPassInfo {
-                            color_attachments: &color_attachments[..],
-                            depth_stencil_attachment,
-                        });
-                        encoder.bind_graphics_pipeline(&pass.pipeline.0.pipeline);
-                        encoder.bind_resource_descriptors(&ctx.descriptors);
-                        encoder.set_viewport(0.0, 0.0, extent.width as f32, extent.height as f32, 0.0, 1.0);
-                        encoder.set_scissor(0, 0, extent.width, extent.height);
-                        if let Some(cb) = pass.func.take() {
-                            cb(&mut encoder);
-                        }
-                        encoder.finish();
-                    }
-                    PassKind::Compute(mut pass) => {
-                        pass.base.transition_resources(ctx);
-                        let mut encoder = ctx.cmd.begin_compute();
-                        encoder.bind_compute_pipeline(&pass.pipeline.0.pipeline);
-                        encoder.bind_resource_descriptors(&ctx.descriptors);
-                        if let Some(cb) = pass.func.take() {
-                            cb(&mut encoder);
-                        }
-                        encoder.finish();
-                    }
-                }
-            }
-        });
-
-        cmd.flush(&[], &[]).unwrap()
-    }*/
 
     pub fn define_global(&mut self, define: &str, value: impl ToString) {
         self.global_defs.insert(define.to_string(), value.to_string());
@@ -287,7 +137,11 @@ impl Engine {
         }
     }
 
-    pub fn create_mesh_render_pipeline(&mut self, name: &str, desc: MeshRenderPipelineDesc) -> Result<GraphicsPipeline, Error> {
+    pub fn create_mesh_render_pipeline(
+        &mut self,
+        name: &str,
+        desc: MeshRenderPipelineDesc,
+    ) -> Result<GraphicsPipeline, Error> {
         if let Some(pipeline) = self.mesh_render_pipelines.get(name) {
             return pipeline.clone();
         }
@@ -356,7 +210,8 @@ impl Engine {
 
         match self.device.create_graphics_pipeline(gpci) {
             Ok(pipeline) => {
-                self.mesh_render_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
+                self.mesh_render_pipelines
+                    .insert(name.to_string(), Ok(pipeline.clone()));
                 Ok(pipeline)
             }
             Err(err) => {
@@ -365,53 +220,174 @@ impl Engine {
         }
     }
 }
+*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub struct MeshRenderPipelineDesc2<'a> {
+    pub task_shader: EntryPoint<'a>,
+    pub mesh_shader: EntryPoint<'a>,
+    pub fragment_shader: EntryPoint<'a>,
+    //pub defines: BTreeMap<String, String>,
+    pub color_targets: Vec<ColorTargetState>,
+    pub rasterization_state: RasterizationState,
+    pub depth_stencil_state: Option<DepthStencilState>,
+    pub multisample_state: MultisampleState,
+}
+
+pub struct PrimitiveRenderPipelineDesc2<'a> {
+    pub vertex_shader: EntryPoint<'a>,
+    pub fragment_shader: EntryPoint<'a>,
+    //pub defines: BTreeMap<String, String>,
+    pub color_targets: Vec<ColorTargetState>,
+    pub rasterization_state: RasterizationState,
+    pub depth_stencil_state: Option<DepthStencilState>,
+    pub multisample_state: MultisampleState,
+}
+
 pub struct PipelineCache {
     device: Device,
-    graphics_pipelines: BTreeMap<String, Result<GraphicsPipeline, Error>>,
-    compute_pipelines: BTreeMap<String, Result<ComputePipeline, Error>>,
+    global_macro_definitions: BTreeMap<String, String>,
+    graphics_pipelines: BTreeMap<String, Option<GraphicsPipeline>>,
+    compute_pipelines: BTreeMap<String, Option<ComputePipeline>>,
 }
 
 impl PipelineCache {
-    
+    pub fn new(device: Device) -> Self {
+        Self {
+            device,
+            global_macro_definitions: Default::default(),
+            graphics_pipelines: Default::default(),
+            compute_pipelines: Default::default(),
+        }
+    }
+
+    pub fn set_global_macro_definitions(&mut self, defines: BTreeMap<String, String>) {
+        self.global_macro_definitions = defines;
+        self.clear();
+    }
+
     pub fn clear(&mut self) {
         self.graphics_pipelines.clear();
         self.compute_pipelines.clear();
     }
-    
-    pub fn create_compute_pipeline(&mut self, name: &str, entry_point: EntryPoint) -> Result<ComputePipeline, Error> {
-        if let Some(pipeline) = self.compute_pipelines.get(name) {
-            return pipeline.clone();
-        }
-        
-        let code_buf;
-        let code = if let Some(path) = entry_point.path {
-            // always reload from path if provided
-            let path = PathBuf::from(path);
-            code_buf = fs::read(&path).map_err(|err| Error::ShaderReadError { path, error: Rc::new(err) })?;
-            &code_buf
-        } else {
-            entry_point.code
-        };
 
+    fn reload_shader<'a>(&mut self, name: &str, entry_point: &'a EntryPoint<'a>) -> Result<Cow<'a, [u8]>, Error> {
+        #[cfg(feature = "shader-hot-reload")]
+        {
+            if let Some(ref path) = entry_point.source_path {
+                // recompile from path if provided
+                let path = PathBuf::from(path.as_ref());
+
+                let mut macro_defs = Vec::new();
+                for (k, v) in self.global_macro_definitions.iter() {
+                    macro_defs.push((k.as_str(), v.as_str()));
+                }
+                let result = compile_shader_module(&path, &[], &macro_defs, entry_point.name.as_ref());
+                match result {
+                    Ok(blob) => {
+                        return Ok(Cow::Owned(blob));
+                    }
+                    Err(err) => {
+                        return Err(Error::CompilationError(format!("{err}")));
+                    }
+                }
+            }
+        }
+
+        Ok(Cow::Borrowed(entry_point.code.as_ref()))
+    }
+
+    fn create_compute_pipeline_internal(
+        &mut self,
+        name: &str,
+        entry_point: &EntryPoint,
+    ) -> Result<ComputePipeline, Error> {
+        let code = self.reload_shader(name, entry_point)?;
         let cpci = ComputePipelineCreateInfo {
             set_layouts: &[],
-            push_constants_size: ci.push_cst_size,
+            push_constants_size: entry_point.push_constants_size as usize,
             compute_shader: ShaderEntryPoint {
-                code: ShaderCode::Spirv(&compute_spv),
-                entry_point: "main",
+                code: ShaderCode::Spirv(bytemuck::cast_slice(&*code)),
+                entry_point: entry_point.name.as_ref(),
             },
         };
+        Ok(self.device.create_compute_pipeline(cpci)?)
+    }
 
-        match self.device.create_compute_pipeline(cpci) {
+    pub fn create_compute_pipeline(&mut self, name: &str, entry_point: &EntryPoint) -> Result<ComputePipeline, Error> {
+        if let Some(pipeline) = self.compute_pipelines.get(name) {
+            match pipeline {
+                Some(pipeline) => return Ok(pipeline.clone()),
+                None => return Err(Error::PreviousCompilationErrors),
+            }
+        }
+        match self.create_compute_pipeline_internal(name, entry_point) {
             Ok(pipeline) => {
-                self.compute_pipelines.insert(name.to_string(), Ok(pipeline.clone()));
+                self.compute_pipelines.insert(name.to_string(), Some(pipeline.clone()));
                 Ok(pipeline)
             }
             Err(err) => {
-                panic!("update_pipelines: failed to create compute pipeline: {:?}", err);
+                self.compute_pipelines.insert(name.to_string(), None);
+                Err(err)
+            }
+        }
+    }
+
+    fn create_primitive_pipeline_internal(
+        &mut self,
+        name: &str,
+        desc: &PrimitiveRenderPipelineDesc2,
+    ) -> Result<GraphicsPipeline, Error> {
+        let vertex = self.reload_shader(name, &desc.vertex_shader)?;
+        let fragment = self.reload_shader(name, &desc.fragment_shader)?;
+        let gpci = GraphicsPipelineCreateInfo {
+            set_layouts: &[],
+            push_constants_size: 0,
+            vertex_input: Default::default(),
+            pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
+                vertex: ShaderEntryPoint {
+                    code: ShaderCode::Spirv(bytemuck::cast_slice(&*vertex)),
+                    entry_point: desc.vertex_shader.name.as_ref(),
+                },
+                tess_control: None,
+                tess_evaluation: None,
+                geometry: None,
+            },
+            rasterization: desc.rasterization_state,
+            depth_stencil: desc.depth_stencil_state,
+            fragment: FragmentState {
+                shader: ShaderEntryPoint {
+                    code: ShaderCode::Spirv(bytemuck::cast_slice(&*fragment)),
+                    entry_point: desc.fragment_shader.name.as_ref(),
+                },
+                multisample: Default::default(),
+                color_targets: desc.color_targets.as_slice(),
+                blend_constants: [0.0, 0.0, 0.0, 0.0],
+            },
+        };
+        Ok(self.device.create_graphics_pipeline(gpci)?)
+    }
+
+    pub fn create_primitive_pipeline(
+        &mut self,
+        name: &str,
+        desc: &PrimitiveRenderPipelineDesc2,
+    ) -> Result<GraphicsPipeline, Error> {
+        if let Some(pipeline) = self.graphics_pipelines.get(name) {
+            match pipeline {
+                Some(pipeline) => return Ok(pipeline.clone()),
+                None => return Err(Error::PreviousCompilationErrors),
+            }
+        }
+        match self.create_primitive_pipeline_internal(name, desc) {
+            Ok(pipeline) => {
+                self.graphics_pipelines.insert(name.to_string(), Some(pipeline.clone()));
+                Ok(pipeline)
+            }
+            Err(err) => {
+                self.graphics_pipelines.insert(name.to_string(), None);
+                Err(err)
             }
         }
     }

@@ -26,6 +26,7 @@ use std::ops::Range;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use heck::{ToShoutySnakeCase, ToSnakeCase};
 use Token::*;
 use crate::rustfmt_file;
 
@@ -362,10 +363,15 @@ fn translate_variable(source: &str, lexer: &mut Lexer, is_field: bool) -> Result
 
     lexer.expect(SEMICOLON)?;
 
-    let ident = format_ident!("{ident}");
+
+    let ident_snake = if is_field { ident.to_snake_case() } else {
+        ident.to_shouty_snake_case()
+    };
+    let ident_snake = format_ident!("{ident_snake}");
+
     let initializer = initializer.iter();
     Ok(quote! {
-        #ident: #ty #(= #initializer)*
+        #ident_snake: #ty #(= #initializer)*
     })
 }
 
@@ -415,7 +421,6 @@ fn write_sanity_checks(out: &mut TokenStream){
             assert!(same_layout::<float2, [f32; 2]>());
             assert!(same_layout::<float3, [f32; 3]>());
             assert!(same_layout::<float4, [f32; 4]>());
-            assert!(same_layout::<float4x4, [f32; 4]>());
             assert!(same_layout::<float4x4, [[f32; 4]; 4]>());
             assert!(same_layout::<uint2, [u32; 2]>());
             assert!(same_layout::<uint3, [u32; 3]>());

@@ -157,7 +157,6 @@ struct BinCurvesParams {
 };
 
 
-
 struct TemporalAverageParams {
     uvec2 viewportSize;
     uint frame;

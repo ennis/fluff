@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use graal::DeviceAddress;
 
 #[cfg(feature = "shader-hot-reload")]
-pub use compiler::compile_shader_module;
+pub use compiler::{compile_shader_module, CompilationError};
 
 
 // Define type aliases for slang types. These are referenced in the generated bindings, which
@@ -25,16 +25,18 @@ type Pointer<T> = DeviceAddress<T>;
 type uint = u32;
 type int = i32;
 type float = f32;
-type bool = u32;
-type float2 = [f32; 2];
-type float3 = [f32; 3];
-type float4 = [f32; 4];
-type uint2 = [u32; 2];
-type uint3 = [u32; 3];
-type uint4 = [u32; 4];
-type int2 = [i32; 2];
-type int3 = [i32; 3];
-type int4 = [i32; 4];
+//type bool = u32;
+type float2 = glam::Vec2;
+type float3 = glam::Vec3;
+type float4 = [f32;4];
+type uint2 = glam::UVec2;
+type uint3 = glam::UVec3;
+type uint4 = glam::UVec4;
+type uint8_t4 = [u8; 4];
+type uint8_t = u8;
+type int2 = glam::IVec2;
+type int3 = glam::IVec3;
+type int4 = glam::IVec4;
 type float4x4 = [[f32; 4]; 4];
 
 #[repr(C)]
@@ -103,6 +105,7 @@ pub enum Stage {
 }
 
 /// Represents a shader entry point.
+#[derive(Debug, Clone)]
 pub struct EntryPoint<'a> {
     /// Shader stage.
     pub stage: Stage,
@@ -113,7 +116,7 @@ pub struct EntryPoint<'a> {
     /// SPIR-V code for the entry point.
     pub code: Cow<'a, [u8]>,
     /// Size of the push constants in bytes.
-    pub push_constants_size: u32,
+    pub push_constants_size: usize,
     /// Size of the local workgroup in each dimension, if applicable to the shader type.
     ///
     /// This is valid for compute, task, and mesh shaders.

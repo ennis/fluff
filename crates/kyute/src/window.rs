@@ -168,8 +168,8 @@ fn place_popup_bottom_or_top(monitor: Size, rect: Rect, menu: Size) -> Point {
 /// Places a popup window relative to an anchor rectangle.
 ///
 /// # Arguments
-/// * `monitor` - The monitor on which the popup is going to be placed. 
-///               Can be `None` if not known, in which case the popup may be placed outside the monitor. 
+/// * `monitor` - The monitor on which the popup is going to be placed.
+///               Can be `None` if not known, in which case the popup may be placed outside the monitor.
 /// * `popup_size` - The size of the popup window.
 /// * `anchor_rect` - The rectangle that the popup should be placed relative to, in monitor coordinates.
 /// * `popup_placement` - How to place the popup window.
@@ -676,7 +676,9 @@ impl WindowInner {
                 self.needs_layout.set(true);
             }
             WindowEvent::Focused(focused) => {
+                eprintln!("[window@{:?}] Focused: {:?}", self.window.id(), focused);
                 self.weak_this.emit(FocusChanged(*focused));
+                // FIXME: this could be a global event instead
                 self.weak_this.emit(PopupCancelled);
             }
             WindowEvent::RedrawRequested => {
@@ -799,7 +801,7 @@ impl Default for WindowHandle {
 }
 
 impl WindowHandle {
-    
+
     pub fn scale_factor(&self) -> f64 {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.scale_factor()
@@ -895,12 +897,14 @@ impl Monitor {
 pub struct WindowOptions<'a> {
     pub title: &'a str,
     pub size: Size,
+    // FIXME that's not really the parent but rather the "owner"
     pub parent: Option<RawWindowHandle>,
     pub decorations: bool,
     pub visible: bool,
     pub background: Color,
     pub position: Option<Point>,
     pub no_focus: bool,
+    pub undecorated_shadow: bool,
 }
 
 impl<'a> Default for WindowOptions<'a> {
@@ -914,6 +918,7 @@ impl<'a> Default for WindowOptions<'a> {
             background: Color::from_hex("#151515"),
             position: None,
             no_focus: false,
+            undecorated_shadow: false,
         }
     }
 }
@@ -932,13 +937,31 @@ impl Window {
                 .with_inner_size(winit::dpi::LogicalSize::new(options.size.width, options.size.height));
             if options.no_focus {
                 builder = builder.with_no_focus();
+                builder = builder.with_active(false);
             }
             if let Some(p) = options.position {
                 builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
             }
+            #[cfg(windows)]
+            if let Some(parent) = options.parent {
+                match parent {
+                    RawWindowHandle::Win32(w) => {
+                        builder = builder.with_owner_window(w.hwnd.get());
+                    },
+                    _ => panic!("expected a Win32 window handle"),
+                }
+            }
 
             builder.build(&event_loop).unwrap()
         });
+
+        #[cfg(windows)]
+        {
+            use winit::platform::windows::WindowExtWindows;
+            if options.undecorated_shadow {
+                window.set_undecorated_shadow(true);
+            }
+        }
 
         // Setup compositor layer
         // Get the physical size from the window
@@ -988,7 +1011,7 @@ impl Window {
         self.shared.set_pointer_capture(element);
     }
 
-    pub fn as_weak(&self) -> WindowHandle {
+    pub fn handle(&self) -> WindowHandle {
         WindowHandle {
             shared: Rc::downgrade(&self.shared),
         }

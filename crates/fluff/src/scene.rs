@@ -1,10 +1,12 @@
 //! Stuff related to strokes.
+
+use crate::shaders::{StrokeVertex, Stroke};
 use glam::{DVec4, vec2, Vec3};
 use graal::{BufferUsage, Device, MemoryLocation};
 use houdinio::Geo;
 use crate::util::{AppendBuffer, lagrange_interpolate_4};
 use crate::overlay::CubicBezierSegment;
-use crate::shaders::shared::{ControlPoint, CurveDesc, Stroke, StrokeVertex};
+use crate::shaders::{ControlPoint, CurveDesc};
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -106,7 +108,7 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
                             for &vertex_index in curve.vertices.iter() {
                                 let pos = f.vertex_position(vertex_index);
                                 let color = f.vertex_color(vertex_index).unwrap_or([0.1, 0.8, 0.1]);
-                                *point_data.offset(point_ptr) = ControlPoint { pos, color };
+                                *point_data.offset(point_ptr) = ControlPoint { pos: pos.into(), color: color.into() };
                                 point_ptr += 1;
                             }
                             // FIXME: this is wrong

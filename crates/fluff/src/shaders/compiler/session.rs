@@ -3,7 +3,6 @@ use std::cell::OnceCell;
 use std::ffi::CString;
 use std::path::Path;
 
-
 fn get_slang_global_session() -> slang::GlobalSession {
     thread_local! {
         static SESSION: OnceCell<slang::GlobalSession> = OnceCell::new();
@@ -15,7 +14,7 @@ fn get_slang_global_session() -> slang::GlobalSession {
     })
 }
 
-pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path]) -> slang::Session {
+pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path], macro_definitions: &[(&str, &str)]) -> slang::Session {
     let global_session = get_slang_global_session();
 
     let mut search_paths_cstr = vec![];
@@ -28,15 +27,20 @@ pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path]) -> slang:
     let targets = [target_desc];
 
     let profile = global_session.find_profile(profile_id);
-    let compiler_options = slang::CompilerOptions::default()
+    let mut compiler_options = slang::CompilerOptions::default()
         .glsl_force_scalar_layout(true)
         .optimization(slang::OptimizationLevel::Default)
         .profile(profile);
 
+    for (k,v) in macro_definitions {
+        compiler_options = compiler_options.macro_define(k,v);
+    }
+    
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
         .search_paths(&search_path_ptrs)
         .options(&compiler_options);
+    
 
     let session = global_session
         .create_session(&session_desc)

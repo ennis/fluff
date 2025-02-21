@@ -1,5 +1,6 @@
 //! Shader compilation utilities.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use slang::Downcast;
@@ -67,9 +68,14 @@ impl From<std::io::Error> for CompilationError {
 /// * `search_paths` - Paths to search for included files.
 /// * `entry_point_name` - Name of the entry point in the shader module.
 ///
-pub fn compile_shader_module(path: &Path, search_paths: &[&Path], entry_point_name: &str) -> Result<Vec<u8>, CompilationError> {
+pub fn compile_shader_module(
+    path: &Path,
+    search_paths: &[&Path],
+    macro_definitions: &[(&str, &str)],
+    entry_point_name: &str) -> Result<Vec<u8>, CompilationError>
+{
     let path = path.canonicalize()?;
-    let session = create_session(SHADER_PROFILE, search_paths);
+    let session = create_session(SHADER_PROFILE, search_paths, macro_definitions);
     let module = session
         .load_module(path.to_str().unwrap())?;
     let entry_point = module

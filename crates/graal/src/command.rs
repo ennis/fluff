@@ -655,6 +655,7 @@ impl CommandStream {
         cb
     }
 
+    /*
     unsafe fn set_current_command_buffer(&mut self, command_buffer: vk::CommandBuffer) {
         /*unsafe {
             self.device.raw().end_command_buffer(command_buffer).unwrap();
@@ -664,7 +665,7 @@ impl CommandStream {
             "there is already a current command buffer"
         );
         self.command_buffer = Some(command_buffer);
-    }
+    }*/
 
     /// Returns the current command buffer, creating a new one if necessary.
     ///

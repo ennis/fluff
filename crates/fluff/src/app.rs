@@ -1,3 +1,4 @@
+use crate::shaders::TemporalAverageParams;
 use egui::{color_picker::{color_edit_button_rgb, color_edit_button_srgba, Alpha}, Align2, Color32, DragValue, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, Ui, Widget, TextureHandle};
 use egui_extras::{Column, TableBuilder};
 use glam::{dvec2, dvec3, mat4, uvec2, vec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3Swizzles, Vec4Swizzles, Vec3};
@@ -24,20 +25,19 @@ use winit::{
 
 use crate::{
     camera_control::CameraControl,
-    engine::{ComputePipelineDesc, Engine, Error, MeshRenderPipelineDesc},
+    engine::{Error},
     overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer},
     shaders,
-    shaders::shared::{
-        ControlPoint, CurveDesc, DrawCurvesPushConstants, SummedAreaTableParams, TemporalAverageParams, TileData, BINNING_TILE_SIZE,
-        BINPACK_SUBGROUP_SIZE, DRAW_CURVES_WORKGROUP_SIZE_Y,
+    shaders::{
+        ControlPoint, CurveDesc, DrawCurvesPushConstants, TileData,
     },
     util::resolve_file_sequence,
 };
+use crate::engine::PipelineCache;
 use crate::util::AppendBuffer;
-use crate::shaders::shared::{DrawStrokesPushConstants, Stroke, StrokeVertex, SUBGROUP_SIZE};
+use crate::shaders::{Stroke, StrokeVertex, SUBGROUP_SIZE};
 use crate::scene::{Scene, load_stroke_animation_data};
 use crate::ui::{curve_editor_button, icon_button};
-use crate::util::lagrange_interpolate_4;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -230,6 +230,7 @@ pub struct App {
     camera_control: CameraControl,
     overlay: OverlayRenderer,
     global_shader_macros: BTreeMap<String, String>,
+    pcache: PipelineCache,
 
     animation: Option<Scene>,
 
@@ -269,7 +270,6 @@ pub struct App {
     drawn_control_points: AppendBuffer<ControlPoint>,
     settings: SavedSettings,
     tweaks_changed: bool,
-    engine: Engine,
     draw_origin: glam::Vec2,
     fit_tolerance: f64,
     curve_embedding_factor: f64,
@@ -285,9 +285,9 @@ pub struct App {
 }
 
 impl App {
-    fn compute_sats(&mut self, cmd: &mut CommandStream) -> Result<(), Error> {
+    /*fn compute_sats(&mut self, cmd: &mut CommandStream) -> Result<(), Error> {
         let sat_shader = PathBuf::from("crates/fluff/shaders/sat.glsl");
-        let sat_32x32 = self.engine.create_compute_pipeline(
+        let sat_32x32 = self.pcache.create_compute_pipeline(
             "sat_32x32",
             ComputePipelineDesc {
                 shader: sat_shader.clone(),
@@ -361,11 +361,11 @@ impl App {
         }
 
         Ok(())
-    }
+    }*/
 
 
     fn setup(&mut self, cmd: &mut CommandStream, color_target: Image, width: u32, height: u32) -> Result<(), Error> {
-        let engine = &mut self.engine;
+        //let engine = &mut self.engine;
 
         let Some(ref animation) = self.animation else { return Ok(()) };
         let anim_frame = &animation.frames[self.current_frame];
@@ -377,17 +377,17 @@ impl App {
         let temporal_average_falloff = self.temporal_average_alpha;
         let debug_tile_line_overflow = self.debug_tile_line_overflow;
 
-        let tile_count_x = width.div_ceil(BINNING_TILE_SIZE);
-        let tile_count_y = height.div_ceil(BINNING_TILE_SIZE);
+        //let tile_count_x = width.div_ceil(BINNING_TILE_SIZE);
+        //let tile_count_y = height.div_ceil(BINNING_TILE_SIZE);
         //engine.define_global("TILE_SIZE", CURVE_BINNING_TILE_SIZE.to_string());
 
         let time = (self.frame_start_time - self.start_time).as_secs_f32();
 
         let camera = self.camera_control.camera();
-        let scene_params = shaders::shared::SceneParams {
-            view: camera.view,
-            proj: camera.projection,
-            view_proj: camera.view_projection(),
+        let scene_params = shaders::SceneParams {
+            view: camera.view.to_cols_array_2d(),
+            proj: camera.projection.to_cols_array_2d(),
+            view_proj: camera.view_projection().to_cols_array_2d(),
             eye: self.camera_control.eye().as_vec3(),
             // TODO frustum parameters
             near_clip: camera.frustum.near_plane,
@@ -412,16 +412,16 @@ impl App {
 
         ////////////////////////////////////////////////////////////
         // Curve binning
-        let tile_line_count_buffer = self.device.create_array_buffer::<u32>(
-            BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-            MemoryLocation::GpuOnly,
-            tile_count_x as usize * tile_count_y as usize,
-        );
-        let tile_buffer = self.device.create_array_buffer::<TileData>(
-            BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
-            MemoryLocation::GpuOnly,
-            tile_count_x as usize * tile_count_y as usize,
-        );
+        //let tile_line_count_buffer = self.device.create_array_buffer::<u32>(
+        //    BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
+        //    MemoryLocation::GpuOnly,
+        //    tile_count_x as usize * tile_count_y as usize,
+        //);
+        //let tile_buffer = self.device.create_array_buffer::<TileData>(
+        //    BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
+        //    MemoryLocation::GpuOnly,
+        //    tile_count_x as usize * tile_count_y as usize,
+        //);
 
 
         let brush_texture_handles: Vec<_> = self.brush_textures.iter().map(|b| b.image_view.device_image_handle()).collect();
@@ -436,72 +436,69 @@ impl App {
         let temporal_avg_view = self.temporal_avg_image.create_top_level_view();
 
         // pipelines
-        let curve_binning_pipeline = engine.create_mesh_render_pipeline(
-            "curve_binning",
-            // TODO: in time, all of this will be moved to hot-reloadable config files
-            MeshRenderPipelineDesc {
-                task_shader: PathBuf::from("crates/fluff/shaders/bin_curves.task"),
-                mesh_shader: PathBuf::from("crates/fluff/shaders/bin_curves.mesh"),
-                fragment_shader: PathBuf::from("crates/fluff/shaders/bin_curves.frag"),
-                defines: Default::default(),
-                color_targets: vec![ColorTargetState {
-                    format: Format::R16G16B16A16_SFLOAT,
-                    ..Default::default()
-                }],
-                rasterization_state: Default::default(),
-                depth_stencil_state: Some(DepthStencilState {
-                    format: Format::D32_SFLOAT,
-                    depth_write_enable: true,
-                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                    stencil_state: StencilState::default(),
-                }),
-                multisample_state: Default::default(),
-            },
-        )?;
+        //let curve_binning_pipeline = engine.create_mesh_render_pipeline(
+        //    "curve_binning",
+        //    // TODO: in time, all of this will be moved to hot-reloadable config files
+        //    MeshRenderPipelineDesc {
+        //        task_shader: PathBuf::from("crates/fluff/shaders/bin_curves.task"),
+        //        mesh_shader: PathBuf::from("crates/fluff/shaders/bin_curves.mesh"),
+        //        fragment_shader: PathBuf::from("crates/fluff/shaders/bin_curves.frag"),
+        //        defines: Default::default(),
+        //        color_targets: vec![ColorTargetState {
+        //            format: Format::R16G16B16A16_SFLOAT,
+        //            ..Default::default()
+        //        }],
+        //        rasterization_state: Default::default(),
+        //        depth_stencil_state: Some(DepthStencilState {
+        //            format: Format::D32_SFLOAT,
+        //            depth_write_enable: true,
+        //            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+        //            stencil_state: StencilState::default(),
+        //        }),
+        //        multisample_state: Default::default(),
+        //    },
+        //)?;
 
-        let draw_curves_pipeline = engine.create_compute_pipeline(
-            "draw_curves",
-            ComputePipelineDesc {
-                shader: shaders::DRAW_CURVES, //PathBuf::from("crates/fluff/shaders/draw_curves.comp"),
-                defines: Default::default(),
-            },
-        )?;
+        //let draw_curves_pipeline = engine.create_compute_pipeline(
+        //    "draw_curves",
+        //    ComputePipelineDesc {
+        //        shader: shaders::DRAW_CURVES, //PathBuf::from("crates/fluff/shaders/draw_curves.comp"),
+        //        defines: Default::default(),
+        //    },
+        //)?;
 
-        let temporal_average_pipeline = engine.create_compute_pipeline(
+        let temporal_average_pipeline = self.pcache.create_compute_pipeline(
             "temporal_average",
-            ComputePipelineDesc {
-                shader: PathBuf::from("crates/fluff/shaders/temporal_average.comp"),
-                defines: Default::default(),
-            },
+            &shaders::TEMPORAL_AVERAGE,
         )?;
 
-        let draw_strokes_pipeline = engine.create_mesh_render_pipeline(
-            "draw_strokes",
-            MeshRenderPipelineDesc {
-                task_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
-                mesh_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
-                fragment_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
-                defines: Default::default(),
-                color_targets: vec![ColorTargetState {
-                    format: Format::R16G16B16A16_SFLOAT,
-                    blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
-                    ..Default::default()
-                }],
-                rasterization_state: Default::default(),
-                depth_stencil_state: Some(DepthStencilState {
-                    format: Format::D32_SFLOAT,
-                    depth_write_enable: false,
-                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                    stencil_state: StencilState::default(),
-                }),
-                multisample_state: Default::default(),
-            },
-        )?;
+        //let draw_strokes_pipeline = engine.create_mesh_render_pipeline(
+        //    "draw_strokes",
+        //    MeshRenderPipelineDesc {
+        //        task_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
+        //        mesh_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
+        //        fragment_shader: PathBuf::from("crates/fluff/shaders/strokes.glsl"),
+        //        defines: Default::default(),
+        //        color_targets: vec![ColorTargetState {
+        //            format: Format::R16G16B16A16_SFLOAT,
+        //            blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
+        //            ..Default::default()
+        //        }],
+        //        rasterization_state: Default::default(),
+        //        depth_stencil_state: Some(DepthStencilState {
+        //            format: Format::D32_SFLOAT,
+        //            depth_write_enable: false,
+        //            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+        //            stencil_state: StencilState::default(),
+        //        }),
+        //        multisample_state: Default::default(),
+        //    },
+        //)?;
 
         //////////////////////////////////////////
         cmd.reference_resource(&brush_textures);
 
-        match self.mode {
+        /*match self.mode {
             RenderMode::BinRasterization => {
                 cmd.fill_buffer(&tile_line_count_buffer.untyped.byte_range(..), 0);
                 cmd.fill_buffer(&tile_buffer.untyped.byte_range(..), 0);
@@ -596,7 +593,7 @@ impl App {
                 encoder.finish();
             }
             _ => {}
-        }
+        }*/
 
 
         if self.temporal_average {
@@ -612,8 +609,8 @@ impl App {
                 viewport_size: uvec2(width, height),
                 frame,
                 falloff: temporal_average_falloff,
-                new_frame: color_target_view.device_image_handle(),
-                avg_frame: temporal_avg_view.device_image_handle(),
+                new_frame: color_target_view.device_image_handle().into(),
+                avg_frame: temporal_avg_view.device_image_handle().into(),
             });
             encoder.dispatch(width.div_ceil(8), height.div_ceil(8), 1);
             encoder.finish();
@@ -623,13 +620,14 @@ impl App {
         Ok(())
     }
 
+    /*
     fn recompile_shaders(&mut self) {
         let dir = crate::shaders::bindings::SHADER_DIRECTORY;
         let macro_definitions = self.global_shader_macros.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>();
         info!("recompiling shaders in {dir}...");
         shader_bridge::recompile_shaders(dir, &macro_definitions).unwrap();
         self.pipeline_cache.clear();
-    }
+    }*/
 
     fn reload_textures(&mut self, cmd: &mut CommandStream) {
         self.brush_textures.clear();
@@ -664,7 +662,7 @@ impl App {
                 id: self.brush_textures.len() as u32,
             });
         }
-        let _ = self.compute_sats(cmd);
+        //let _ = self.compute_sats(cmd);
     }
 
     fn load_geo_file(&mut self, path: &Path) {
@@ -762,15 +760,15 @@ impl App {
         let drawn_control_points = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
 
         // load tweaks
+        let mut pcache = PipelineCache::new(device.clone());
         let settings = SavedSettings::load().unwrap_or_default();
-        let mut engine = Engine::new(device.clone());
-        let tweaks = settings
+        let tweaks: BTreeMap<String,String> = settings
             .tweaks
             .iter()
             .filter(|tweak| tweak.enabled)
             .map(|tweak| (tweak.name.clone(), tweak.value.clone()))
             .collect();
-        engine.set_global_defines(tweaks);
+        pcache.set_global_macro_definitions(tweaks.clone());
 
         let mut app = App {
             device: device.clone(),
@@ -780,6 +778,7 @@ impl App {
             color_target_format,
             camera_control,
             overlay: overlay_renderer,
+            global_shader_macros: Default::default(),
             bin_rast_stroke_width: 1.0,
             current_frame: 0,
             oit_stroke_width: 0.0,
@@ -799,7 +798,6 @@ impl App {
             frame: 0,
             frame_image,
             temporal_average_alpha: 0.25,
-            engine,
             drawn_control_points,
             settings,
             debug_tile_line_overflow: false,
@@ -817,6 +815,7 @@ impl App {
             opacity_profile: vec4(1.0, 1.0, 0.7, 0.),
             opacity_response_curve: Default::default(),
             frame_start_time: Instant::now(),
+            pcache,
         };
         app
     }
@@ -865,7 +864,7 @@ impl App {
 
     pub fn key_input(&mut self, key: &winit::keyboard::Key, pressed: bool) {
         if *key == winit::keyboard::Key::Named(NamedKey::F5) && pressed {
-            self.reload_shaders();
+            self.pcache.clear();
         }
     }
 
@@ -917,7 +916,7 @@ impl App {
                     let mapped_pressure = self.settings.pressure_response_curve.sample(*pressure);
                     let mapped_opacity = self.opacity_response_curve.sample(*pressure);
                     anim.stroke_vertex_buffer.push(StrokeVertex {
-                        pos: point.as_vec3().to_array(),
+                        pos: point.as_vec3(),
                         s: *screen_space_arc_length as f32,
                         color: [(color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8, (color[3] * 255.) as u8],
                         width: (mapped_pressure * 255.) as u8,
@@ -1295,7 +1294,7 @@ impl App {
                     .map(|t| (t.name.clone(), t.value.clone()))
                     .collect();
                 info!("Will reload shaders on the next frame");
-                self.engine.set_global_defines(defines);
+                self.pcache.set_global_macro_definitions(defines);
             }
 
             if self.tweaks_changed {

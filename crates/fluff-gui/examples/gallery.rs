@@ -23,8 +23,8 @@ fn random_colored_square() -> impl IntoElementAny {
 }
 
 fn main() {
-    let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    //let subscriber = Registry::default().with(HierarchicalLayer::new(2).with_indent_amount(4));
+    //tracing::subscriber::set_global_default(subscriber).unwrap();
 
     application::run(async {
         let row = Frame::new()

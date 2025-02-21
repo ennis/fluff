@@ -3,7 +3,7 @@ use ash::vk;
 
 use crate::{
     Barrier, BufferRangeUntyped, BufferUntyped, ClearColorValue, CommandStream, Image, ImageCopyBuffer, ImageCopyView,
-    ImageSubresourceLayers, Point3D, Rect3D,
+    ImageSubresourceLayers, Rect3D,
 };
 
 impl CommandStream {

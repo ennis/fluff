@@ -10,7 +10,7 @@ use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::{emit_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::window::{place_popup, FocusChanged, PopupPlacement, WindowHandle};
+use kyute::window::{place_popup, FocusChanged, PopupCancelled, PopupPlacement, WindowHandle};
 use kyute::{select, text, AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions};
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -88,6 +88,7 @@ fn open_anchored_popup<T: Element>(
             background: STATIC_BACKGROUND,
             position: Some(position),
             no_focus: true,
+            undecorated_shadow: false,
         },
         content,
     );
@@ -755,7 +756,7 @@ const MENU_BAR_LEFT_PADDING: f64 = 4.0;
 const MENU_BAR_BASELINE: f64 = 16.0;
 const MENU_BAR_ITEM_PADDING: f64 = 4.0;
 
-impl<ID> MenuBar<ID> {
+impl<ID: 'static> MenuBar<ID> {
     fn hit_test_bar(&self, local_pos: Vec2) -> Option<usize> {
         for (i, entry) in self.entries.iter().enumerate() {
             if entry.bounds.contains(local_pos.to_point()) {
@@ -777,6 +778,17 @@ impl<ID> MenuBar<ID> {
             .set_focus()
             .open_around(bounds_screen, PopupPlacement::BottomThenUp);
         self.menu = Some(popup);
+        let weak_this = self.weak_this.clone();
+        let parent_window = cx.get_parent_window();
+
+        spawn(async move {
+            parent_window.popup_cancelled().await;
+            if let Some(this) = weak_this.upgrade() {
+                this.invoke(|this, _| {
+                    this.menu = None;
+                });
+            }
+        });
     }
 }
 

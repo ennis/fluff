@@ -37,6 +37,7 @@ fn load_shader_modules_in_directory(
                         for line in err.to_string().lines() {
                             println!("cargo:warning={line}");
                         }
+                        panic!("failed to load module: {err}");
                         continue;
                     }
                 };
@@ -81,7 +82,7 @@ pub fn compile_and_embed_shaders(
     output_directory: &Path,
     bindings_output: &mut dyn io::Write,
 ) {
-    let session = create_session(compiler::SHADER_PROFILE, include_search_paths);
+    let session = create_session(compiler::SHADER_PROFILE, include_search_paths, &[]);
     let modules = load_shader_modules_in_directory(&session, shaders_directory).unwrap();
 
     // now compile all entry points, and generate bindings
@@ -129,7 +130,7 @@ pub fn compile_and_embed_shaders(
 
             bindings.append_all(quote! {
                 pub const #rust_entry_point_name: EntryPoint<'static> = EntryPoint {
-                    stage: crate::Stage::#stage,
+                    stage: Stage::#stage,
                     name: Cow::Borrowed(#entry_point_name),
                     source_path: Some(Cow::Borrowed(concat!(env!("OUT_DIR"), "/", #output_file_name))),
                     code: Cow::Borrowed(include_bytes!(concat!(env!("OUT_DIR"), "/", #output_file_name))),
