@@ -114,7 +114,7 @@ pub struct EntryPoint<'a> {
     /// Path to the source code for the shader.
     pub source_path: Option<Cow<'a, str>>,
     /// SPIR-V code for the entry point.
-    pub code: Cow<'a, [u8]>,
+    pub code: Cow<'a, [u32]>,
     /// Size of the push constants in bytes.
     pub push_constants_size: usize,
     /// Size of the local workgroup in each dimension, if applicable to the shader type.

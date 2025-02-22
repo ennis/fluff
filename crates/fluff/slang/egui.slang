@@ -85,11 +85,11 @@ struct FragmentOutput
     [[vk::location(0)]] float4 color;
 };
 
+[[vk::binding(0,0)]] Texture2D tex;
+[[vk::binding(1,0)]] SamplerState sampler;
+
 [shader("fragment")]
-FragmentOutput eguiFragMain(
-    VertexOutput v,
-    uniform Texture2D tex,
-    uniform SamplerState sampler) {
+FragmentOutput eguiFragMain(VertexOutput v) {
     FragmentOutput o;
     o.color = v.color * tex.Sample(sampler, v.uv);   // texture(u_tex, v.uv);
     return o;

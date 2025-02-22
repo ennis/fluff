@@ -60,6 +60,14 @@ impl From<std::io::Error> for CompilationError {
 }
 
 
+pub(crate) fn convert_spirv_u8_to_u32(bytes: &[u8]) -> Vec<u32> {
+    assert!(bytes.len() % 4 == 0, "invalid SPIR-V code length");
+    bytes.chunks_exact(4).map(|chunk| {
+        let bytes: [u8;4] = chunk.try_into().unwrap();
+        u32::from_ne_bytes(bytes)
+    }).collect::<Vec<u32>>()
+}
+
 /// Compiles a shader module to SPIR-V.
 ///
 /// # Arguments
@@ -72,7 +80,7 @@ pub fn compile_shader_module(
     path: &Path,
     search_paths: &[&Path],
     macro_definitions: &[(&str, &str)],
-    entry_point_name: &str) -> Result<Vec<u8>, CompilationError>
+    entry_point_name: &str) -> Result<Vec<u32>, CompilationError>
 {
     let path = path.canonicalize()?;
     let session = create_session(SHADER_PROFILE, search_paths, macro_definitions);
@@ -85,5 +93,5 @@ pub fn compile_shader_module(
         session.create_composite_component_type(&[module.downcast().clone(), entry_point.downcast().clone()])?;
     let program = program.link()?;
     let code = program.entry_point_code(0, 0)?;
-    Ok(code.as_slice().to_vec())
+    Ok(convert_spirv_u8_to_u32(code.as_slice()))
 }

@@ -10,6 +10,7 @@ use std::{fs, io};
 mod compiler;
 
 use compiler::create_session;
+use crate::shaders::compiler::convert_spirv_u8_to_u32;
 
 /// Loads all slang shader modules in a directory.
 fn load_shader_modules_in_directory(
@@ -106,17 +107,24 @@ pub fn compile_and_embed_shaders(
         for i in 0..entry_point_count {
             let ep = module.entry_point_by_index(i).unwrap();
             let module_file_path = PathBuf::from(module.file_path());
-            let module_file_stem = module_file_path
-                .file_stem()
-                .unwrap_or(module_file_path.file_name().unwrap())
-                .to_str()
-                .expect("invalid unicode file name");
             let entry_point_name = ep.function_reflection().name();
+            let code = program.entry_point_code(i as i64, 0).unwrap();
 
             // write SPIR-V code of entry point to output directory
-            let code = program.entry_point_code(i as i64, 0).unwrap();
-            let output_file_name = format!("{module_file_stem}-{entry_point_name}.spv");
-            fs::write(&output_directory.join(&output_file_name), code.as_slice()).unwrap();
+            //let module_file_stem = module_file_path
+            //    .file_stem()
+            //    .unwrap_or(module_file_path.file_name().unwrap())
+            //    .to_str()
+            //    .expect("invalid unicode file name");
+            //let output_file_name = format!("{module_file_stem}-{entry_point_name}.spv");
+            //fs::write(&output_directory.join(&output_file_name), code.as_slice()).unwrap();
+
+            // FIXME: include_bytes will produce a `[u8]` slice but with no alignment guarantees
+            //        so we can't cast it to a `[u32]` slice. So in the meantime we write the
+            //        SPIR-V code directly to the file as a `[u32]` literal.
+            // Convert code to `Vec<u32>`
+            let code_u32 = convert_spirv_u8_to_u32(code.as_slice());
+            let code_u32_slice = code_u32.as_slice();
 
             // generate rust entry point info
             let rust_entry_point_name = format_ident!("{}", entry_point_name.to_shouty_snake_case());
@@ -127,13 +135,14 @@ pub fn compile_and_embed_shaders(
             let workgroup_size_x = workgroup_size_x as u32;
             let workgroup_size_y = workgroup_size_y as u32;
             let workgroup_size_z = workgroup_size_z as u32;
+            let module_file_path_str = module_file_path.to_str().unwrap();
 
             bindings.append_all(quote! {
                 pub const #rust_entry_point_name: EntryPoint<'static> = EntryPoint {
                     stage: Stage::#stage,
                     name: Cow::Borrowed(#entry_point_name),
-                    source_path: Some(Cow::Borrowed(concat!(env!("OUT_DIR"), "/", #output_file_name))),
-                    code: Cow::Borrowed(include_bytes!(concat!(env!("OUT_DIR"), "/", #output_file_name))),
+                    source_path: Some(Cow::Borrowed(#module_file_path_str)),
+                    code: Cow::Borrowed(&[#(#code_u32_slice),*]) ,//Cow::Borrowed(include_bytes!(concat!(env!("OUT_DIR"), "/", #output_file_name))),
                     push_constants_size: #push_constant_buffer_size,
                     workgroup_size: (#workgroup_size_x, #workgroup_size_y, #workgroup_size_z),
                 };

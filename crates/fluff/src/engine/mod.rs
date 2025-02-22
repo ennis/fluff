@@ -272,7 +272,7 @@ impl PipelineCache {
         self.compute_pipelines.clear();
     }
 
-    fn reload_shader<'a>(&mut self, name: &str, entry_point: &'a EntryPoint<'a>) -> Result<Cow<'a, [u8]>, Error> {
+    fn reload_shader<'a>(&mut self, name: &str, entry_point: &'a EntryPoint<'a>) -> Result<Cow<'a, [u32]>, Error> {
         #[cfg(feature = "shader-hot-reload")]
         {
             if let Some(ref path) = entry_point.source_path {

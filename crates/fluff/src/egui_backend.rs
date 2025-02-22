@@ -1,7 +1,14 @@
-use std::{collections::HashMap, mem, path::Path, slice};
+use std::collections::HashMap;
+use std::path::Path;
+use std::{mem, slice};
 
-use egui::{epaint::Primitive, ClippedPrimitive, ImageData};
-use graal::{prelude::*, util::CommandStreamExt, vk::{ImageAspectFlags, Offset3D}, ColorAttachment, ImageCopyView, RenderPassInfo, Size3D, Vertex, Barrier};
+use crate::shaders::{EGUI_FRAG_MAIN, EGUI_VERTEX_MAIN};
+use egui::epaint::Primitive;
+use egui::{ClippedPrimitive, ImageData};
+use graal::prelude::*;
+use graal::util::CommandStreamExt;
+use graal::vk::{ImageAspectFlags, Offset3D};
+use graal::{Barrier, ColorAttachment, ImageCopyView, RenderPassInfo, Size3D, Vertex};
 
 #[derive(Copy, Clone, Vertex)]
 #[repr(C)]
@@ -81,7 +88,10 @@ impl Renderer {
                     ImageData::Font(font_image) => {
                         format = Format::R8G8B8A8_SRGB;
                         data_buf = font_image.srgba_pixels(None).collect::<Vec<_>>();
-                        data = slice::from_raw_parts(data_buf.as_ptr() as *const u8, data_buf.len() * mem::size_of::<egui::Color32>());
+                        data = slice::from_raw_parts(
+                            data_buf.as_ptr() as *const u8,
+                            data_buf.len() * mem::size_of::<egui::Color32>(),
+                        );
                     }
                 }
             };
@@ -118,7 +128,11 @@ impl Renderer {
                 Texture { image, view, sampler }
             });
 
-            let (x, y) = if let Some([x, y]) = tex.pos { (x as i32, y as i32) } else { (0, 0) };
+            let (x, y) = if let Some([x, y]) = tex.pos {
+                (x as i32, y as i32)
+            } else {
+                (0, 0)
+            };
 
             cmd.upload_image_data(
                 ImageCopyView {
@@ -127,7 +141,11 @@ impl Renderer {
                     origin: Offset3D { x, y, z: 0 },
                     aspect: ImageAspectFlags::COLOR,
                 },
-                Size3D { width, height, depth: 1 },
+                Size3D {
+                    width,
+                    height,
+                    depth: 1,
+                },
                 data,
             );
 
@@ -162,9 +180,14 @@ impl Renderer {
         let mut mesh_index_buffers = Vec::with_capacity(meshes.len());
 
         for (_, mesh) in meshes.iter() {
-            let vertex_data: &[EguiVertex] = unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
-            let vertex_buffer = cmd.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
-            let index_buffer = cmd.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
+            let vertex_data: &[EguiVertex] =
+                unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
+            let vertex_buffer = cmd
+                .device()
+                .upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
+            let index_buffer = cmd
+                .device()
+                .upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
             vertex_buffer.set_name("egui vertex buffer");
             index_buffer.set_name("egui index buffer");
             mesh_vertex_buffers.push(vertex_buffer);
@@ -222,7 +245,12 @@ impl Renderer {
             enc.push_descriptors(
                 0,
                 &[
-                    (0, texture.view.texture_descriptor(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)),
+                    (
+                        0,
+                        texture
+                            .view
+                            .texture_descriptor(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                    ),
                     (1, self.sampler.descriptor()),
                 ],
             );
@@ -286,8 +314,8 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
         },
         pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
             vertex: ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.vert"))),
-                entry_point: "main",
+                code: ShaderCode::Spirv(EGUI_VERTEX_MAIN.code.as_ref()), //ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.vert"))),
+                entry_point: EGUI_VERTEX_MAIN.name.as_ref(),
             },
             tess_control: None,
             tess_evaluation: None,
@@ -302,8 +330,8 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
         depth_stencil: None,
         fragment: FragmentState {
             shader: ShaderEntryPoint {
-                code: ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.frag"))),
-                entry_point: "main",
+                code: ShaderCode::Spirv(EGUI_FRAG_MAIN.code.as_ref()), //ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.frag"))),
+                entry_point: EGUI_FRAG_MAIN.name.as_ref(),
             },
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
@@ -322,5 +350,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
         },
     };
 
-    device.create_graphics_pipeline(create_info).expect("failed to create pipeline")
+    device
+        .create_graphics_pipeline(create_info)
+        .expect("failed to create pipeline")
 }
