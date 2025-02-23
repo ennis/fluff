@@ -1026,6 +1026,9 @@ impl App {
         let height = image.height();
 
         self.setup(cmd, self.frame_image.clone(), width, height);
+        
+        cmd.clear_image(&self.frame_image, ClearColorValue::Float([0.0, 0.0, 0.0, 1.0]));
+        cmd.clear_depth_image(&self.depth_buffer, 1.0);
 
         let color_target_view = self.frame_image.create_top_level_view();
         self.draw_axes();

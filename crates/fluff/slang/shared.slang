@@ -109,9 +109,10 @@ struct DrawCurvesPushConstants {
     float strokeBleedExp;
     ComputeTestParams* ptr;
 };
-
+/*
 struct PushConstants {
     float4x4 matrix;
     float width;
     float* pointer;
 };
+*/

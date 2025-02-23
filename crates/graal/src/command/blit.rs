@@ -42,6 +42,32 @@ impl CommandStream {
             );
         }
     }
+    
+    pub fn clear_depth_image(&mut self, image: &Image, depth: f32) {
+        self.reference_resource(image);
+        self.barrier(Barrier::new().transfer_write_image(image));
+
+        let cb = self.get_or_create_command_buffer();
+        unsafe {
+            // SAFETY: FFI call and parameters are valid
+            self.device.cmd_clear_depth_stencil_image(
+                cb,
+                image.handle,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &vk::ClearDepthStencilValue {
+                    depth,
+                    stencil: 0,
+                },
+                &[vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    base_mip_level: 0,
+                    level_count: vk::REMAINING_MIP_LEVELS,
+                    base_array_layer: 0,
+                    layer_count: vk::REMAINING_ARRAY_LAYERS,
+                }],
+            );
+        }
+    }
 
     pub fn copy_image_to_image(
         &mut self,

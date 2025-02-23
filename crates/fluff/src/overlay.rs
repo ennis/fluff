@@ -1,11 +1,14 @@
 //! Scene overlay drawing utilities
-use std::{f32::consts::TAU, mem, path::Path};
-
-use glam::{DVec2, DVec3, Mat4, vec3, Vec3};
-use graal::{ColorAttachment, DepthStencilAttachment, prelude::*, RenderPassInfo};
-use graal::vk::{AttachmentLoadOp, AttachmentStoreOp};
+use std::f32::consts::TAU;
+use std::mem;
+use std::path::Path;
 
 use crate::camera_control::Camera;
+use crate::shaders::{OVERLAY_LINES_FRAGMENT_MAIN, OVERLAY_LINES_VERTEX_MAIN, OVERLAY_POLYGONS_FRAGMENT_MAIN, OVERLAY_POLYGONS_VERTEX_MAIN};
+use glam::{vec3, DVec2, DVec3, Mat4, Vec3};
+use graal::prelude::*;
+use graal::vk::{AttachmentLoadOp, AttachmentStoreOp};
+use graal::{ColorAttachment, DepthStencilAttachment, RenderPassInfo};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -96,7 +99,6 @@ impl OverlayVertex {
     }
 }
 
-
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct OverlayPolygonsPushConstants {
@@ -104,15 +106,22 @@ struct OverlayPolygonsPushConstants {
     width: f32,
 }
 
+/*
+float4x4 viewProjectionMatrix;
+uint startVertex;
+uint vertexCount;
+float lineWidth;
+float filterWidth;
+float2 screenSize;*/
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct OverlayLinesPushConstants {
     matrix: Mat4,
+    start_vertex: u32,
     vertex_count: u32,
-    width: f32,
+    line_width: f32,
     filter_width: f32,
-    screen_width: f32,
-    screen_height: f32,
+    screen_size: [f32; 2],
 }
 
 struct Draw {
@@ -132,7 +141,6 @@ enum DrawKind {
         vertex_count: u32,
     },
 }
-
 
 const LINE_VERTEX_FLAG_FIRST: u32 = 1;
 const LINE_VERTEX_FLAG_LAST: u32 = 2;
@@ -187,9 +195,15 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
                 },
             ],
         },
-        pre_rasterization_shaders: PreRasterizationShaders::vertex_shader_from_source_file(Path::new(
-            "crates/fluff/shaders/overlay_polygons.vert",
-        )),
+        pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
+            vertex: ShaderEntryPoint {
+                code: graal::ShaderCode::Spirv(OVERLAY_POLYGONS_VERTEX_MAIN.code.as_ref()),
+                entry_point: OVERLAY_POLYGONS_VERTEX_MAIN.name.as_ref(),
+            },
+            tess_control: None,
+            tess_evaluation: None,
+            geometry: None,
+        }, //PreRasterizationShaders::vertex_shader_from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.vert", )),
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
@@ -203,7 +217,10 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             stencil_state: StencilState::default(),
         }),
         fragment: FragmentState {
-            shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.frag")),
+            shader: ShaderEntryPoint {
+                code: graal::ShaderCode::Spirv(OVERLAY_POLYGONS_FRAGMENT_MAIN.code.as_ref()),
+                entry_point: OVERLAY_POLYGONS_FRAGMENT_MAIN.name.as_ref(),
+            }, //ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.frag")),
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
                 format: target_color_format,
@@ -214,7 +231,9 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
         },
     };
 
-    let polygon_pipeline = device.create_graphics_pipeline(create_info).expect("failed to create pipeline");
+    let polygon_pipeline = device
+        .create_graphics_pipeline(create_info)
+        .expect("failed to create pipeline");
 
     // Line pipeline
     let descriptor_set_layout = device.create_push_descriptor_set_layout(&[
@@ -222,25 +241,28 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             binding: 0,
             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
             descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::TASK_EXT,
+            stage_flags: vk::ShaderStageFlags::VERTEX,
             ..Default::default()
         },
-        /*vk::DescriptorSetLayoutBinding {
-            binding: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::TASK_EXT,
-            ..Default::default()
-        },*/
     ]);
 
     let create_info = GraphicsPipelineCreateInfo {
         set_layouts: &[descriptor_set_layout.clone()],
         push_constants_size: mem::size_of::<OverlayLinesPushConstants>(),
-        vertex_input: VertexInputState::default(),
-        pre_rasterization_shaders: PreRasterizationShaders::mesh_shading_from_source_file(Path::new(
-            "crates/fluff/shaders/overlay_lines.glsl",
-        )),
+        vertex_input: VertexInputState {
+            topology: vk::PrimitiveTopology::TRIANGLE_STRIP,
+            buffers: &[],
+            attributes: &[],
+        },
+        pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
+            vertex: ShaderEntryPoint {
+                code: graal::ShaderCode::Spirv(OVERLAY_LINES_VERTEX_MAIN.code.as_ref()),
+                entry_point: OVERLAY_LINES_VERTEX_MAIN.name.as_ref(),
+            },
+            tess_control: None,
+            tess_evaluation: None,
+            geometry: None,
+        }, //PreRasterizationShaders::mesh_shading_from_source_file(Path::new("crates/fluff/shaders/overlay_lines.glsl", )),
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
@@ -255,7 +277,10 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             stencil_state: StencilState::default(),
         }),
         fragment: FragmentState {
-            shader: ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_lines.glsl")),
+            shader: ShaderEntryPoint {
+                code: graal::ShaderCode::Spirv(OVERLAY_LINES_FRAGMENT_MAIN.code.as_ref()),
+                entry_point: OVERLAY_LINES_FRAGMENT_MAIN.name.as_ref(),
+            },
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
                 format: target_color_format,
@@ -266,7 +291,9 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
         },
     };
 
-    let line_pipeline = device.create_graphics_pipeline(create_info).expect("failed to create pipeline");
+    let line_pipeline = device
+        .create_graphics_pipeline(create_info)
+        .expect("failed to create pipeline");
 
     Pipelines {
         polygon_pipeline,
@@ -283,6 +310,11 @@ pub struct OverlayRenderParams<'a> {
     pub filter_width: f32,
 }
 
+struct Polyline {
+    start_vertex: u32,
+    vertex_count: u32,
+}
+
 pub struct OverlayRenderer {
     polygon_pipeline: GraphicsPipeline,
     line_pipeline: GraphicsPipeline,
@@ -293,7 +325,7 @@ pub struct OverlayRenderer {
     indices: Vec<u16>,
     draws: Vec<Draw>,
     line_vertices: Vec<LineVertex>,
-    //polylines: Vec<Polyline>,
+    polylines: Vec<Polyline>,
 }
 
 impl OverlayRenderer {
@@ -318,11 +350,12 @@ impl OverlayRenderer {
             indices: vec![],
             draws: vec![],
             line_vertices: vec![],
+            polylines: vec![],
         }
     }
 
     pub fn line(&mut self, a: DVec3, b: DVec3, a_color: [u8; 4], b_color: [u8; 4]) {
-        //let start_vertex = self.line_vertices.len() as u32;
+        let start_vertex = self.line_vertices.len() as u32;
         self.line_vertices.push(LineVertex {
             position: a.as_vec3().to_array(),
             color: a_color,
@@ -332,6 +365,10 @@ impl OverlayRenderer {
             position: b.as_vec3().to_array(),
             color: b_color,
             flags: LINE_VERTEX_FLAG_LAST,
+        });
+        self.polylines.push(Polyline {
+            start_vertex,
+            vertex_count: 2,
         });
     }
 
@@ -343,6 +380,7 @@ impl OverlayRenderer {
     }
 
     pub fn screen_polyline(&mut self, camera: &Camera, vertices: &[DVec2], color: [u8; 4]) {
+        let start_vertex = self.line_vertices.len() as u32;
         for (i, &v) in vertices.iter().enumerate() {
             let p = camera.screen_to_world(v.extend(0.0));
             self.line_vertices.push(LineVertex {
@@ -357,12 +395,16 @@ impl OverlayRenderer {
                 },
             });
         }
+        self.polylines.push(Polyline {
+            start_vertex,
+            vertex_count: vertices.len() as u32,
+        });
     }
 
     pub fn cubic_bezier(&mut self, segment: &CubicBezierSegment, color: [u8; 4]) {
         let mut points = vec![];
         segment.flatten(&mut points, 0.0001);
-        //let start_vertex = self.line_vertices.len() as u32;
+        let start_vertex = self.line_vertices.len() as u32;
         for (i, p) in points.iter().enumerate() {
             self.line_vertices.push(LineVertex {
                 position: p.to_array(),
@@ -376,11 +418,10 @@ impl OverlayRenderer {
                 },
             });
         }
-        /*
         self.polylines.push(Polyline {
             start_vertex,
             vertex_count: points.len() as u32,
-        });*/
+        });
     }
 
     pub fn cylinder(&mut self, a: Vec3, b: Vec3, diameter: f32, a_color: [u8; 4], b_color: [u8; 4]) {
@@ -465,10 +506,7 @@ impl OverlayRenderer {
         })
     }
 
-    pub fn render(&mut self,
-                  cmd: &mut CommandStream,
-                  params: OverlayRenderParams)
-    {
+    pub fn render(&mut self, cmd: &mut CommandStream, params: OverlayRenderParams) {
         if self.draws.is_empty() {
             return;
         }
@@ -488,9 +526,13 @@ impl OverlayRenderer {
         let width = params.color_target.width();
         let height = params.color_target.height();
 
-        let vertex_buffer = encoder.device().upload_array_buffer(BufferUsage::VERTEX_BUFFER, &self.vertices);
+        let vertex_buffer = encoder
+            .device()
+            .upload_array_buffer(BufferUsage::VERTEX_BUFFER, &self.vertices);
         vertex_buffer.set_name("overlay vertex buffer");
-        let index_buffer = encoder.device().upload_array_buffer(BufferUsage::INDEX_BUFFER, &self.indices);
+        let index_buffer = encoder
+            .device()
+            .upload_array_buffer(BufferUsage::INDEX_BUFFER, &self.indices);
         index_buffer.set_name("overlay index buffer");
 
         encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
@@ -502,25 +544,21 @@ impl OverlayRenderer {
                 .device()
                 .upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.line_vertices);
             line_vertex_buffer.set_name("overlay line vertex buffer");
-            //let line_buffer = encoder.device().upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.polylines);
-            //line_buffer.set_name("overlay line buffer");
 
             encoder.bind_graphics_pipeline(&self.line_pipeline);
-            encoder.push_constants(&OverlayLinesPushConstants {
-                matrix: params.camera.view_projection(),
-                width: params.line_width,
-                filter_width: params.filter_width,
-                vertex_count: self.line_vertices.len() as u32,
-                screen_width: width as f32,
-                screen_height: height as f32,
-            });
-            encoder.push_descriptors(
-                0,
-                &[
-                    (0, line_vertex_buffer.slice(..).storage_descriptor()),
-                ],
-            );
-            encoder.draw_mesh_tasks(self.line_vertices.len().div_ceil(32) as u32, 1, 1);
+            encoder.push_descriptors(0, &[(0, line_vertex_buffer.slice(..).storage_descriptor())]);
+            encoder.set_primitive_topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
+            for polyline in self.polylines.iter() {
+                encoder.push_constants(&OverlayLinesPushConstants {
+                    matrix: params.camera.view_projection(),
+                    line_width: params.line_width,
+                    filter_width: params.filter_width,
+                    start_vertex: polyline.start_vertex,
+                    vertex_count: polyline.vertex_count,
+                    screen_size: [width as f32, height as f32],
+                });
+                encoder.draw(0..polyline.vertex_count * 2, 0..1);
+            }
         }
 
         // Draw polygons
@@ -560,6 +598,6 @@ impl OverlayRenderer {
         self.indices.clear();
         self.draws.clear();
         self.line_vertices.clear();
-        //self.polylines.clear();
+        self.polylines.clear();
     }
 }

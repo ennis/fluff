@@ -1,6 +1,4 @@
-import "bindless.slang";
 import "shared.slang";
-
 
 struct Vertex {
     [[vk::location(0)]] float3 pos;
@@ -17,8 +15,13 @@ struct FragmentOutput
     [[vk::location(0)]] float4 color;
 };
 
+struct PushConstants {
+    float4x4 matrix;
+    float width;
+};
+
 [shader("vertex")]
-VertexOutput vtxMain(Vertex v, uniform PushConstants u) {
+VertexOutput overlayPolygonsVertexMain(Vertex v, uniform PushConstants u) {
     VertexOutput o;
     o.pos = mul(u.matrix, float4(v.pos, 1.0));
     o.color = v.col;
@@ -26,8 +29,8 @@ VertexOutput vtxMain(Vertex v, uniform PushConstants u) {
 }
 
 [shader("fragment")]
-FragmentOutput dragCurvesFragMain(VertexOutput v, uniform DrawCurvesPushConstants u) {
+FragmentOutput overlayPolygonsFragmentMain(VertexOutput v, uniform PushConstants u) {
     FragmentOutput o;
-    o.color = v.color + u.brushTextures[0].Sample(u.brushTextureSampler, v.pos.xy);
+    o.color = v.color;
     return o;
 }
