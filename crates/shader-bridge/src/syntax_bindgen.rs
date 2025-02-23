@@ -16,19 +16,17 @@
 //! the value of constants (`static const`s) in shaders, so this is a temporary solution
 //! until this is possible.
 
-use std::{env, fmt, fs, io};
-use std::fmt::Write;
+use heck::{ToShoutySnakeCase, ToSnakeCase};
 use logos::{Logos, Span};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, TokenStreamExt};
 use std::iter::Peekable;
 use std::ops::Range;
 use std::panic::Location;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
-use heck::{ToShoutySnakeCase, ToSnakeCase};
+use std::{fs, io};
 use Token::*;
-use crate::rustfmt_file;
 
 /// Slang source file tokens.
 ///

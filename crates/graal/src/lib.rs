@@ -1,4 +1,3 @@
-//mod bindless;
 mod command;
 mod device;
 mod instance;
@@ -12,10 +11,8 @@ pub mod util;
 use std::{
     borrow::Cow,
     marker::PhantomData,
-    mem,
     ops::{Bound, RangeBounds},
     os::raw::c_void,
-    path::Path,
     ptr::NonNull,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -53,7 +50,7 @@ pub mod prelude {
         DepthStencilState, Device, Format, FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, Image,
         ImageCreateInfo, ImageType, ImageUsage, ImageView, MemoryLocation, PipelineBindPoint, PipelineLayoutDescriptor,
         Point2D, PreRasterizationShaders, RasterizationState, Rect2D, RenderEncoder, Sampler, SamplerCreateInfo,
-        ShaderCode, ShaderEntryPoint, ShaderSource, Size2D, StencilState, Vertex, VertexBufferDescriptor,
+        ShaderCode, ShaderSource, Size2D, StencilState, Vertex, VertexBufferDescriptor, ShaderDescriptor,
         VertexBufferLayoutDescription, VertexInputAttributeDescription, VertexInputState,
     };
 }
@@ -83,7 +80,7 @@ pub struct DeviceAddress<T: ?Sized + 'static> {
 impl<T: 'static> DeviceAddress<[T]> {
     pub fn offset(self, offset: usize) -> Self {
         DeviceAddress {
-            address: self.address + (offset * mem::size_of::<T>()) as u64,
+            address: self.address + (offset * size_of::<T>()) as u64,
             _phantom: PhantomData,
         }
     }
@@ -894,7 +891,7 @@ impl<T: Copy + 'static> Buffer<T> {
 impl<T> Buffer<[T]> {
     /// Returns the number of elements in the buffer.
     pub fn len(&self) -> usize {
-        (self.byte_size() / mem::size_of::<T>() as u64) as usize
+        (self.byte_size() / size_of::<T>() as u64) as usize
     }
 
     /// If the buffer is mapped in host memory, returns a pointer to the mapped memory.
@@ -911,7 +908,7 @@ impl<T> Buffer<[T]> {
 
     /// Element range.
     pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferRange<[T]> {
-        let elem_size = mem::size_of::<T>();
+        let elem_size = size_of::<T>();
         let start = match range.start_bound() {
             Bound::Unbounded => 0,
             Bound::Included(start) => *start,
@@ -986,7 +983,7 @@ impl<T: ?Sized> Clone for BufferRange<T> {
 
 impl<T> BufferRange<[T]> {
     pub fn len(&self) -> usize {
-        (self.untyped.size / mem::size_of::<T>() as u64) as usize
+        (self.untyped.size / size_of::<T>() as u64) as usize
     }
 
     pub fn storage_descriptor(&self) -> Descriptor {
@@ -1130,46 +1127,51 @@ pub enum ShaderCode<'a> {
     Spirv(&'a [u32]),
 }
 
-/// Shader code + entry point
+/// Describes a shader.
+///
+/// This type references the SPIR-V code of the shader, as well as the entry point function in the shader
+/// and metadata.
 #[derive(Debug, Clone, Copy)]
-pub struct ShaderEntryPoint<'a> {
-    pub code: ShaderCode<'a>,
+pub struct ShaderDescriptor<'a> {
+    /// Shader stage.
+    pub stage: ShaderStage,
+    /// SPIR-V code.
+    pub code: &'a [u32],
+    /// Name of the entry point function in SPIR-V code.
     pub entry_point: &'a str,
-}
-
-impl<'a> ShaderEntryPoint<'a> {
-    pub fn from_source_file(file_path: &'a Path) -> ShaderEntryPoint<'a> {
-        Self {
-            code: ShaderCode::Source(ShaderSource::File(file_path)),
-            entry_point: "main",
-        }
-    }
-
-    pub fn from_spirv(spirv: &'a [u32], entry_point: &'a str) -> ShaderEntryPoint<'a> {
-        Self {
-            code: ShaderCode::Spirv(spirv),
-            entry_point,
-        }
-    }
+    /// Size of the push constants in bytes.
+    pub push_constants_size: usize,
+    /// Optional path to the source file of the shader.
+    ///
+    /// Used for diagnostic purposes and as a convenience for hot-reloading shaders.
+    pub source_path: Option<&'a str>,
+    /// Size of the local workgroup in each dimension, if applicable to the shader type.
+    ///
+    /// This is valid for compute, task, and mesh shaders.
+    pub workgroup_size: (u32, u32, u32),
 }
 
 /// Specifies the shaders of a graphics pipeline.
 #[derive(Copy, Clone, Debug)]
 pub enum PreRasterizationShaders<'a> {
     /// Shaders of the primitive shading pipeline (the classic vertex, tessellation, geometry and fragment shaders).
+    ///
+    /// NOTE: tessellation & geometry pipelines are unlikely to be used anytime soon,
+    ///       so we don't bother with them (this reduces the maintenance burden).
     PrimitiveShading {
-        vertex: ShaderEntryPoint<'a>,
-        tess_control: Option<ShaderEntryPoint<'a>>,
-        tess_evaluation: Option<ShaderEntryPoint<'a>>,
-        geometry: Option<ShaderEntryPoint<'a>>,
+        vertex: ShaderDescriptor<'a>,
+        //tess_control: Option<ShaderDescriptor<'a>>,
+        //tess_evaluation: Option<ShaderDescriptor<'a>>,
+        //geometry: Option<ShaderDescriptor<'a>>,
     },
     /// Shaders of the mesh shading pipeline (the new mesh and task shaders).
     MeshShading {
-        task: Option<ShaderEntryPoint<'a>>,
-        mesh: ShaderEntryPoint<'a>,
+        task: Option<ShaderDescriptor<'a>>,
+        mesh: ShaderDescriptor<'a>,
     },
 }
 
+/*
 impl<'a> PreRasterizationShaders<'a> {
     /// Creates a new `PreRasterizationShaders` object using mesh shading from the specified source file path.
     ///
@@ -1202,7 +1204,7 @@ impl<'a> PreRasterizationShaders<'a> {
             geometry: None,
         }
     }
-}
+}*/
 
 #[derive(Copy, Clone, Debug)]
 pub struct GraphicsPipelineCreateInfo<'a> {
@@ -1210,6 +1212,7 @@ pub struct GraphicsPipelineCreateInfo<'a> {
     pub set_layouts: &'a [DescriptorSetLayout],
     // None of the relevant drivers on desktop seem to care about precise push constant ranges,
     // so we just store the total size of push constants.
+    // FIXME: this is redundant with the information in ShaderDescriptors
     pub push_constants_size: usize,
     pub vertex_input: VertexInputState<'a>,
     pub pre_rasterization_shaders: PreRasterizationShaders<'a>,
@@ -1222,8 +1225,10 @@ pub struct GraphicsPipelineCreateInfo<'a> {
 pub struct ComputePipelineCreateInfo<'a> {
     /// If left empty, use the universal descriptor set layout.
     pub set_layouts: &'a [DescriptorSetLayout],
+    /// FIXME: this is redundant with the information in `compute_shader`
     pub push_constants_size: usize,
-    pub compute_shader: ShaderEntryPoint<'a>,
+    /// Compute shader.
+    pub shader: ShaderDescriptor<'a>,
 }
 
 /// Computes the number of mip levels for a 2D image of the given size.
@@ -1279,52 +1284,52 @@ pub enum FormatNumericType {
 
 pub fn format_numeric_type(fmt: vk::Format) -> FormatNumericType {
     match fmt {
-        vk::Format::R8_UINT
-        | vk::Format::R8G8_UINT
-        | vk::Format::R8G8B8_UINT
-        | vk::Format::R8G8B8A8_UINT
-        | vk::Format::R16_UINT
-        | vk::Format::R16G16_UINT
-        | vk::Format::R16G16B16_UINT
-        | vk::Format::R16G16B16A16_UINT
-        | vk::Format::R32_UINT
-        | vk::Format::R32G32_UINT
-        | vk::Format::R32G32B32_UINT
-        | vk::Format::R32G32B32A32_UINT
-        | vk::Format::R64_UINT
-        | vk::Format::R64G64_UINT
-        | vk::Format::R64G64B64_UINT
-        | vk::Format::R64G64B64A64_UINT => FormatNumericType::UInt,
+        Format::R8_UINT
+        | Format::R8G8_UINT
+        | Format::R8G8B8_UINT
+        | Format::R8G8B8A8_UINT
+        | Format::R16_UINT
+        | Format::R16G16_UINT
+        | Format::R16G16B16_UINT
+        | Format::R16G16B16A16_UINT
+        | Format::R32_UINT
+        | Format::R32G32_UINT
+        | Format::R32G32B32_UINT
+        | Format::R32G32B32A32_UINT
+        | Format::R64_UINT
+        | Format::R64G64_UINT
+        | Format::R64G64B64_UINT
+        | Format::R64G64B64A64_UINT => FormatNumericType::UInt,
 
-        vk::Format::R8_SINT
-        | vk::Format::R8G8_SINT
-        | vk::Format::R8G8B8_SINT
-        | vk::Format::R8G8B8A8_SINT
-        | vk::Format::R16_SINT
-        | vk::Format::R16G16_SINT
-        | vk::Format::R16G16B16_SINT
-        | vk::Format::R16G16B16A16_SINT
-        | vk::Format::R32_SINT
-        | vk::Format::R32G32_SINT
-        | vk::Format::R32G32B32_SINT
-        | vk::Format::R32G32B32A32_SINT
-        | vk::Format::R64_SINT
-        | vk::Format::R64G64_SINT
-        | vk::Format::R64G64B64_SINT
-        | vk::Format::R64G64B64A64_SINT => FormatNumericType::SInt,
+        Format::R8_SINT
+        | Format::R8G8_SINT
+        | Format::R8G8B8_SINT
+        | Format::R8G8B8A8_SINT
+        | Format::R16_SINT
+        | Format::R16G16_SINT
+        | Format::R16G16B16_SINT
+        | Format::R16G16B16A16_SINT
+        | Format::R32_SINT
+        | Format::R32G32_SINT
+        | Format::R32G32B32_SINT
+        | Format::R32G32B32A32_SINT
+        | Format::R64_SINT
+        | Format::R64G64_SINT
+        | Format::R64G64B64_SINT
+        | Format::R64G64B64A64_SINT => FormatNumericType::SInt,
 
-        vk::Format::R16_SFLOAT
-        | vk::Format::R16G16_SFLOAT
-        | vk::Format::R16G16B16_SFLOAT
-        | vk::Format::R16G16B16A16_SFLOAT
-        | vk::Format::R32_SFLOAT
-        | vk::Format::R32G32_SFLOAT
-        | vk::Format::R32G32B32_SFLOAT
-        | vk::Format::R32G32B32A32_SFLOAT
-        | vk::Format::R64_SFLOAT
-        | vk::Format::R64G64_SFLOAT
-        | vk::Format::R64G64B64_SFLOAT
-        | vk::Format::R64G64B64A64_SFLOAT => FormatNumericType::Float,
+        Format::R16_SFLOAT
+        | Format::R16G16_SFLOAT
+        | Format::R16G16B16_SFLOAT
+        | Format::R16G16B16A16_SFLOAT
+        | Format::R32_SFLOAT
+        | Format::R32G32_SFLOAT
+        | Format::R32G32B32_SFLOAT
+        | Format::R32G32B32A32_SFLOAT
+        | Format::R64_SFLOAT
+        | Format::R64G64_SFLOAT
+        | Format::R64G64B64_SFLOAT
+        | Format::R64G64B64A64_SFLOAT => FormatNumericType::Float,
 
         // TODO
         _ => FormatNumericType::Float,
@@ -1462,7 +1467,7 @@ pub const fn append_attributes<const N: usize>(
     const NULL_ATTR: VertexInputAttributeDescription = VertexInputAttributeDescription {
         location: 0,
         binding: 0,
-        format: vk::Format::UNDEFINED,
+        format: Format::UNDEFINED,
         offset: 0,
     };
     let mut result = [NULL_ATTR; N];

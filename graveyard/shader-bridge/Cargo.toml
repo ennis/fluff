@@ -5,8 +5,17 @@ edition = "2021"
 
 [dependencies]
 quote = "1.0"
+shaderc = "0.8"
+spirq = "1.2"
+anyhow = "1.0"
+tracing = "0.1"
 syn = { version = "2.0", features = ["full"] }
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 heck = "0.5"
 slang = { git = "https://github.com/ennis/slang-rs.git" }
+thiserror = "1.0"
 logos = "0.12"
+
+[dev-dependencies]
+env_logger = "0.10"
+testdir = "0.9"

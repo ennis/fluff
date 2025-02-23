@@ -313,13 +313,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
             ],
         },
         pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
-            vertex: ShaderEntryPoint {
-                code: ShaderCode::Spirv(EGUI_VERTEX_MAIN.code.as_ref()), //ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.vert"))),
-                entry_point: EGUI_VERTEX_MAIN.name.as_ref(),
-            },
-            tess_control: None,
-            tess_evaluation: None,
-            geometry: None,
+            vertex: EGUI_VERTEX_MAIN,
         },
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
@@ -329,10 +323,7 @@ fn create_pipeline(device: &Device) -> GraphicsPipeline {
         },
         depth_stencil: None,
         fragment: FragmentState {
-            shader: ShaderEntryPoint {
-                code: ShaderCode::Spirv(EGUI_FRAG_MAIN.code.as_ref()), //ShaderCode::Source(ShaderSource::File(Path::new("crates/fluff/shaders/egui.frag"))),
-                entry_point: EGUI_FRAG_MAIN.name.as_ref(),
-            },
+            shader: EGUI_FRAG_MAIN,
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
                 format: Format::R16G16B16A16_SFLOAT,

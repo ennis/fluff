@@ -1,39 +1,36 @@
 //! Abstractions over a vulkan device & queues.
 mod bindless;
 
-use std::{
-    borrow::Cow,
-    collections::{HashMap, VecDeque},
-    ffi::{c_char, c_void, CString},
-    fmt,
-    ops::Deref,
-    ptr,
-    rc::{Rc, Weak},
-    sync::{Arc, Mutex},
-};
+use std::collections::{HashMap, VecDeque};
+use std::ffi::{c_void, CString};
+use std::ops::Deref;
+use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
+use std::{fmt, ptr};
 
+use crate::instance::{vk_ext_debug_utils, vk_khr_surface};
 use crate::{
-    compile_shader, get_vulkan_entry, get_vulkan_instance,
-    instance::{vk_ext_debug_utils, vk_khr_surface},
-    is_depth_and_stencil_format, platform_impl, BufferInner, BufferUntyped, BufferUsage, CommandPool, CommandStream,
-    ComputePipeline, ComputePipelineCreateInfo, DescriptorSetLayout, Error, GraphicsPipeline,
-    GraphicsPipelineCreateInfo, Image, ImageCreateInfo, ImageInner, ImageType, ImageUsage, ImageView, ImageViewInfo,
-    ImageViewInner, MemoryAccess, MemoryLocation, PreRasterizationShaders, Sampler, SamplerCreateInfo, ShaderCode,
-    ShaderStage, Size3D, Swapchain, SUBGROUP_SIZE,
+    get_vulkan_entry, get_vulkan_instance, is_depth_and_stencil_format, platform_impl, BufferInner, BufferUntyped,
+    BufferUsage, CommandPool, CommandStream, ComputePipeline, ComputePipelineCreateInfo, DescriptorSetLayout, Error,
+    GraphicsPipeline, GraphicsPipelineCreateInfo, Image, ImageCreateInfo, ImageInner, ImageType, ImageUsage, ImageView,
+    ImageViewInfo, ImageViewInner, MemoryAccess, MemoryLocation, PreRasterizationShaders, Sampler, SamplerCreateInfo,
+    Size3D, Swapchain, SUBGROUP_SIZE,
 };
 
 use crate::device::bindless::BindlessDescriptorTable;
 use ash::vk;
 use gpu_allocator::vulkan::{AllocationCreateDesc, AllocationScheme};
 use slotmap::{SecondaryMap, SlotMap};
-use std::{ffi::CStr, mem, sync::atomic::AtomicU64};
+use std::ffi::CStr;
+use std::mem;
+use std::sync::atomic::AtomicU64;
 use tracing::{debug, error};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub(crate) const BINDLESS_TEXTURE_SET: u32 = 0;
-pub(crate) const BINDLESS_STORAGE_IMAGE_SET: u32 = 1;
-pub(crate) const BINDLESS_SAMPLER_SET: u32 = 2;
+//pub(crate) const BINDLESS_TEXTURE_SET: u32 = 0;
+//pub(crate) const BINDLESS_STORAGE_IMAGE_SET: u32 = 1;
+//pub(crate) const BINDLESS_SAMPLER_SET: u32 = 2;
 
 /// Wrapper around a vulkan device, associated queues and tracked resources.
 #[derive(Clone)]
@@ -727,6 +724,52 @@ impl Device {
     }
 }
 
+struct ShaderModuleGuard {
+    device: Device,
+    module: vk::ShaderModule,
+}
+
+impl Drop for ShaderModuleGuard {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.inner.device.destroy_shader_module(self.module, None);
+        }
+    }
+}
+
+/// Helper to create PipelineShaderStageCreateInfo
+fn create_stage(
+    device: &Device,
+    p_next: *const c_void,
+    stage: vk::ShaderStageFlags,
+    code: &[u32],
+    entry_point: &CStr,
+) -> Result<(vk::PipelineShaderStageCreateInfo, ShaderModuleGuard), Error> {
+    let create_info = vk::ShaderModuleCreateInfo {
+        flags: Default::default(),
+        code_size: code.len() * 4,
+        p_code: code.as_ptr(),
+        ..Default::default()
+    };
+    let module = unsafe { device.inner.device.create_shader_module(&create_info, None)? };
+    let stage_create_info = vk::PipelineShaderStageCreateInfo {
+        p_next,
+        flags: Default::default(),
+        stage,
+        module,
+        p_name: entry_point.as_ptr(),
+        p_specialization_info: ptr::null(),
+        ..Default::default()
+    };
+    Ok((
+        stage_create_info,
+        ShaderModuleGuard {
+            device: device.clone(),
+            module,
+        },
+    ))
+}
+
 impl Device {
     pub fn weak(&self) -> WeakDevice {
         WeakDevice {
@@ -1335,34 +1378,6 @@ impl Device {
         }
     }
 
-    /// Creates a shader module.
-    fn create_shader_module(
-        &self,
-        kind: ShaderStage,
-        code: &ShaderCode,
-        entry_point: &str,
-    ) -> Result<vk::ShaderModule, Error> {
-        let code = match code {
-            ShaderCode::Source(source) => Cow::Owned(compile_shader(
-                kind,
-                *source,
-                entry_point,
-                "",
-                shaderc::CompileOptions::new().unwrap(),
-            )?),
-            ShaderCode::Spirv(spirv) => Cow::Borrowed(*spirv),
-        };
-
-        let create_info = vk::ShaderModuleCreateInfo {
-            flags: Default::default(),
-            code_size: code.len() * 4,
-            p_code: code.as_ptr(),
-            ..Default::default()
-        };
-        let module = unsafe { self.inner.device.create_shader_module(&create_info, None)? };
-        Ok(module)
-    }
-
     /// FIXME: this should be a constructor of `DescriptorSetLayout`, because now we have two
     /// functions with very similar names (`create_descriptor_set_layout` and `create_descriptor_set_layout_from_handle`)
     /// that have totally different semantics (one returns a raw vulkan handle, the other returns a RAII wrapper `DescriptorSetLayout`).
@@ -1456,13 +1471,7 @@ impl Device {
             create_info.push_constants_size,
         );
 
-        let bindless = create_info.set_layouts.is_empty();
-
-        let compute_shader = self.create_shader_module(
-            ShaderStage::Compute,
-            &create_info.compute_shader.code,
-            create_info.compute_shader.entry_point,
-        )?;
+        let is_bindless = create_info.set_layouts.is_empty();
 
         let req_subgroup_size = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo {
             required_subgroup_size: SUBGROUP_SIZE,
@@ -1470,17 +1479,18 @@ impl Device {
             ..Default::default()
         };
 
+        let entry_point = CString::new(create_info.shader.entry_point).unwrap();
+        let (compute_stage, _module) = create_stage(
+            &self,
+            &req_subgroup_size as *const _ as *const c_void,
+            vk::ShaderStageFlags::COMPUTE,
+            &create_info.shader.code,
+            &entry_point,
+        )?;
+
         let cpci = vk::ComputePipelineCreateInfo {
             flags: vk::PipelineCreateFlags::empty(),
-            stage: vk::PipelineShaderStageCreateInfo {
-                p_next: &req_subgroup_size as *const _ as *const c_void,
-                flags: Default::default(),
-                stage: vk::ShaderStageFlags::COMPUTE,
-                module: compute_shader,
-                p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                p_specialization_info: ptr::null(),
-                ..Default::default()
-            },
+            stage: compute_stage,
             layout: pipeline_layout,
             ..Default::default()
         };
@@ -1503,7 +1513,7 @@ impl Device {
             pipeline,
             pipeline_layout,
             _descriptor_set_layouts: create_info.set_layouts.to_vec(),
-            bindless,
+            bindless: is_bindless,
         })
     }
 
@@ -1582,112 +1592,71 @@ impl Device {
             p_next: ptr::null_mut(),
             ..Default::default()
         };
+        let p_next = &req_subgroup_size as *const _ as *const c_void;
 
         let mut stages = Vec::new();
-        match create_info.pre_rasterization_shaders {
-            PreRasterizationShaders::PrimitiveShading {
-                vertex,
-                tess_control,
-                tess_evaluation,
-                geometry,
-            } => {
-                let vertex = self.create_shader_module(ShaderStage::Vertex, &vertex.code, vertex.entry_point)?;
-                let tess_control = tess_control
-                    .as_ref()
-                    .map(|t| self.create_shader_module(ShaderStage::TessControl, &t.code, t.entry_point))
-                    .transpose()?;
-                let tess_evaluation = tess_evaluation
-                    .as_ref()
-                    .map(|t| self.create_shader_module(ShaderStage::TessEvaluation, &t.code, t.entry_point))
-                    .transpose()?;
-                let geometry = geometry
-                    .as_ref()
-                    .map(|t| self.create_shader_module(ShaderStage::Geometry, &t.code, t.entry_point))
-                    .transpose()?;
 
-                stages.push(vk::PipelineShaderStageCreateInfo {
-                    p_next: &req_subgroup_size as *const _ as *const c_void,
-                    flags: Default::default(),
-                    stage: vk::ShaderStageFlags::VERTEX,
-                    module: vertex,
-                    p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                    p_specialization_info: ptr::null(),
-                    ..Default::default()
-                });
-                if let Some(tess_control) = tess_control {
-                    stages.push(vk::PipelineShaderStageCreateInfo {
-                        p_next: &req_subgroup_size as *const _ as *const c_void,
-                        flags: Default::default(),
-                        stage: vk::ShaderStageFlags::TESSELLATION_CONTROL,
-                        module: tess_control,
-                        p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                        p_specialization_info: ptr::null(),
-                        ..Default::default()
-                    });
-                }
-                if let Some(tess_evaluation) = tess_evaluation {
-                    stages.push(vk::PipelineShaderStageCreateInfo {
-                        p_next: &req_subgroup_size as *const _ as *const c_void,
-                        flags: Default::default(),
-                        stage: vk::ShaderStageFlags::TESSELLATION_EVALUATION,
-                        module: tess_evaluation,
-                        p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                        p_specialization_info: ptr::null(),
-                        ..Default::default()
-                    });
-                }
-                if let Some(geometry) = geometry {
-                    stages.push(vk::PipelineShaderStageCreateInfo {
-                        p_next: &req_subgroup_size as *const _ as *const c_void,
-                        flags: Default::default(),
-                        stage: vk::ShaderStageFlags::GEOMETRY,
-                        module: geometry,
-                        p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                        p_specialization_info: ptr::null(),
-                        ..Default::default()
-                    });
-                }
+        // those variables are referenced by VkGraphicsPipelineCreateInfo
+        // put them here so that they live at least until vkCreateGraphicsPipelines is called
+        let vertex_entry_point;
+        let task_entry_point;
+        let mesh_entry_point;
+        let fragment_entry_point;
+        let _vertex_module;
+        let _task_module;
+        let _mesh_module;
+        let _fragment_module;
+
+        match create_info.pre_rasterization_shaders {
+            PreRasterizationShaders::PrimitiveShading { vertex } => {
+                vertex_entry_point = CString::new(vertex.entry_point).unwrap();
+                let (stage, module) = create_stage(
+                    &self,
+                    p_next,
+                    vk::ShaderStageFlags::VERTEX,
+                    &vertex.code,
+                    &vertex_entry_point,
+                )?;
+                _vertex_module = module;
+                stages.push(stage);
             }
             PreRasterizationShaders::MeshShading { mesh, task } => {
                 if let Some(task) = task {
-                    let task = self.create_shader_module(ShaderStage::Task, &task.code, task.entry_point)?;
-                    stages.push(vk::PipelineShaderStageCreateInfo {
-                        p_next: &req_subgroup_size as *const _ as *const c_void,
-                        flags: Default::default(),
-                        stage: vk::ShaderStageFlags::TASK_EXT,
-                        module: task,
-                        p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                        p_specialization_info: ptr::null(),
-                        ..Default::default()
-                    });
+                    task_entry_point = CString::new(task.entry_point).unwrap();
+                    let (stage, module) = create_stage(
+                        &self,
+                        p_next,
+                        vk::ShaderStageFlags::TASK_EXT,
+                        &task.code,
+                        &task_entry_point,
+                    )?;
+                    _task_module = module;
+                    stages.push(stage);
                 }
 
-                let mesh = self.create_shader_module(ShaderStage::Mesh, &mesh.code, mesh.entry_point)?;
-                stages.push(vk::PipelineShaderStageCreateInfo {
-                    p_next: &req_subgroup_size as *const _ as *const c_void,
-                    flags: Default::default(),
-                    stage: vk::ShaderStageFlags::MESH_EXT,
-                    module: mesh,
-                    p_name: b"main\0".as_ptr() as *const c_char, // TODO
-                    p_specialization_info: ptr::null(),
-                    ..Default::default()
-                });
+                mesh_entry_point = CString::new(mesh.entry_point).unwrap();
+                let (stage, module) = create_stage(
+                    &self,
+                    p_next,
+                    vk::ShaderStageFlags::MESH_EXT,
+                    &mesh.code,
+                    &mesh_entry_point,
+                )?;
+                _mesh_module = module;
+                stages.push(stage);
             }
         };
 
-        let fragment = self.create_shader_module(
-            ShaderStage::Fragment,
+        fragment_entry_point = CString::new(create_info.fragment.shader.entry_point).unwrap();
+        let (stage, module) = create_stage(
+            &self,
+            p_next,
+            vk::ShaderStageFlags::FRAGMENT,
             &create_info.fragment.shader.code,
-            create_info.fragment.shader.entry_point,
+            &fragment_entry_point,
         )?;
-        stages.push(vk::PipelineShaderStageCreateInfo {
-            flags: Default::default(),
-            stage: vk::ShaderStageFlags::FRAGMENT,
-            module: fragment,
-            p_name: b"main\0".as_ptr() as *const c_char, // TODO
-            p_specialization_info: ptr::null(),
-            ..Default::default()
-        });
+        _fragment_module = module;
+        stages.push(stage);
 
         let attachment_states: Vec<_> = create_info
             .fragment
@@ -1712,18 +1681,8 @@ impl Device {
             })
             .collect();
 
-        /*// Rasterization state
-        let line_rasterization_state = vk::PipelineRasterizationLineStateCreateInfoEXT {
-            line_rasterization_mode: create_info.rasterization.line_rasterization.mode.into(),
-            stippled_line_enable: vk::FALSE,
-            line_stipple_factor: 0,
-            line_stipple_pattern: 0,
-            ..Default::default()
-        };*/
-
         let conservative_rasterization_state = vk::PipelineRasterizationConservativeStateCreateInfoEXT {
             conservative_rasterization_mode: create_info.rasterization.conservative_rasterization_mode.into(),
-            //extra_primitive_overestimation_size: 0.1,
             ..Default::default()
         };
 

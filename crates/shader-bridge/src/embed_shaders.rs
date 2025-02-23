@@ -5,12 +5,7 @@ use slang::Downcast;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-
-#[path = "../src/shaders/compiler/mod.rs"]
-mod compiler;
-
-use compiler::create_session;
-use crate::shaders::compiler::convert_spirv_u8_to_u32;
+use crate::compiler::{convert_spirv_u8_to_u32, create_session, SHADER_PROFILE};
 
 /// Loads all slang shader modules in a directory.
 fn load_shader_modules_in_directory(
@@ -39,7 +34,6 @@ fn load_shader_modules_in_directory(
                             println!("cargo:warning={line}");
                         }
                         panic!("failed to load module: {err}");
-                        continue;
                     }
                 };
             }
@@ -54,8 +48,8 @@ pub(crate) fn convert_slang_stage(stage: slang::Stage) -> proc_macro2::Ident {
         slang::Stage::Vertex => "Vertex",
         slang::Stage::Fragment => "Fragment",
         slang::Stage::Geometry => "Geometry",
-        slang::Stage::Domain => "TessellationControl",
-        slang::Stage::Hull => "TessellationEvaluation",
+        slang::Stage::Domain => "TessControl",
+        slang::Stage::Hull => "TessEvaluation",
         slang::Stage::Mesh => "Mesh",
         slang::Stage::Amplification => "Task",
         _ => panic!("unsupported shader stage: {:?}", stage),
@@ -80,10 +74,10 @@ fn push_constant_buffer_size(entry_point: &slang::reflection::EntryPoint) -> usi
 pub fn compile_and_embed_shaders(
     shaders_directory: &Path,
     include_search_paths: &[&Path],
-    output_directory: &Path,
+    _output_directory: &Path,
     bindings_output: &mut dyn io::Write,
 ) {
-    let session = create_session(compiler::SHADER_PROFILE, include_search_paths, &[]);
+    let session = create_session(SHADER_PROFILE, include_search_paths, &[]);
     let modules = load_shader_modules_in_directory(&session, shaders_directory).unwrap();
 
     // now compile all entry points, and generate bindings
@@ -126,7 +120,7 @@ pub fn compile_and_embed_shaders(
             let code_u32 = convert_spirv_u8_to_u32(code.as_slice());
             let code_u32_slice = code_u32.as_slice();
 
-            // generate rust entry point info
+            // generate shader info
             let rust_entry_point_name = format_ident!("{}", entry_point_name.to_shouty_snake_case());
             let refl_ep = reflection.entry_point_by_index(i).unwrap();
             let push_constant_buffer_size = push_constant_buffer_size(&refl_ep);
@@ -138,11 +132,11 @@ pub fn compile_and_embed_shaders(
             let module_file_path_str = module_file_path.to_str().unwrap();
 
             bindings.append_all(quote! {
-                pub const #rust_entry_point_name: EntryPoint<'static> = EntryPoint {
-                    stage: Stage::#stage,
-                    name: Cow::Borrowed(#entry_point_name),
-                    source_path: Some(Cow::Borrowed(#module_file_path_str)),
-                    code: Cow::Borrowed(&[#(#code_u32_slice),*]) ,//Cow::Borrowed(include_bytes!(concat!(env!("OUT_DIR"), "/", #output_file_name))),
+                pub const #rust_entry_point_name: ::graal::ShaderDescriptor<'static> = ::graal::ShaderDescriptor {
+                    stage: graal::ShaderStage::#stage,
+                    entry_point: #entry_point_name,
+                    source_path: Some(#module_file_path_str),
+                    code: &[#(#code_u32_slice),*] ,//Cow::Borrowed(include_bytes!(concat!(env!("OUT_DIR"), "/", #output_file_name))),
                     push_constants_size: #push_constant_buffer_size,
                     workgroup_size: (#workgroup_size_x, #workgroup_size_y, #workgroup_size_z),
                 };

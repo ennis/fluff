@@ -35,7 +35,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         egui::FontData::from_static(include_bytes!("../../../data/Inter-Medium.otf")),
     );
 
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    //egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     fonts
         .families
         .entry(FontFamily::Proportional)
@@ -74,12 +74,6 @@ fn main() {
     let (mut width, mut height) = window.inner_size().into();
     let mut app = App::new(&device, width, height, surface_format.format);
 
-    // imgui stuff
-    //let mut imgui = imgui::Context::create();
-    //let mut platform = WinitPlatform::init(&mut imgui); // step 1
-    //platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default); // step 2
-    //let mut imgui_renderer = imgui_backend::Renderer::new(&mut command_stream, &mut imgui);
-
     // egui stuff
     let mut egui_winit_state = egui_winit::State::new(egui_ctx, ViewportId::default(), &window, None, None);
     let mut egui_renderer = egui_backend::Renderer::new(&mut command_stream);
@@ -106,7 +100,6 @@ fn main() {
                     let now = Instant::now();
                     delta_time = now - last_frame_time;
                     last_frame_time = now;
-                    //imgui.io_mut().update_delta_time(delta_time);
                 }
                 Event::WindowEvent {
                     window_id,
@@ -116,10 +109,6 @@ fn main() {
                     if response.consumed {
                         return;
                     }
-
-                    //platform.handle_event(imgui.io_mut(), &window, &event);
-                    //let want_capture_mouse = imgui.io().want_capture_mouse;
-                    //let want_capture_keyboard = imgui.io().want_capture_keyboard;
 
                     match window_event {
                         WindowEvent::CursorMoved { position, device_id, .. } => {

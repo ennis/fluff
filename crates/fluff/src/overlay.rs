@@ -1,13 +1,14 @@
 //! Scene overlay drawing utilities
 use std::f32::consts::TAU;
 use std::mem;
-use std::path::Path;
 
 use crate::camera_control::Camera;
-use crate::shaders::{OVERLAY_LINES_FRAGMENT_MAIN, OVERLAY_LINES_VERTEX_MAIN, OVERLAY_POLYGONS_FRAGMENT_MAIN, OVERLAY_POLYGONS_VERTEX_MAIN};
+use crate::shaders::{
+    OVERLAY_LINES_FRAGMENT_MAIN, OVERLAY_LINES_VERTEX_MAIN, OVERLAY_POLYGONS_FRAGMENT_MAIN,
+    OVERLAY_POLYGONS_VERTEX_MAIN,
+};
 use glam::{vec3, DVec2, DVec3, Mat4, Vec3};
 use graal::prelude::*;
-use graal::vk::{AttachmentLoadOp, AttachmentStoreOp};
 use graal::{ColorAttachment, DepthStencilAttachment, RenderPassInfo};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -106,13 +107,6 @@ struct OverlayPolygonsPushConstants {
     width: f32,
 }
 
-/*
-float4x4 viewProjectionMatrix;
-uint startVertex;
-uint vertexCount;
-float lineWidth;
-float filterWidth;
-float2 screenSize;*/
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct OverlayLinesPushConstants {
@@ -153,14 +147,6 @@ struct LineVertex {
     flags: u32,
 }
 
-/*
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-struct Polyline {
-    start_vertex: u32,
-    vertex_count: u32,
-}*/
-
 struct Pipelines {
     polygon_pipeline: GraphicsPipeline,
     line_pipeline: GraphicsPipeline,
@@ -170,12 +156,12 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
     // Polygon pipeline
     let create_info = GraphicsPipelineCreateInfo {
         set_layouts: &[],
-        push_constants_size: mem::size_of::<OverlayPolygonsPushConstants>(),
+        push_constants_size: size_of::<OverlayPolygonsPushConstants>(),
         vertex_input: VertexInputState {
             topology: vk::PrimitiveTopology::LINE_STRIP,
             buffers: &[VertexBufferLayoutDescription {
                 binding: 0,
-                stride: mem::size_of::<OverlayVertex>() as u32,
+                stride: size_of::<OverlayVertex>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             }],
             attributes: &[
@@ -196,14 +182,8 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             ],
         },
         pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
-            vertex: ShaderEntryPoint {
-                code: graal::ShaderCode::Spirv(OVERLAY_POLYGONS_VERTEX_MAIN.code.as_ref()),
-                entry_point: OVERLAY_POLYGONS_VERTEX_MAIN.name.as_ref(),
-            },
-            tess_control: None,
-            tess_evaluation: None,
-            geometry: None,
-        }, //PreRasterizationShaders::vertex_shader_from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.vert", )),
+            vertex: OVERLAY_POLYGONS_VERTEX_MAIN,
+        },
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
@@ -217,10 +197,7 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             stencil_state: StencilState::default(),
         }),
         fragment: FragmentState {
-            shader: ShaderEntryPoint {
-                code: graal::ShaderCode::Spirv(OVERLAY_POLYGONS_FRAGMENT_MAIN.code.as_ref()),
-                entry_point: OVERLAY_POLYGONS_FRAGMENT_MAIN.name.as_ref(),
-            }, //ShaderEntryPoint::from_source_file(Path::new("crates/fluff/shaders/overlay_polygons.frag")),
+            shader: OVERLAY_POLYGONS_FRAGMENT_MAIN,
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
                 format: target_color_format,
@@ -236,33 +213,25 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
         .expect("failed to create pipeline");
 
     // Line pipeline
-    let descriptor_set_layout = device.create_push_descriptor_set_layout(&[
-        vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX,
-            ..Default::default()
-        },
-    ]);
+    let descriptor_set_layout = device.create_push_descriptor_set_layout(&[vk::DescriptorSetLayoutBinding {
+        binding: 0,
+        descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::VERTEX,
+        ..Default::default()
+    }]);
 
     let create_info = GraphicsPipelineCreateInfo {
         set_layouts: &[descriptor_set_layout.clone()],
-        push_constants_size: mem::size_of::<OverlayLinesPushConstants>(),
+        push_constants_size: size_of::<OverlayLinesPushConstants>(),
         vertex_input: VertexInputState {
             topology: vk::PrimitiveTopology::TRIANGLE_STRIP,
             buffers: &[],
             attributes: &[],
         },
         pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
-            vertex: ShaderEntryPoint {
-                code: graal::ShaderCode::Spirv(OVERLAY_LINES_VERTEX_MAIN.code.as_ref()),
-                entry_point: OVERLAY_LINES_VERTEX_MAIN.name.as_ref(),
-            },
-            tess_control: None,
-            tess_evaluation: None,
-            geometry: None,
-        }, //PreRasterizationShaders::mesh_shading_from_source_file(Path::new("crates/fluff/shaders/overlay_lines.glsl", )),
+            vertex: OVERLAY_LINES_VERTEX_MAIN,
+        }, 
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
@@ -277,10 +246,7 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
             stencil_state: StencilState::default(),
         }),
         fragment: FragmentState {
-            shader: ShaderEntryPoint {
-                code: graal::ShaderCode::Spirv(OVERLAY_LINES_FRAGMENT_MAIN.code.as_ref()),
-                entry_point: OVERLAY_LINES_FRAGMENT_MAIN.name.as_ref(),
-            },
+            shader: OVERLAY_LINES_FRAGMENT_MAIN,
             multisample: Default::default(),
             color_targets: &[ColorTargetState {
                 format: target_color_format,

@@ -9,7 +9,6 @@ use std::{collections::BTreeMap, path::Path};
 use std::rc::Rc;
 use graal::shaderc::OptimizationLevel;
 use tracing::{error, warn};
-use crate::shaders::EntryPoint;
 
 type MacroDefinitions = BTreeMap<String, String>;
 

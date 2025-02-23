@@ -1,8 +1,8 @@
 use crate::shaders::TemporalAverageParams;
-use egui::{color_picker::{color_edit_button_rgb, color_edit_button_srgba, Alpha}, Align2, Color32, DragValue, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, Ui, Widget, TextureHandle};
+use egui::{color_picker::{color_edit_button_srgba, Alpha}, Align2, Color32, DragValue, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, Ui, Widget, TextureHandle};
 use egui_extras::{Column, TableBuilder};
-use glam::{dvec2, dvec3, mat4, uvec2, vec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3Swizzles, Vec4Swizzles, Vec3};
-use graal::{prelude::*, vk::{AttachmentLoadOp, AttachmentStoreOp}, Barrier, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, Descriptor, DeviceAddress, ImageAccess, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassInfo, Texture2DHandleRange, ImageHandle};
+use glam::{dvec2, dvec3, uvec2, vec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3Swizzles, Vec4Swizzles, Vec3};
+use graal::{prelude::*, Barrier, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, Descriptor, DeviceAddress, ImageAccess, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassInfo, Texture2DHandleRange, ImageHandle};
 use std::{
     collections::BTreeMap,
     fs, mem,
@@ -1026,7 +1026,7 @@ impl App {
         let height = image.height();
 
         self.setup(cmd, self.frame_image.clone(), width, height);
-        
+
         cmd.clear_image(&self.frame_image, ClearColorValue::Float([0.0, 0.0, 0.0, 1.0]));
         cmd.clear_depth_image(&self.depth_buffer, 1.0);
 
@@ -1263,7 +1263,7 @@ impl App {
                                 }
                             });
                             row.col(|ui| {
-                                if icon_button(ui, egui_phosphor::fill::TRASH, egui::Color32::WHITE).clicked() {
+                                if icon_button(ui, "x", egui::Color32::WHITE).clicked() {
                                     delete = Some(i);
                                     self.tweaks_changed = true;
                                 }

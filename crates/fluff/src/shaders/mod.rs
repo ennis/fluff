@@ -4,15 +4,8 @@
 
 pub mod types;
 
-#[cfg(feature = "shader-hot-reload")]
-mod compiler;
-
-use std::borrow::Cow;
 use std::marker::PhantomData;
 use graal::DeviceAddress;
-
-#[cfg(feature = "shader-hot-reload")]
-pub use compiler::{compile_shader_module, CompilationError};
 
 
 // Define type aliases for slang types. These are referenced in the generated bindings, which
@@ -91,38 +84,6 @@ impl From<graal::SamplerHandle> for SamplerState_Handle {
         }
     }
 }
-/// Represents a shader type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Compute,
-    Vertex,
-    Fragment,
-    Geometry,
-    TessellationControl,
-    TessellationEvaluation,
-    Mesh,
-    Task,
-}
-
-/// Represents a shader entry point.
-#[derive(Debug, Clone)]
-pub struct EntryPoint<'a> {
-    /// Shader stage.
-    pub stage: Stage,
-    /// Name of the entry point in SPIR-V code.
-    pub name: Cow<'a, str>,
-    /// Path to the source code for the shader.
-    pub source_path: Option<Cow<'a, str>>,
-    /// SPIR-V code for the entry point.
-    pub code: Cow<'a, [u32]>,
-    /// Size of the push constants in bytes.
-    pub push_constants_size: usize,
-    /// Size of the local workgroup in each dimension, if applicable to the shader type.
-    ///
-    /// This is valid for compute, task, and mesh shaders.
-    pub workgroup_size: (u32, u32, u32),
-}
-
 
 // include generated bindings by the build script
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

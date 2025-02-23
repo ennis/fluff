@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::Path};
 
 // TODO: eventually all vk types should disappear from the public API
-use crate::{aspects_for_format, ShaderEntryPoint};
+use crate::{aspects_for_format, ShaderDescriptor};
 use ash::vk;
 use bitflags::bitflags;
 use gpu_allocator::MemoryLocation;
@@ -889,7 +889,7 @@ pub struct DepthStencilState {
 impl Default for DepthStencilState {
     fn default() -> Self {
         Self {
-            format: vk::Format::UNDEFINED,
+            format: Format::UNDEFINED,
             depth_write_enable: false,
             depth_compare_op: vk::CompareOp::LESS,
             stencil_state: Default::default(),
@@ -1094,7 +1094,7 @@ impl Default for MultisampleState {
 
 #[derive(Copy, Clone, Debug)]
 pub struct FragmentState<'a> {
-    pub shader: ShaderEntryPoint<'a>,
+    pub shader: ShaderDescriptor<'a>,
     pub multisample: MultisampleState,
     pub color_targets: &'a [ColorTargetState],
     pub blend_constants: [f32; 4],
