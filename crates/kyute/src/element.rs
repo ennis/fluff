@@ -8,7 +8,7 @@ use crate::model::{
 use crate::window::WindowHandle;
 use crate::{PaintCtx};
 use bitflags::{bitflags};
-use kurbo::{Affine, Point, Rect, Size, Vec2};
+use kurbo::{Point, Rect, Size, Vec2};
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;

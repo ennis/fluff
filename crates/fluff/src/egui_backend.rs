@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::{mem, slice};
 
 use crate::shaders::{EGUI_FRAG_MAIN, EGUI_VERTEX_MAIN};

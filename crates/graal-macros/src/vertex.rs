@@ -43,7 +43,7 @@ pub(crate) fn derive_vertex(input: proc_macro::TokenStream) -> syn::Result<Token
                 attribute_descs.push(quote! {
                     #CRATE::VertexAttributeDescription {
                         format: #format,
-                        offset: #CRATE::__offset_of_tuple!(#struct_name, #index) as u32,
+                        offset: ::core::mem::offset_of!(#struct_name, #index) as u32,
                     }
                 });
             }
@@ -51,7 +51,7 @@ pub(crate) fn derive_vertex(input: proc_macro::TokenStream) -> syn::Result<Token
                 attribute_descs.push(quote! {
                     #CRATE::VertexAttributeDescription {
                         format: #format,
-                        offset: #CRATE::__offset_of!(#struct_name, #ident) as u32,
+                        offset: ::core::mem::offset_of!(#struct_name, #ident) as u32,
                     }
                 });
             }

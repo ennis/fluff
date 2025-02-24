@@ -8,9 +8,6 @@ use fluff_gui::widgets::uniform_grid::UniformGrid;
 use kyute::drawing::rgb;
 use kyute::elements::{Flex, Frame};
 use kyute::{IntoElementAny, Size, Window, WindowOptions, application, select};
-use tracing_subscriber::Registry;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_tree::HierarchicalLayer;
 
 fn random_colored_square() -> impl IntoElementAny {
     let color = rgb(rand::random(), rand::random(), rand::random());

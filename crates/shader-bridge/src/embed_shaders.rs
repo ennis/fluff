@@ -79,6 +79,7 @@ pub fn compile_and_embed_shaders(
 ) {
     let session = create_session(SHADER_PROFILE, include_search_paths, &[]);
     let modules = load_shader_modules_in_directory(&session, shaders_directory).unwrap();
+    
 
     // now compile all entry points, and generate bindings
     let mut bindings = TokenStream::new();

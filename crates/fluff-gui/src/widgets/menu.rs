@@ -10,7 +10,7 @@ use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::{emit_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::window::{place_popup, FocusChanged, PopupCancelled, PopupPlacement, WindowHandle};
+use kyute::window::{place_popup, FocusChanged, PopupPlacement, WindowHandle};
 use kyute::{select, text, AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions};
 use std::collections::BTreeMap;
 use std::ops::Range;

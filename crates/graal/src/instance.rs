@@ -3,9 +3,8 @@ use std::{
     ffi::{c_void, CStr, CString},
     os::raw::c_char,
 };
-
+use std::sync::LazyLock;
 use ash::vk;
-use once_cell::sync::Lazy;
 
 /// Returns the global `ash::Entry` object.
 pub fn get_vulkan_entry() -> &'static ash::Entry {
@@ -38,13 +37,13 @@ pub fn vk_khr_surface() -> &'static ash::extensions::khr::Surface {
 const VALIDATION_LAYERS: &[&str] = &[/*"VK_LAYER_KHRONOS_validation"*/];
 
 /// Vulkan entry points.
-static VULKAN_ENTRY: Lazy<ash::Entry> = Lazy::new(initialize_vulkan_entry);
+static VULKAN_ENTRY: LazyLock<ash::Entry> = LazyLock::new(initialize_vulkan_entry);
 /// Vulkan instance and instance function pointers.
-static VULKAN_INSTANCE: Lazy<ash::Instance> = Lazy::new(create_vulkan_instance);
+static VULKAN_INSTANCE: LazyLock<ash::Instance> = LazyLock::new(create_vulkan_instance);
 /// Debug utils function pointers.
-static VULKAN_DEBUG_UTILS: Lazy<ash::extensions::ext::DebugUtils> = Lazy::new(create_debug_utils);
-static VK_KHR_SURFACE: Lazy<ash::extensions::khr::Surface> = Lazy::new(create_vk_khr_surface);
-static DEBUG_MESSENGER: Lazy<vk::DebugUtilsMessengerEXT> = Lazy::new(create_debug_messenger);
+static VULKAN_DEBUG_UTILS: LazyLock<ash::extensions::ext::DebugUtils> = LazyLock::new(create_debug_utils);
+static VK_KHR_SURFACE: LazyLock<ash::extensions::khr::Surface> = LazyLock::new(create_vk_khr_surface);
+static DEBUG_MESSENGER: LazyLock<vk::DebugUtilsMessengerEXT> = LazyLock::new(create_debug_messenger);
 
 fn initialize_vulkan_entry() -> ash::Entry {
     unsafe { ash::Entry::load().expect("failed to initialize vulkan entry points") }

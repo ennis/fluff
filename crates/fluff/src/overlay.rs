@@ -1,6 +1,5 @@
 //! Scene overlay drawing utilities
 use std::f32::consts::TAU;
-use std::mem;
 
 use crate::camera_control::Camera;
 use crate::shaders::{

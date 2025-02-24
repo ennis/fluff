@@ -3,7 +3,6 @@ mod device;
 mod instance;
 mod platform;
 mod platform_impl;
-mod shader;
 mod surface;
 mod types;
 pub mod util;
@@ -26,14 +25,7 @@ use tracing::debug;
 // TODO: make it optional
 pub use ash::{self, vk};
 pub use gpu_allocator::MemoryLocation;
-pub use shaderc;
-// reexports for macro internals
-#[doc(hidden)]
-pub use memoffset::offset_of as __offset_of;
-#[doc(hidden)]
-pub use memoffset::offset_of_tuple as __offset_of_tuple;
 pub use ordered_float;
-pub use shader::{compile_shader, get_shader_compiler};
 
 pub use command::*;
 pub use device::*;
@@ -739,8 +731,6 @@ pub enum Error {
     DeviceCreationFailed(#[from] DeviceCreateError),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("compilation error: {0}")]
-    Shaderc(#[from] shaderc::Error),
     #[error("Vulkan error: {0}")]
     Vulkan(#[from] vk::Result),
 }

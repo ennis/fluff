@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use graal::{
-    shaderc, vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, Device,
+    vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, Device,
     FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, MultisampleState, PreRasterizationShaders,
     RasterizationState, ShaderDescriptor, 
 };
@@ -31,8 +31,6 @@ pub enum Error {
     IO(#[from] Rc<std::io::Error>),
     #[error("could not read shader file `{}`: {}", .path.display(), .error)]
     ShaderReadError { path: PathBuf, error: Rc<std::io::Error> },
-    #[error("Shader compilation error: {0}")]
-    ShaderCompilation(#[from] Rc<shaderc::Error>),
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
     #[error("Vulkan error: {0}")]
