@@ -45,7 +45,7 @@ impl ObjectReader {
         let group = Group::read(&archive.data, header.offset)?;
         let headers = read_object_headers(&archive, &header, &group)?;
         let root_compound_header = Arc::new(PropertyHeader::root_compound_property(group.stream_offset(0)));
-        let properties = CompoundPropertyReader::new(archive.clone(), root_compound_header)?;
+        let properties = CompoundPropertyReader::new_inner(archive.clone(), root_compound_header)?;
         let children_by_name = headers
             .iter()
             .enumerate()

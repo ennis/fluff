@@ -9,6 +9,8 @@ pub enum  Error {
     UnexpectedPropertyType,
     #[error("property not found")]
     PropertyNotFound,
+    #[error("unexpected data type")]
+    UnexpectedDataType,
 }
 
 /// Creates an `Error` with an `io::ErrorKind::InvalidData` error.

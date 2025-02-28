@@ -1,11 +1,12 @@
 use crate::archive::ArchiveInner;
 use crate::data_type::{DataType, PodType};
-use crate::error::{invalid_data, Error};
+use crate::error::{Error, invalid_data};
 use crate::group::Group;
 use crate::metadata::Metadata;
-use crate::{read_string, Result};
-use byteorder::{ReadBytesExt, LE};
+use crate::{Result, read_string};
+use byteorder::{LE, ReadBytesExt};
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::sync::Arc;
@@ -34,7 +35,7 @@ pub struct CompoundPropertyReader {
 }
 
 impl CompoundPropertyReader {
-    pub(crate) fn new(archive: Arc<ArchiveInner>, header: Arc<PropertyHeader>) -> Result<Self> {
+    pub(crate) fn new_inner(archive: Arc<ArchiveInner>, header: Arc<PropertyHeader>) -> Result<Self> {
         let property_headers = read_property_headers(&archive, &header)?;
         let properties_by_name = property_headers
             .iter()
@@ -47,6 +48,10 @@ impl CompoundPropertyReader {
             property_headers,
             properties_by_name,
         })
+    }
+    
+    pub fn new(parent: &CompoundPropertyReader, name: &str) -> Result<Self> {
+        parent.compound_property(name)
     }
 
     /// Returns the number of sub-properties.
@@ -85,7 +90,7 @@ impl CompoundPropertyReader {
         if header.ty != PropertyType::Compound {
             return Err(Error::UnexpectedPropertyType);
         }
-        CompoundPropertyReader::new(self.archive.clone(), header.clone())
+        CompoundPropertyReader::new_inner(self.archive.clone(), header.clone())
     }
 
     /// Reads a scalar property.
@@ -170,7 +175,7 @@ impl ScalarPropertyReader {
                 T::ELEMENT_TYPE,
                 self.header.data_type
             );
-            return Err(invalid_data("invalid scalar data type"));
+            return Err(Error::UnexpectedDataType);
         }
 
         let index = remap_sample_index(
@@ -191,6 +196,27 @@ impl ScalarPropertyReader {
             self.read_sample_into(i, &mut samples[i])?;
         }
         unsafe { Ok(mem::transmute::<_, _>(samples)) }
+    }
+}
+
+/// Typed scalar property.
+pub struct TypedScalarPropertyReader<T>(ScalarPropertyReader, PhantomData<T>);
+
+impl<T: DataType> TypedScalarPropertyReader<T> {
+    pub fn new(parent: &CompoundPropertyReader, name: &str) -> Result<Self> {
+        let reader = parent.scalar_property(name)?;
+        if T::ELEMENT_TYPE != reader.header.data_type {
+            return Err(Error::UnexpectedDataType);
+        }
+        Ok(Self(reader, PhantomData))
+    }
+
+    pub fn read_sample_into<'a>(&self, sample_index: usize, sample: &'a mut MaybeUninit<T>) -> Result<&'a mut T> {
+        self.0.read_sample_into(sample_index, sample)
+    }
+
+    pub fn read_samples<'a>(&self, samples: &'a mut [MaybeUninit<T>]) -> Result<&'a mut [T]> {
+        self.0.read_samples(samples)
     }
 }
 
@@ -237,6 +263,23 @@ impl ArrayPropertyReader {
             v
         };
         Ok(NDArraySample { values, dimensions })
+    }
+}
+
+/// Typed array property.
+pub struct TypedArrayPropertyReader<T>(ArrayPropertyReader, PhantomData<T>);
+
+impl<T: DataType> TypedArrayPropertyReader<T> {
+    pub fn new(parent: &CompoundPropertyReader, name: &str) -> Result<Self> {
+        let reader = parent.array_property(name)?;
+        if T::ELEMENT_TYPE != reader.header.data_type {
+            return Err(Error::UnexpectedDataType);
+        }
+        Ok(Self(reader, PhantomData))
+    }
+
+    pub fn read_sample(&self, sample_index: usize) -> Result<NDArraySample<T>> {
+        self.0.read_sample(sample_index)
     }
 }
 
