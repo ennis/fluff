@@ -55,7 +55,7 @@ fn load_image(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: ImageUsage
     unsafe {
         ptr::copy_nonoverlapping(
             dyn_image.as_bytes().as_ptr(),
-            staging_buffer.mapped_data().unwrap(),
+            staging_buffer.as_mut_ptr(),
             byte_size as usize,
         );
 

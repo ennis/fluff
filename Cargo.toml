@@ -9,7 +9,8 @@ members = [
     "crates/kyute-common",
     "crates/fluff-gui",
     "crates/graal",
-    "crates/graal-macros"]
+    "crates/graal-macros",
+    "crates/alembic-ogawa"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -21,6 +22,7 @@ curve-fit-nd-sys = { path = "crates/curve-fit-nd-sys" }
 curve-fit-nd = { path = "crates/curve-fit-nd" }
 kyute = { path = "crates/kyute" }
 kyute-common = { path = "crates/kyute-common" }
+alembic-ogawa = { path = "crates/alembic-ogawa" }
 fluff-gui = { path = "crates/fluff-gui" }
 
 [profile.release]

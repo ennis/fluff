@@ -1,8 +1,10 @@
 //! Stuff related to strokes.
 
+mod polymesh;
+
 use crate::shaders::{StrokeVertex, Stroke};
 use glam::{DVec4, vec2, Vec3};
-use graal::{BufferUsage, Device, MemoryLocation};
+use graal::{vk, Buffer, BufferUntyped, BufferUsage, Device, MemoryLocation};
 use houdinio::Geo;
 use crate::util::{AppendBuffer, lagrange_interpolate_4};
 use crate::overlay::CubicBezierSegment;
@@ -28,6 +30,15 @@ pub struct AnimationFrame {
     pub stroke_offset: u32,
     pub stroke_count: u32,
 }
+
+pub struct Mesh {
+    transform: glam::Mat4,
+    start_vertex: u32,
+    vertex_count: u32,
+    start_index: u32,
+    index_count: u32,
+}
+
 
 /// Scene data.
 ///
@@ -220,3 +231,42 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
         stroke_buffer,
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+/// Vertex attribute of a 3D mesh.
+pub struct Attribute {
+    /// Name of the attribute.
+    name: String,
+    /// Attribute index in shader.
+    index: u32,
+    /// Attribute type.
+    ty: vk::Format,
+    /// Attribute data on the GPU.
+    device_data: BufferUntyped,
+}
+
+/// Animated 3D mesh.
+pub struct Mesh3D {
+
+    /// Number of vertices.
+    vertex_count: u32,
+
+    /// Attributes by index.
+    ///
+    /// The first attribute is always the position.
+    attributes: Vec<Attribute>,
+
+    /// Index buffer.
+    ///
+    /// Contains indices for each vertex. I.e: `[ [I_0, ... I_n], [I_0, ... I_n], ... ]` where n is
+    /// the number of attributes.
+    indices: graal::BufferUntyped,
+
+}
+
+/// 3D scene.
+pub struct Scene3D {
+
+}*/

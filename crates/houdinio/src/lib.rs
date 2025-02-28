@@ -87,7 +87,7 @@ impl Geo {
     /// Returns the contents of the position attribute (`P`).
     pub fn positions(&self) -> &[[f32; 3]] {
         // The first attribute is always the position attribute.
-        // The fact that this is an f32 attribute is ensured by the loader.
+        // The fact that this is a f32 attribute is ensured by the loader.
         let data = self.point_attributes[0].as_f32_slice().unwrap();
         // TODO: replace with as_chunks once it's stable.
         // SAFETY: the length is a multiple of 3, this is ensured by the loader.
@@ -102,7 +102,7 @@ impl Geo {
         Some(unsafe { slice::from_raw_parts(data.as_ptr().cast(), new_len) })
     }
 
-    /// Returns the position of of the given vertex.
+    /// Returns the position of the given vertex.
     pub fn vertex_position(&self, vertex_index: i32) -> [f32; 3] {
         // The vertex is an index into the topology array, which gives us the index into the point attribute.
         // The double indirection is because different vertices can share the same point.
@@ -110,7 +110,7 @@ impl Geo {
         self.positions()[point]
     }
 
-    /// Returns the color of of the given vertex.
+    /// Returns the color of the given vertex.
     pub fn vertex_color(&self, vertex_index: i32) -> Option<[f32; 3]> {
         let point = self.topology[vertex_index as usize] as usize;
         Some(self.color()?[point])
@@ -134,7 +134,7 @@ pub enum PrimVar<T> {
     Varying(Vec<T>),
 }
 
-/// A run of bezier curves.
+/// A run of Bézier curves.
 #[derive(Clone, Debug)]
 pub struct BezierRun {
     /// Number of curves in the run.
