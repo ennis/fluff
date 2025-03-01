@@ -34,7 +34,7 @@ fn read_u32le(data: &[u8]) -> Result<u32> {
 }
 
 // Reexports
-pub use archive::{Archive, TimeSamples};
+pub use archive::{Archive, TimeSampling};
 pub use metadata::Metadata;
 pub use object::ObjectReader;
 pub use property::{ArrayPropertyReader, CompoundPropertyReader, NDArraySample, PropertyType, ScalarPropertyReader};
@@ -64,11 +64,13 @@ mod tests {
     fn dump_property(reader: &CompoundPropertyReader, depth: usize) -> Result<()> {
         for (i, header) in reader.property_headers().enumerate() {
             eprintln!(
-                "{}property: {}, type={:?}, datatype={:?}",
-                "  ".repeat(depth),
+                "{}{}, type={:?}, datatype={:?}, metadata=[{:02x}]{:?}",
+                "   ".repeat(depth),
                 header.name,
                 header.ty,
-                header.data_type
+                header.data_type,
+                header.metadata_index,
+                header.metadata
             );
             if header.ty == PropertyType::Compound {
                 let child = reader.compound_property(&header.name)?;
@@ -79,9 +81,9 @@ mod tests {
     }
 
     fn dump_object(reader: &ObjectReader, depth: usize) -> Result<()> {
+        dump_property(&reader.properties(), depth + 1)?;
         for (i, child) in reader.headers().enumerate() {
-            eprintln!("{}child: {}", "  ".repeat(depth), child.name);
-            dump_property(&reader.properties(), depth + 1)?;
+            eprintln!("{}/{}", "   ".repeat(depth), child.name);
             dump_object(&reader.get(i)?, depth + 1)?;
         }
         Ok(())
@@ -90,7 +92,10 @@ mod tests {
     #[test]
     fn load_archive() {
         let archive = Archive::open("tests/data/ellie_animation.abc").unwrap();
-        eprintln!("time samples={:?}", archive.time_samples());
+        eprintln!("Time samplings:");
+        for (i, sampling) in archive.time_samplings().iter().enumerate() {
+            eprintln!("  {}: max_sample={}, time_per_sample={}, samples={:?}", i, sampling.max_sample, sampling.time_per_sample, sampling.samples);
+        }
 
         let root = archive.root().unwrap();
         dump_object(&root, 0).unwrap();

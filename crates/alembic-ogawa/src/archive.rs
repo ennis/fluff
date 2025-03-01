@@ -16,25 +16,30 @@ pub(crate) type ArchiveData = [u8];
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Clone, Debug)]
-pub struct TimeSamples {
+pub struct TimeSampling {
     pub max_sample: u32,
     pub time_per_sample: f64,
     pub samples: Vec<f64>,
 }
 
-fn read_time_samples(data: &[u8]) -> crate::Result<TimeSamples> {
+fn read_time_samples(data: &[u8]) -> Result<Vec<TimeSampling>> {
     // read time samples
-    let mut time_samples_data = io::Cursor::new(data);
-    let max_sample = time_samples_data.read_u32::<LE>()?;
-    let time_per_sample = time_samples_data.read_f64::<LE>()?;
-    let sample_count = time_samples_data.read_u32::<LE>()?;
-    let mut samples = Vec::with_capacity(sample_count as usize);
-    time_samples_data.read_f64_into::<LE>(&mut samples)?;
-    Ok(TimeSamples {
-        max_sample,
-        time_per_sample,
-        samples,
-    })
+    let mut reader = io::Cursor::new(data);
+    let mut samplings = Vec::new();
+    while reader.position() < data.len() as u64 {
+        let max_sample = reader.read_u32::<LE>()?;
+        let time_per_sample = reader.read_f64::<LE>()?;
+        let sample_count = reader.read_u32::<LE>()?;
+        let mut samples = vec![0.0; sample_count as usize];
+        reader.read_f64_into::<LE>(&mut samples)?;
+        samplings.push(TimeSampling {
+            max_sample,
+            time_per_sample,
+            samples,
+        });
+    }
+
+    Ok(samplings)
 }
 
 
@@ -44,7 +49,7 @@ pub(crate) struct ArchiveInner {
     pub(crate) data: Mmap,
     archive_version: u32,
     file_version: u32,
-    time_samples: TimeSamples,
+    time_samplings: Vec<TimeSampling>,
     file_metadata: Metadata,
     pub(crate) indexed_metadata: Vec<Metadata>,
     object_root_offset: usize,
@@ -85,7 +90,7 @@ impl Archive {
         let archive_version = read_u32le(root.read_data(&mmap, 0)?)?;
         let file_version = read_u32le(root.read_data(&mmap, 1)?)?;
         let object_root_offset = root.stream_offset(2);
-        let time_samples = read_time_samples(root.read_data(&mmap, 4)?)?;
+        let time_samplings = read_time_samples(root.read_data(&mmap, 4)?)?;
         let indexed_metadata = read_indexed_metadata(root.read_data(&mmap, 5)?)?;
         let file_metadata = std::str::from_utf8(root.read_data(&mmap, 3)?)
             .map_err(|_| invalid_data("invalid UTF-8"))?
@@ -96,7 +101,7 @@ impl Archive {
             data: mmap,
             archive_version,
             file_version,
-            time_samples,
+            time_samplings,
             indexed_metadata,
             object_root_offset,
             file_metadata,
@@ -104,8 +109,8 @@ impl Archive {
         })))
     }
 
-    pub fn time_samples(&self) -> &TimeSamples {
-        &self.0.time_samples
+    pub fn time_samplings(&self) -> &[TimeSampling] {
+        &self.0.time_samplings
     }
 
     pub fn root(&self) -> Result<ObjectReader> {

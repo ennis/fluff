@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::io::Seek;
 use std::sync::Arc;
+use crate::group::is_group;
 
 /// Information about an object.
 #[derive(Clone)]
@@ -44,7 +45,11 @@ impl ObjectReader {
     pub(crate) fn new(archive: Arc<ArchiveInner>, header: Arc<ObjectHeader>) -> Result<Self> {
         let group = Group::read(&archive.data, header.offset)?;
         let headers = read_object_headers(&archive, &header, &group)?;
-        let root_compound_header = Arc::new(PropertyHeader::root_compound_property(group.stream_offset(0)));
+        let root_compound_header = if is_group(group.children[0]) {
+            Arc::new(PropertyHeader::root_compound_property(group.stream_offset(0)))
+        } else {
+            Arc::new(PropertyHeader::root_compound_property(0))
+        };
         let properties = CompoundPropertyReader::new_inner(archive.clone(), root_compound_header)?;
         let children_by_name = headers
             .iter()

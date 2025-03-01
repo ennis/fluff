@@ -296,6 +296,7 @@ pub struct NDArraySample<T> {
 pub struct PropertyHeader {
     pub ty: PropertyType,
     pub metadata: Metadata,
+    pub metadata_index: u32,
     pub data_type: PodType,
     pub name: String,
     path: String,
@@ -313,6 +314,7 @@ impl PropertyHeader {
         Self {
             ty: PropertyType::Compound,
             metadata: Metadata::default(),
+            metadata_index: 0xFF,
             data_type: PodType::Bool,
             name: "".to_string(),
             path: "".to_string(),
@@ -335,6 +337,9 @@ impl PropertyHeader {
 fn read_property_headers(archive: &ArchiveInner, header: &PropertyHeader) -> Result<Vec<Arc<PropertyHeader>>> {
     let path = &header.path;
     let prop_data = Group::read(&archive.data, header.offset)?;
+    if prop_data.children.is_empty() {
+        return Ok(Vec::new());
+    }
     // child headers are stored in the last child of the group
     let headers_data = prop_data.read_data(&*archive.data, prop_data.children.len() - 1)?;
     let mut reader = io::Cursor::new(headers_data);
@@ -415,6 +420,7 @@ fn read_property_headers(archive: &ArchiveInner, header: &PropertyHeader) -> Res
             name,
             path: prop_path,
             offset,
+            metadata_index,
             first_changed_index,
             last_changed_index,
             next_sample_index,

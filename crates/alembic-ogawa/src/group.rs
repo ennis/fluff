@@ -8,12 +8,12 @@ use crate::error::invalid_data;
 const DATA_BIT: u64 = 0x8000_0000_0000_0000;
 const OFFSET_MASK: u64 = 0x7FFF_FFFF_FFFF_FFFF;
 
-fn is_group(value: u64) -> bool {
-    (value & DATA_BIT) == 0
+pub(crate) fn is_group(stream_id: u64) -> bool {
+    (stream_id & DATA_BIT) == 0
 }
 
-fn is_data(value: u64) -> bool {
-    !is_group(value)
+pub(crate) fn is_data(stream_id: u64) -> bool {
+    !is_group(stream_id)
 }
 
 #[derive(Clone)]
@@ -37,6 +37,10 @@ impl Group {
             children.push(u64::from_le_bytes(child));
         }
         Ok(Self { children })
+    }
+
+    pub(crate) fn is_group(&self, index: usize) -> bool {
+        is_group(self.children[index])
     }
 
     pub(crate) fn stream_offset(&self, index: usize) -> usize {

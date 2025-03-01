@@ -44,7 +44,7 @@ impl FromStr for Metadata {
 
 pub(crate) fn read_indexed_metadata(data: &[u8]) -> Result<Vec<Metadata>> {
     let mut cursor = io::Cursor::new(data);
-    let mut metadata = Vec::new();
+    let mut metadata = vec![Metadata::default()];  // metadata #0 is empty metadata
     while cursor.position() < data.len() as u64 {
         let size = cursor.read_u8()?;
         let mut buffer = vec![0; size as usize];
@@ -53,8 +53,5 @@ pub(crate) fn read_indexed_metadata(data: &[u8]) -> Result<Vec<Metadata>> {
             std::str::from_utf8(&buffer).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8"))?;
         metadata.push(meta.parse()?);
     }
-    // IDK why but some metadata indices go one past the end of the array
-    // add a dummy entry to avoid failing
-    metadata.push(Metadata::default());
     Ok(metadata)
 }
