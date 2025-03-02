@@ -50,18 +50,26 @@ impl TryFrom<u32> for PodType {
 pub unsafe trait DataType {
     /// The equivalent type in the Alembic file format.
     const ELEMENT_TYPE: PodType;
-    const EXTENT: usize;
+
+    /// Extent of the data type. `None` for variable-length data types.
+    const EXTENT: Option<usize>;
 
     fn from_bytes(data: &[u8]) -> Result<Self>
     where
         Self: Sized;
 }
 
+#[repr(C)]
+pub struct Box3D {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
 macro_rules! impl_data_type {
     ($ty:ty, $variant:ident) => {
         unsafe impl DataType for $ty {
             const ELEMENT_TYPE: PodType = PodType::$variant;
-            const EXTENT: usize = 1;
+            const EXTENT: Option<usize> = Some(1);
 
             fn from_bytes(data: &[u8]) -> Result<Self> {
                 let mut value = [0; size_of::<Self>()];
@@ -86,7 +94,7 @@ impl_data_type!(f64, F64);
 
 unsafe impl DataType for bool {
     const ELEMENT_TYPE: PodType = PodType::Bool;
-    const EXTENT: usize = 1;
+    const EXTENT: Option<usize> = Some(1);
 
     fn from_bytes(data: &[u8]) -> Result<Self> {
         if data.len() < 1 {
@@ -98,7 +106,7 @@ unsafe impl DataType for bool {
 
 unsafe impl<T: DataType + Copy + Default, const N: usize> DataType for [T; N] {
     const ELEMENT_TYPE: PodType = T::ELEMENT_TYPE;
-    const EXTENT: usize = N;
+    const EXTENT: Option<usize> = Some(N);
 
     fn from_bytes(data: &[u8]) -> Result<Self> {
         let sz = size_of::<T>();

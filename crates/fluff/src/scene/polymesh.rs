@@ -30,13 +30,13 @@ pub struct Face {
 }
 
 #[derive(Clone, Debug)]
-pub struct PolyMesh {
+pub struct HalfEdgeMesh {
     pub vertices: Vec<Vertex>,
     pub faces: Vec<Face>,
     pub half_edges: Vec<HalfEdge>,
 }
 
-impl PolyMesh {
+impl HalfEdgeMesh {
     /// Creates a PolyMesh from a triangle mesh specified as a position buffer and an index buffer.
     pub fn from_indexed_triangle_mesh(positions: &[[f32; 3]], indices: &[u32]) -> Self {
         assert!(
@@ -195,7 +195,7 @@ mod tests {
         for object in obj_data.objects.iter() {
             for group in object.groups.iter() {
                 let indices = group.polys.iter().map(|p| p.0.iter().map(|obj::IndexTuple(i,_,_)| *i as u32)).flatten().collect::<Vec<_>>();
-                let mesh = PolyMesh::from_indexed_triangle_mesh(
+                let mesh = HalfEdgeMesh::from_indexed_triangle_mesh(
                     &obj_data.position,
                     &indices,
                 );

@@ -1,5 +1,5 @@
 use crate::archive::ArchiveInner;
-use crate::error::invalid_data;
+use crate::error::{invalid_data, Error};
 use crate::metadata::Metadata;
 use crate::property::{CompoundPropertyReader, PropertyHeader};
 use crate::{Group, Result, read_string};
@@ -65,13 +65,22 @@ impl ObjectReader {
         })
     }
 
+    /// Returns the name of the object.
+    pub fn name(&self) -> &str {
+        &self.header.name
+    }
+
     /// Returns the number of child objects.
     pub fn child_count(&self) -> usize {
         self.children.len()
     }
 
-    /// Loads a child object by index.
-    pub fn get(&self, index: usize) -> Result<ObjectReader> {
+    /// Loads a child object by name.
+    pub fn get(&self, name: &str) -> Result<ObjectReader> {
+        let index = * self
+            .children_by_name
+            .get(name)
+            .ok_or(Error::ObjectNotFound)?;
         ObjectReader::new(self.archive.clone(), self.children[index].clone())
     }
 
@@ -83,6 +92,12 @@ impl ObjectReader {
     /// Returns an iterator over child object headers.
     pub fn headers(&self) -> impl Iterator<Item = &ObjectHeader> {
         self.children.iter().map(|header| header.as_ref())
+    }
+
+    /// Returns an iterator over child objects.
+    pub fn children(&self) -> impl Iterator<Item = ObjectReader> + '_ {
+        // TODO: don't panic
+        self.children.iter().map(move |header| ObjectReader::new(self.archive.clone(), header.clone()).expect("failed to load child object"))
     }
 
     /// Finds a child object by name.

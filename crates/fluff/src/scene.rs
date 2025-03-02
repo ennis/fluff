@@ -2,13 +2,17 @@
 
 mod polymesh;
 
-use crate::shaders::{StrokeVertex, Stroke};
-use glam::{DVec4, vec2, Vec3};
+use crate::overlay::CubicBezierSegment;
+use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex};
+use crate::util::{lagrange_interpolate_4, AppendBuffer};
+use alembic_ogawa::ObjectReader;
+use anyhow::bail;
+use glam::{vec2, DVec4, Vec3};
 use graal::{vk, Buffer, BufferUntyped, BufferUsage, Device, MemoryLocation};
 use houdinio::Geo;
-use crate::util::{AppendBuffer, lagrange_interpolate_4};
-use crate::overlay::CubicBezierSegment;
-use crate::shaders::{ControlPoint, CurveDesc};
+use std::path::Path;
+use tracing::trace;
+use alembic_ogawa::geom::{PolyMesh, XForm};
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -39,7 +43,6 @@ pub struct Mesh {
     index_count: u32,
 }
 
-
 /// Scene data.
 ///
 /// Holds the animation frames, and the buffers for strokes & curves for the entire animation.
@@ -52,7 +55,6 @@ pub struct Scene {
     pub stroke_vertex_buffer: AppendBuffer<StrokeVertex>,
     pub stroke_buffer: AppendBuffer<Stroke>,
 }
-
 
 /// Converts Bézier curve data from `.geo` files to a format that can be uploaded to the GPU.
 ///
@@ -84,9 +86,19 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
 
     // Curve buffer: contains (start, end) pairs of curves in the point buffer
 
-    let mut position_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, point_count);
+    let mut position_buffer = AppendBuffer::with_capacity(
+        device,
+        BufferUsage::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+        point_count,
+    );
     position_buffer.set_name("control point buffer");
-    let mut curve_buffer = AppendBuffer::with_capacity(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
+    let mut curve_buffer = AppendBuffer::with_capacity(
+        device,
+        BufferUsage::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+        curve_count,
+    );
     curve_buffer.set_name("curve buffer");
 
     let mut stroke_vertex_buffer = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
@@ -119,7 +131,10 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
                             for &vertex_index in curve.vertices.iter() {
                                 let pos = f.vertex_position(vertex_index);
                                 let color = f.vertex_color(vertex_index).unwrap_or([0.1, 0.8, 0.1]);
-                                *point_data.offset(point_ptr) = ControlPoint { pos: pos.into(), color: color.into() };
+                                *point_data.offset(point_ptr) = ControlPoint {
+                                    pos: pos.into(),
+                                    color: color.into(),
+                                };
                                 point_ptr += 1;
                             }
                             // FIXME: this is wrong
@@ -185,7 +200,12 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
                                 stroke_vertex_buffer.push(StrokeVertex {
                                     pos: (*v).into(),
                                     s,
-                                    color: [(color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8, 255],
+                                    color: [
+                                        (color[0] * 255.0) as u8,
+                                        (color[1] * 255.0) as u8,
+                                        (color[2] * 255.0) as u8,
+                                        255,
+                                    ],
                                     width: 255,
                                     opacity: 255,
                                 });
@@ -220,7 +240,6 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
         curve_buffer.set_len(curve_count);
     }
 
-
     Scene {
         //point_count,
         //curve_count,
@@ -234,9 +253,10 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*
 /// Vertex attribute of a 3D mesh.
-pub struct Attribute {
+///
+/// Attributes can be animated over time.
+struct Attribute {
     /// Name of the attribute.
     name: String,
     /// Attribute index in shader.
@@ -247,8 +267,13 @@ pub struct Attribute {
     device_data: BufferUntyped,
 }
 
-/// Animated 3D mesh.
+/// An animated 3D mesh.
 pub struct Mesh3D {
+    /// Time position of each mesh animation frame.
+    ///
+    /// The length of this vector corresponds to the number of animation frames of the mesh.
+    /// If the mesh is not animated, this vector will contain a single element.
+    time_samples: Vec<f64>,
 
     /// Number of vertices.
     vertex_count: u32,
@@ -263,10 +288,90 @@ pub struct Mesh3D {
     /// Contains indices for each vertex. I.e: `[ [I_0, ... I_n], [I_0, ... I_n], ... ]` where n is
     /// the number of attributes.
     indices: graal::BufferUntyped,
+}
 
+impl Mesh3D {
+    fn from_alembic(mesh: &alembic_ogawa::geom::PolyMesh) -> Result<Mesh3D, anyhow::Error> {
+        bail!("not implemented")
+    }
+}
+
+struct TimeSample<T> {
+    time: f64,
+    value: T,
+}
+
+/// 3D scene object
+struct Object {
+    name: String,
+    /// Transform relative to parent.
+    transform: Vec<TimeSample<glam::DMat4>>,
+    /// Geometry data.
+    geometry: Option<Mesh3D>,
+    /// Children objects.
+    children: Vec<Object>,
+}
+
+impl Object {
+    fn load_alembic_object_recursive(obj: &ObjectReader) -> Result<Object, anyhow::Error> {
+        let mut transform = vec![];
+        match XForm::new(obj.properties(), ".xform") {
+            Ok(xform) => {
+                for (time, sample) in xform.samples() {
+                    transform.push(TimeSample {
+                        time,
+                        value: glam::DMat4::from_cols_array_2d(&sample),
+                    });
+                }
+            }
+            Err(err) => {
+            }
+        }
+
+        let mesh = if let Ok(mesh) = PolyMesh::new(obj.properties(), ".geom") {
+            eprintln!("TODO: load mesh");
+            None
+            //Some(Mesh3D::from_alembic(&mesh)?)
+        } else {
+            None
+        };
+
+        let mut children = vec![];
+        for child in obj.children() {
+            children.push(Self::load_alembic_object_recursive(&child)?);
+        }
+
+        eprintln!("loaded object: {}", obj.name());
+
+        Ok(Object {
+            name: obj.name().to_string(),
+            transform,
+            geometry: mesh,
+            children,
+        })
+    }
 }
 
 /// 3D scene.
 pub struct Scene3D {
+    root: Object,
+}
 
-}*/
+impl Scene3D {
+    fn load_from_alembic_inner(path: &Path) -> Result<Self, anyhow::Error> {
+        let archive = alembic_ogawa::Archive::open(path)?;
+        let root = Object::load_alembic_object_recursive(&archive.root()?)?;
+        Ok(Self { root })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_alembic() {
+        let path = Path::new("../alembic-ogawa/tests/data/ellie_animation.abc");
+        let scene = Scene3D::load_from_alembic_inner(path).unwrap();
+    }
+}

@@ -33,6 +33,7 @@ rand = "0.9.0-alpha.1"
 uniform-cubic-splines = { version = "0.1.8", default-features = false, features = ["std"] }
 num-traits = "0.2.19"
 shader-bridge = { workspace = true, optional = true }
+alembic-ogawa = { workspace = true }
 
 [build-dependencies]
 shader-bridge = { workspace = true }

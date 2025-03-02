@@ -5,7 +5,8 @@ mod group;
 mod metadata;
 mod object;
 mod property;
-mod schema;
+
+pub mod geom;
 
 use crate::error::{Error, invalid_data};
 use crate::group::Group;
@@ -33,6 +34,14 @@ fn read_u32le(data: &[u8]) -> Result<u32> {
     Ok(u32::from_le_bytes(bytes))
 }
 
+/// Time sample.
+pub struct TimeSample<T> {
+    /// Time.
+    pub time: f64,
+    /// Value.
+    pub value: T,
+}
+
 // Reexports
 pub use archive::{Archive, TimeSampling};
 pub use metadata::Metadata;
@@ -58,17 +67,19 @@ pub use property::{ArrayPropertyReader, CompoundPropertyReader, NDArraySample, P
 mod tests {
     use super::*;
     use crate::archive::Archive;
+    use crate::geom::{PolyMesh, XForm};
     use crate::object::ObjectReader;
     use crate::property::{CompoundPropertyReader, PropertyType};
 
     fn dump_property(reader: &CompoundPropertyReader, depth: usize) -> Result<()> {
         for (i, header) in reader.property_headers().enumerate() {
             eprintln!(
-                "{}{}, type={:?}, datatype={:?}, metadata=[{:02x}]{:?}",
+                "{}{}, type={:?}, datatype={:?}, sampleCount={:?}, metadata=[{:02x}]{:?}",
                 "   ".repeat(depth),
                 header.name,
                 header.ty,
                 header.data_type,
+                header.next_sample_index,
                 header.metadata_index,
                 header.metadata
             );
@@ -84,7 +95,7 @@ mod tests {
         dump_property(&reader.properties(), depth + 1)?;
         for (i, child) in reader.headers().enumerate() {
             eprintln!("{}/{}", "   ".repeat(depth), child.name);
-            dump_object(&reader.get(i)?, depth + 1)?;
+            dump_object(&reader.get(&child.name)?, depth + 1)?;
         }
         Ok(())
     }
@@ -94,10 +105,47 @@ mod tests {
         let archive = Archive::open("tests/data/ellie_animation.abc").unwrap();
         eprintln!("Time samplings:");
         for (i, sampling) in archive.time_samplings().iter().enumerate() {
-            eprintln!("  {}: max_sample={}, time_per_sample={}, samples={:?}", i, sampling.max_sample, sampling.time_per_sample, sampling.samples);
+            eprintln!("  {}: {:?}", i, sampling);
         }
 
         let root = archive.root().unwrap();
         dump_object(&root, 0).unwrap();
+    }
+
+    #[test]
+    fn xform_schema() {
+        let archive = Archive::open("tests/data/ellie_animation.abc").unwrap();
+        let root = archive.root().unwrap();
+        let xform = XForm::new(
+            root.get("GEO-ellie_fannypack_strap_end_001").unwrap().properties(),
+            ".xform",
+        )
+        .unwrap();
+
+        // print all samples
+        for (time, value) in xform.samples() {
+            eprintln!("time={}, matrix={:?}", time, value);
+        }
+    }
+
+    #[test]
+    fn polymesh_schema() {
+        let archive = Archive::open("tests/data/ellie_animation.abc").unwrap();
+        let root = archive.root().unwrap();
+        let mesh = PolyMesh::new(
+            root.get("RIG-Ellie_001").unwrap()
+                .get("GEO-ellie_jacket_pin_5_001").unwrap()
+                .get("Data_GEO-ellie_jacket_pin_5").unwrap().properties(),
+            ".geom",
+        )
+        .unwrap();
+
+        // dump all positions
+        for s in 0..mesh.sample_count() {
+            let time = mesh.positions.time_sampling().get_sample_time(s).unwrap();
+            let positions = mesh.positions.get(s).unwrap();
+            assert_eq!(positions.dimensions.len(), 1);
+            eprintln!("time={}, positions={:?}", time, positions.values);
+        }
     }
 }

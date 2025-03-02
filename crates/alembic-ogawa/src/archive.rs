@@ -1,25 +1,61 @@
+use crate::error::{Error, invalid_data};
+use crate::group::Group;
+use crate::metadata::{Metadata, read_indexed_metadata};
+use crate::object::{ObjectHeader, ObjectReader};
+use crate::{Result, read_u32le};
+use byteorder::{LE, ReadBytesExt};
+use memmap2::Mmap;
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use byteorder::{ReadBytesExt, LE};
-use memmap2::Mmap;
-use crate::{read_u32le};
-use crate::error::invalid_data;
-use crate::group::Group;
-use crate::metadata::{read_indexed_metadata, Metadata};
-use crate::object::{ObjectHeader, ObjectReader};
-use crate::Result;
 
 pub(crate) type ArchiveData = [u8];
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const ACYCLIC_NUM_SAMPLES: u32 = u32::MAX;
+const ACYCLIC_TIME_PER_SAMPLE: f64 = f64::MAX / 32.;
+
+
 #[derive(Clone, Debug)]
-pub struct TimeSampling {
-    pub max_sample: u32,
-    pub time_per_sample: f64,
-    pub samples: Vec<f64>,
+pub enum TimeSampling {
+    Acyclic {
+        sample_times: Vec<f64>,
+    },
+    Cyclic {
+        time_per_cycle: f64,
+        sample_times: Vec<f64>,
+    },
+    Uniform {
+        time_per_cycle: f64,
+        sample_time: f64,
+    },
+}
+
+impl TimeSampling {
+    pub fn get_sample_time(&self, i: usize) -> Result<f64> {
+        let t = match *self {
+            TimeSampling::Acyclic { ref sample_times } => {
+                if i >= sample_times.len() {
+                    return Err(Error::TimeSampleOutOfRange);
+                }
+                sample_times[i]
+            }
+            TimeSampling::Cyclic {
+                time_per_cycle,
+                ref sample_times,
+            } => {
+                let n = sample_times.len();
+                (i / n) as f64 * time_per_cycle + sample_times[i % n]
+            }
+            TimeSampling::Uniform {
+                sample_time,
+                time_per_cycle,
+            } => sample_time + time_per_cycle * i as f64,
+        };
+        Ok(t)
+    }
 }
 
 fn read_time_samples(data: &[u8]) -> Result<Vec<TimeSampling>> {
@@ -28,20 +64,29 @@ fn read_time_samples(data: &[u8]) -> Result<Vec<TimeSampling>> {
     let mut samplings = Vec::new();
     while reader.position() < data.len() as u64 {
         let max_sample = reader.read_u32::<LE>()?;
-        let time_per_sample = reader.read_f64::<LE>()?;
+        let time_per_cycle = reader.read_f64::<LE>()?;
         let sample_count = reader.read_u32::<LE>()?;
-        let mut samples = vec![0.0; sample_count as usize];
-        reader.read_f64_into::<LE>(&mut samples)?;
-        samplings.push(TimeSampling {
-            max_sample,
-            time_per_sample,
-            samples,
-        });
+        let mut sample_times = vec![0.0; sample_count as usize];
+        reader.read_f64_into::<LE>(&mut sample_times)?;
+
+        let sampling = if time_per_cycle == ACYCLIC_TIME_PER_SAMPLE {
+            TimeSampling::Acyclic { sample_times }
+        } else if sample_count == 1 {
+            TimeSampling::Uniform {
+                time_per_cycle,
+                sample_time: sample_times[0],
+            }
+        } else {
+            TimeSampling::Cyclic {
+                time_per_cycle,
+                sample_times,
+            }
+        };
+        samplings.push(sampling);
     }
 
     Ok(samplings)
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -49,22 +94,21 @@ pub(crate) struct ArchiveInner {
     pub(crate) data: Mmap,
     archive_version: u32,
     file_version: u32,
-    time_samplings: Vec<TimeSampling>,
+    pub(crate) time_samplings: Vec<TimeSampling>,
     file_metadata: Metadata,
     pub(crate) indexed_metadata: Vec<Metadata>,
     object_root_offset: usize,
     root_object_header: Arc<ObjectHeader>,
-
 }
 
 pub struct Archive(pub(crate) Arc<ArchiveInner>);
 
 impl Archive {
-    pub fn open<P: AsRef<Path>>(path: P) -> crate::Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_inner(path.as_ref())
     }
 
-    fn open_inner(path: &Path) -> crate::Result<Self> {
+    fn open_inner(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
 
@@ -105,7 +149,7 @@ impl Archive {
             indexed_metadata,
             object_root_offset,
             file_metadata,
-            root_object_header
+            root_object_header,
         })))
     }
 

@@ -9,8 +9,15 @@ pub enum  Error {
     UnexpectedPropertyType,
     #[error("property not found")]
     PropertyNotFound,
+    #[error("object not found")]
+    ObjectNotFound,
     #[error("unexpected data type")]
     UnexpectedDataType,
+    /// Generic malformed data error (property value out of bounds, not enough data, etc.).
+    #[error("malformed data")]
+    MalformedData,
+    #[error("time sample out of range")]
+    TimeSampleOutOfRange,
 }
 
 /// Creates an `Error` with an `io::ErrorKind::InvalidData` error.
