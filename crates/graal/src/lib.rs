@@ -18,6 +18,7 @@ use std::{
         Arc,
     },
 };
+use std::mem::MaybeUninit;
 use tracing::debug;
 
 // --- reexports ---
@@ -889,12 +890,19 @@ impl<T> Buffer<[T]> {
         self.untyped.as_mut_ptr() as *mut T
     }
 
-    /*pub fn device_address(&self) -> DeviceAddress<[T]> {
-        DeviceAddress {
-            address: self.untyped.device_address().address,
-            _phantom: PhantomData,
-        }
-    }*/
+    /// If the buffer is mapped in host memory, returns an uninitialized slice of the buffer's elements.
+    ///
+    /// # Safety
+    ///
+    /// - All other slices returned by `as_mut_slice` on aliases of this `Buffer` must have been dropped.
+    /// - The caller must ensure that nothing else is writing to the buffer while the slice is being accessed.
+    ///   i.e. all GPU operations on the buffer have completed.
+    ///
+    /// FIXME: the first safety condition is hard to track since `Buffer`s have shared ownership.
+    ///        Maybe `Buffer`s should have unique ownership instead, i.e. don't make them `Clone`.
+    pub unsafe fn as_mut_slice(&mut self) -> &mut [MaybeUninit<T>] {
+        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr() as *mut _, self.len()) }
+    }
 
     /// Element range.
     pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferRange<[T]> {

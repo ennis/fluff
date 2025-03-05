@@ -249,12 +249,22 @@ fn get_preferred_swapchain_surface_format(surface_formats: &[vk::SurfaceFormatKH
         .expect("no suitable surface format available")
 }
 
-pub unsafe fn create_device_and_command_stream(
+/// Creates a `Device` and a `CommandStream` compatible with the specified presentation surface.
+///
+/// # Safety
+///
+/// `present_surface` must be a valid surface handle, or `None`
+pub unsafe fn create_device_and_command_stream_with_surface(
     present_surface: Option<vk::SurfaceKHR>,
 ) -> Result<(Device, CommandStream), DeviceCreateError> {
     let device = Device::new(present_surface)?;
     let command_stream = device.create_command_stream(0);
     Ok((device, command_stream))
+}
+
+/// Creates a `Device` and a `CommandStream`. A physical device is chosen automatically.
+pub fn create_device_and_command_stream() -> Result<(Device, CommandStream), DeviceCreateError> {
+    unsafe { create_device_and_command_stream_with_surface(None) }
 }
 
 struct PhysicalDeviceAndProperties {

@@ -3,7 +3,8 @@ use crate::data_type::{DataType, PodType};
 use crate::error::{Error, invalid_data};
 use crate::group::Group;
 use crate::metadata::Metadata;
-use crate::{Result, TimeSampling, read_string};
+use crate::{Result, SampleIndex, TimeSampling, read_string};
+use arrayvec::ArrayVec;
 use byteorder::{LE, ReadBytesExt};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -26,8 +27,9 @@ pub enum PropertyReader {
     Array(ArrayPropertyReader),
 }
 
-impl PropertyReader {
+pub type Dimensions = ArrayVec<usize, 3>;
 
+impl PropertyReader {
     pub fn header(&self) -> &PropertyHeader {
         match self {
             PropertyReader::Compound(reader) => &reader.header,
@@ -192,6 +194,11 @@ impl ScalarPropertyReader {
         self.header.next_sample_index
     }
 
+    /// Returns whether this property is constant.
+    pub fn is_constant(&self) -> bool {
+        self.header.first_changed_index == 0
+    }
+
     /// Returns the extent (number of scalar elements) in each sample.
     pub fn extent(&self) -> usize {
         self.header.extent
@@ -266,6 +273,11 @@ impl<T: DataType> TypedScalarPropertyReader<T> {
         Ok(Self(reader, PhantomData))
     }
 
+    /// Returns whether this property is constant.
+    pub fn is_constant(&self) -> bool {
+        self.0.is_constant()
+    }
+
     pub fn read_sample_into<'a>(&self, sample_index: usize, sample: &'a mut MaybeUninit<T>) -> Result<&'a mut T> {
         self.0.read_sample_into(sample_index, sample)
     }
@@ -313,42 +325,115 @@ impl ArrayPropertyReader {
     pub fn time_sampling(&self) -> &TimeSampling {
         &self.archive.time_samplings[self.header.time_sampling_index]
     }
+    
+    /// Returns the metadata of this property.
+    pub fn metadata(&self) -> &Metadata {
+        &self.header.metadata
+    }
 
-    pub fn read_sample<T: DataType>(&self, sample_index: usize) -> Result<NDArraySample<T>> {
+    /// Returns whether this property is constant.
+    pub fn is_constant(&self) -> bool {
+        self.header.first_changed_index == 0
+    }
+
+    /// Returns the dimensions of the specified sample.
+    pub fn dimensions(&self, sample_index: SampleIndex) -> Dimensions {
+        let index = self.header.remap_sample_index(sample_index);
+
+        let dim_data = self.group.read_data(&self.archive.data, 2 * index + 1).unwrap();
+        let data = self.group.read_data(&self.archive.data, 2 * index).unwrap();
+        
+        if data.len() < 16 {
+            // no data (empty array)
+            return Dimensions::from_iter([0]);
+        }
+
+        let dimensions = if dim_data.len() == 0 {
+            // no dimensions specified, assume rank 1 array, compute element count from data length
+            assert!(
+                self.header.data_type != PodType::String && self.header.data_type != PodType::WideString,
+                "invalid array element type"
+            );
+            let elem_size = self.header.extent * self.header.data_type.byte_size();
+            let elem_count = (data.len() - 16) / elem_size;
+            if (data.len() - 16) % elem_size != 0 {
+                eprintln!("warning: array data size is not a multiple of element size");
+            }
+            Dimensions::from_iter([elem_count])
+        } else {
+            // read dimensions
+            let mut reader = io::Cursor::new(dim_data);
+            let mut v = Dimensions::new();
+            while reader.position() < dim_data.len() as u64 {
+                v.push(reader.read_u32::<LE>().unwrap() as usize);
+            }
+            v
+        };
+        dimensions
+    }
+
+    pub fn read_sample<T: DataType>(&self, sample_index: SampleIndex) -> Result<NDArraySample<T>> {
         let index = remap_sample_index(
             sample_index,
             self.header.first_changed_index..self.header.last_changed_index,
         );
+
+        if index >= self.header.next_sample_index {
+            return Err(Error::TimeSampleOutOfRange);
+        }
+
         let data = self.group.read_data(&self.archive.data, 2 * index)?;
-        let dim_data = self.group.read_data(&self.archive.data, 2 * index + 1)?;
 
         if data.len() == 0 {
             return Ok(NDArraySample {
                 values: vec![],
-                dimensions: vec![0],
+                dimensions: Dimensions::from_iter([0]),
             });
         }
 
         if data.len() < 16 {
             return Err(invalid_data("data too short"));
         }
+
         // skip first 16 bytes which contain the hash
         let values = data[16..]
             .chunks_exact(size_of::<T>())
             .map(|chunk| T::from_bytes(chunk))
             .collect::<Result<Vec<T>>>()?;
 
-        let dimensions = if dim_data.len() == 0 {
-            vec![values.len()]
-        } else {
-            let mut reader = io::Cursor::new(dim_data);
-            let mut v = vec![];
-            while reader.position() < dim_data.len() as u64 {
-                v.push(reader.read_u32::<LE>()? as usize);
-            }
-            v
-        };
+        let dimensions = self.dimensions(sample_index);
         Ok(NDArraySample { values, dimensions })
+    }
+
+    pub fn read_sample_into<T: DataType>(&self, sample_index: usize, sample: &mut [MaybeUninit<T>]) -> Result<usize> {
+        if T::ELEMENT_TYPE != self.header.data_type || T::EXTENT != Some(self.header.extent) {
+            return Err(Error::UnexpectedDataType);
+        }
+
+        let index = self.header.remap_sample_index(sample_index);
+        let data = self.group.read_data(&self.archive.data, 2 * index)?;
+        let dimensions = self.dimensions(sample_index);
+        let elem_count: usize = dimensions.iter().product();
+
+        if elem_count > sample.len() {
+            return Err(Error::NotEnoughSpaceInOutput);
+        }
+
+        if data.len() == 0 {
+            return Ok(0);
+        }
+
+        if data.len() < 16 {
+            return Err(invalid_data("data too short"));
+        }
+
+        // skip first 16 bytes which contain the hash
+        for (i, values) in data[16..].chunks_exact(size_of::<T>()).enumerate() {
+            // TODO don't panic
+            assert!(i < elem_count, "too many elements in array");
+            sample[i].write(T::from_bytes(values)?);
+        }
+        Ok(elem_count)
     }
 }
 
@@ -364,8 +449,22 @@ impl<T: DataType> TypedArrayPropertyReader<T> {
         Ok(Self(reader, PhantomData))
     }
 
+    /// Returns the length of the array in the specified dimension.
+    pub fn dimensions(&self, sample_index: usize) -> Dimensions {
+        self.0.dimensions(sample_index)
+    }
+
+    /// Returns the metadata of this property.
+    pub fn metadata(&self) -> &Metadata {
+        &self.0.header.metadata
+    }
+
     pub fn get(&self, sample_index: usize) -> Result<NDArraySample<T>> {
         self.0.read_sample(sample_index)
+    }
+
+    pub fn read_sample_into(&self, sample_index: usize, sample: &mut [MaybeUninit<T>]) -> Result<usize> {
+        self.0.read_sample_into(sample_index, sample)
     }
 
     pub fn time_sampling(&self) -> &TimeSampling {
@@ -375,13 +474,17 @@ impl<T: DataType> TypedArrayPropertyReader<T> {
     pub fn sample_count(&self) -> usize {
         self.0.header.next_sample_index
     }
+
+    pub fn is_constant(&self) -> bool {
+        self.0.is_constant()
+    }
 }
 
 /// Represents a sample of an array property.
 #[derive(Clone, Debug)]
 pub struct NDArraySample<T> {
     pub values: Vec<T>,
-    pub dimensions: Vec<usize>,
+    pub dimensions: Dimensions,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -422,6 +525,10 @@ impl PropertyHeader {
             extent: 0,
             is_homogeneous: false,
         }
+    }
+
+    pub(crate) fn remap_sample_index(&self, i: SampleIndex) -> usize {
+        remap_sample_index(i, self.first_changed_index..self.last_changed_index)
     }
 }
 

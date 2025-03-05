@@ -22,6 +22,27 @@ pub enum PodType {
     WideString,
 }
 
+impl PodType {
+    pub fn byte_size(self) -> usize {
+        match self {
+            Self::Bool => 1,
+            Self::U8 => 1,
+            Self::I8 => 1,
+            Self::U16 => 2,
+            Self::I16 => 2,
+            Self::U32 => 4,
+            Self::I32 => 4,
+            Self::U64 => 8,
+            Self::I64 => 8,
+            Self::F16 => 2,
+            Self::F32 => 4,
+            Self::F64 => 8,
+            Self::String => 0,
+            Self::WideString => 0,
+        }
+    }
+}
+
 impl TryFrom<u32> for PodType {
     type Error = Error;
 

@@ -18,6 +18,8 @@ pub enum  Error {
     MalformedData,
     #[error("time sample out of range")]
     TimeSampleOutOfRange,
+    #[error("not enough space in output buffer")]
+    NotEnoughSpaceInOutput,
 }
 
 /// Creates an `Error` with an `io::ErrorKind::InvalidData` error.

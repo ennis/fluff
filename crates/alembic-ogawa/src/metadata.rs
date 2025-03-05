@@ -15,6 +15,10 @@ impl Metadata {
     pub fn get<T: FromStr>(&self, key: &str) -> Option<T> {
         self.pairs.get(key).and_then(|value| value.parse().ok())
     }
+
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        self.pairs.get(key).map(|s| s.as_str())
+    }
 }
 
 impl fmt::Debug for Metadata {

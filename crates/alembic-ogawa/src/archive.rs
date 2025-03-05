@@ -17,7 +17,6 @@ pub(crate) type ArchiveData = [u8];
 const ACYCLIC_NUM_SAMPLES: u32 = u32::MAX;
 const ACYCLIC_TIME_PER_SAMPLE: f64 = f64::MAX / 32.;
 
-
 #[derive(Clone, Debug)]
 pub enum TimeSampling {
     Acyclic {
@@ -55,6 +54,59 @@ impl TimeSampling {
             } => sample_time + time_per_cycle * i as f64,
         };
         Ok(t)
+    }
+
+    pub fn get_floor_sample(&self, time: f64) -> (f64, usize) {
+        match *self {
+            TimeSampling::Acyclic { ref sample_times } => {
+                match sample_times.binary_search_by(|t| t.partial_cmp(&time).unwrap()) {
+                    Ok(i) => (sample_times[i], i),
+                    Err(i) => {
+                        if i == 0 {
+                            (sample_times[0], 0)
+                        } else {
+                            (sample_times[i - 1], i - 1)
+                        }
+                    }
+                }
+            }
+            TimeSampling::Cyclic {
+                time_per_cycle,
+                ref sample_times,
+            } => {
+                // TODO test that
+                let cycle = (time / time_per_cycle).floor();
+                let cycle_start = cycle * time_per_cycle;
+                let rel_time = time - cycle * time_per_cycle;
+                match sample_times.binary_search_by(|t| t.partial_cmp(&rel_time).unwrap()) {
+                    Ok(i) => (cycle_start + sample_times[i], i),
+                    Err(i) => {
+                        if i == 0 {
+                            (cycle_start + sample_times.last().unwrap(), sample_times.len() - 1)
+                        } else {
+                            (cycle_start + sample_times[i - 1], i - 1)
+                        }
+                    }
+                }
+            }
+            TimeSampling::Uniform {
+                sample_time,
+                time_per_cycle,
+            } => {
+                // there's only one sample
+                let cycle = (time / time_per_cycle).floor();
+                (sample_time + cycle * time_per_cycle, 0)
+            }
+        }
+    }
+
+    /// Returns the number of unique time samples.
+    pub fn num_samples(&self) -> usize {
+        match *self {
+            TimeSampling::Acyclic { ref sample_times } => sample_times.len(),
+            TimeSampling::Cyclic { ref sample_times, .. } => sample_times.len(),
+            TimeSampling::Uniform { .. } => 1,
+        }
     }
 }
 

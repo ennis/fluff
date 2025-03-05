@@ -27,6 +27,7 @@ mod point_painter;
 mod ui;
 mod scene;
 mod tool;
+mod animation;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -64,7 +65,7 @@ fn main() {
     let window = create_window(&egui_ctx, &event_loop, &ViewportBuilder::default().with_title("Fluff")).expect("failed to create window");
 
     let surface = graal::get_vulkan_surface(window.raw_window_handle().unwrap());
-    let (device, mut command_stream) = unsafe { graal::create_device_and_command_stream(Some(surface)).expect("failed to create device") };
+    let (device, mut command_stream) = unsafe { graal::create_device_and_command_stream_with_surface(Some(surface)).expect("failed to create device") };
     let surface_format = vk::SurfaceFormatKHR {
         format: vk::Format::R16G16B16A16_SFLOAT,
         color_space: Default::default(),

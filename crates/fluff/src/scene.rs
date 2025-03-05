@@ -5,14 +5,17 @@ mod polymesh;
 use crate::overlay::CubicBezierSegment;
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex};
 use crate::util::{lagrange_interpolate_4, AppendBuffer};
-use alembic_ogawa::ObjectReader;
+use alembic_ogawa::geom::{GeomParam, GeometryScope, MeshTopologyVariance, PolyMesh, XForm};
+use alembic_ogawa::{DataType, ObjectReader, TypedArrayPropertyReader};
 use anyhow::bail;
 use glam::{vec2, DVec4, Vec3};
+use graal::util::DeviceExt;
 use graal::{vk, Buffer, BufferUntyped, BufferUsage, Device, MemoryLocation};
 use houdinio::Geo;
+use std::mem::MaybeUninit;
 use std::path::Path;
+use std::ptr::read;
 use tracing::trace;
-use alembic_ogawa::geom::{PolyMesh, XForm};
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -257,24 +260,22 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
 ///
 /// Attributes can be animated over time.
 struct Attribute {
+    /// Time position of each animation frame of the attributes.
+    ///
+    /// The length of this vector corresponds to the number of animation frames of the mesh.
+    /// If the mesh is not animated, this vector will contain a single element.
+    time_samples: Vec<f64>,
+
     /// Name of the attribute.
     name: String,
     /// Attribute index in shader.
     index: u32,
-    /// Attribute type.
-    ty: vk::Format,
     /// Attribute data on the GPU.
     device_data: BufferUntyped,
 }
 
 /// An animated 3D mesh.
 pub struct Mesh3D {
-    /// Time position of each mesh animation frame.
-    ///
-    /// The length of this vector corresponds to the number of animation frames of the mesh.
-    /// If the mesh is not animated, this vector will contain a single element.
-    time_samples: Vec<f64>,
-
     /// Number of vertices.
     vertex_count: u32,
 
@@ -290,9 +291,180 @@ pub struct Mesh3D {
     indices: graal::BufferUntyped,
 }
 
+fn triangulate_indices(face_counts: &[i32], indices: &[i32], output: &mut [MaybeUninit<u32>]) {
+    let mut ii = 0;
+    let mut oi = 0;
+    for face_count in face_counts.iter() {
+        let base_index = indices[ii];
+        for j in (ii + 2)..(ii + *face_count as usize) {
+            let a = indices[j - 1];
+            let b = indices[j];
+            output[oi].write(base_index as u32);
+            output[oi + 1].write(a as u32);
+            output[oi + 2].write(b as u32);
+            oi += 3;
+        }
+        ii += *face_count as usize;
+    }
+}
+
+fn read_attribute_samples<T: DataType + Copy>(
+    device: &Device,
+    name: &str,
+    expected_count: usize,
+    attribute: &TypedArrayPropertyReader<T>,
+) -> Result<Attribute, anyhow::Error> {
+    let sample_count = attribute.sample_count();
+    let mut buffer = device.create_array_buffer::<T>(
+        BufferUsage::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+        sample_count * expected_count,
+    );
+
+    // SAFETY: TODO
+    let slice = unsafe { buffer.as_mut_slice() };
+    let mut time_samples = vec![];
+    for i in 0..sample_count {
+        assert_eq!(&attribute.dimensions(i)[..], &[expected_count]);
+        time_samples.push(attribute.time_sampling().get_sample_time(i).unwrap());
+        attribute.read_sample_into(i, &mut slice[i * expected_count..])?;
+    }
+
+    Ok(Attribute {
+        time_samples,
+        name: name.to_string(),
+        index: 0,
+        device_data: buffer.untyped,
+    })
+}
+
+fn read_geom_param<T: DataType + Copy>(
+    device: &Device,
+    name: &str,
+    face_vertex_count: usize,
+    gp: &GeomParam<T>,
+) -> Result<Attribute, anyhow::Error> {
+    // number of elements
+    let elem_count = match gp.scope {
+        GeometryScope::Constant => 1,
+        GeometryScope::Uniform => 1,
+        GeometryScope::Varying => face_vertex_count,
+        GeometryScope::Vertex => face_vertex_count,
+        GeometryScope::FaceVarying => face_vertex_count,
+        GeometryScope::Unknown => {
+            return Err(anyhow::anyhow!("unknown geometry scope"));
+        }
+    };
+    assert_eq!(gp.values.dimensions(0)[0], elem_count);
+
+    // number of unique samples
+    let unique_sample_count = if gp.is_indexed() {
+        eprintln!("indexed geom param: {} unique samples", gp.indices.as_ref().unwrap().dimensions(0)[0]);
+        gp.indices.as_ref().unwrap().dimensions(0)[0]
+    } else {
+        eprintln!("non-indexed geom param: {} samples", gp.values.sample_count());
+        gp.values.sample_count()
+    };
+
+    let mut buffer = device.create_array_buffer::<T>(
+        BufferUsage::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+        unique_sample_count * elem_count,
+    );
+
+    // SAFETY: TODO
+    let slice = unsafe { buffer.as_mut_slice() };
+    let mut time_samples = vec![];
+    for i in 0..unique_sample_count {
+        assert_eq!(&gp.values.dimensions(i)[..], &[elem_count]);
+        time_samples.push(gp.values.time_sampling().get_sample_time(i).unwrap());
+        gp.values.read_sample_into(i, &mut slice[i * elem_count..])?;
+    }
+
+    Ok(Attribute {
+        time_samples,
+        name: name.to_string(),
+        index: 0,
+        device_data: buffer.untyped,
+    })
+}
+
+/*// check that the topology is actually heterogeneous
+            let face_counts = mesh.face_counts.get(0).unwrap().values;
+            for i in 1..mesh.face_counts.sample_count() {
+                let other_face_counts = mesh.face_counts.get(i).unwrap().values;
+                if face_counts != other_face_counts {
+                    return Err(anyhow::anyhow!("unsupported topology variance"));
+                }
+            }
+
+            let face_indices = mesh.face_indices.get(0).unwrap().values;
+            for i in 1..mesh.face_indices.sample_count() {
+                let other_face_indices = mesh.face_indices.get(i).unwrap().values;
+                if face_indices != other_face_indices {
+                    return Err(anyhow::anyhow!("unsupported topology variance"));
+                }
+            }
+
+            eprintln!(
+                "*** topology is declared as heterogeneous, but is actually homogeneous ({} {}) ****",
+                mesh.face_counts.sample_count(),
+                mesh.face_indices.sample_count()
+            );*/
+
 impl Mesh3D {
-    fn from_alembic(mesh: &alembic_ogawa::geom::PolyMesh) -> Result<Mesh3D, anyhow::Error> {
-        bail!("not implemented")
+    fn from_alembic(device: &Device, mesh: &PolyMesh) -> Result<Mesh3D, anyhow::Error> {
+        if !matches!(
+            mesh.topology_variance(),
+            MeshTopologyVariance::Constant | MeshTopologyVariance::Homogeneous
+        ) {
+            bail!("unsupported topology variance");
+        }
+
+        if mesh.face_counts.sample_count() == 0 || mesh.face_indices.sample_count() == 0 {
+            bail!("empty mesh (no samples)");
+        }
+
+        // triangulate indices
+        let face_counts = mesh.face_counts.get(0).unwrap().values;
+        let indices = mesh.face_indices.get(0).unwrap().values;
+        if face_counts.is_empty() || indices.is_empty() {
+            bail!("empty mesh");
+        }
+
+        let index_count = indices.len();
+        let triangle_count = face_counts.iter().map(|&count| (count - 2) as usize).sum::<usize>();
+        let triangulated_index_count = triangle_count * 3;
+        let mut index_buffer = device.create_array_buffer::<u32>(
+            BufferUsage::INDEX_BUFFER,
+            MemoryLocation::CpuToGpu,
+            triangulated_index_count,
+        );
+        //eprintln!("loading mesh: faces: {}, indices: {}", face_counts.len(), indices.len());
+        triangulate_indices(&face_counts, &indices, unsafe { index_buffer.as_mut_slice() });
+
+        // load attribute samples (positions, etc.)
+
+        // load attribute samples
+        // SAFETY: we allocate enough space in attribute buffers to hold all samples
+        let mut attributes = vec![];
+        let vertex_count = mesh.positions.dimensions(0)[0];
+        attributes.push(read_attribute_samples(device, "P", vertex_count, &mesh.positions)?);
+        if let Some(normals) = &mesh.normals {
+            attributes.push(read_geom_param(device, "N", index_count, normals)?);
+        }
+        if let Some(uvs) = &mesh.uvs {
+            attributes.push(read_geom_param(device, "uv", index_count, uvs)?);
+        }
+        if let Some(velocities) = &mesh.velocities {
+            attributes.push(read_attribute_samples(device, "velocities", vertex_count, velocities)?);
+        }
+
+        Ok(Mesh3D {
+            vertex_count: vertex_count as u32,
+            attributes,
+            indices: index_buffer.untyped,
+        })
     }
 }
 
@@ -313,7 +485,7 @@ struct Object {
 }
 
 impl Object {
-    fn load_alembic_object_recursive(obj: &ObjectReader) -> Result<Object, anyhow::Error> {
+    fn load_alembic_object_recursive(device: &Device, obj: &ObjectReader) -> Result<Object, anyhow::Error> {
         let mut transform = vec![];
         match XForm::new(obj.properties(), ".xform") {
             Ok(xform) => {
@@ -324,24 +496,30 @@ impl Object {
                     });
                 }
             }
-            Err(err) => {
-            }
+            Err(err) => {}
         }
 
         let mesh = if let Ok(mesh) = PolyMesh::new(obj.properties(), ".geom") {
-            eprintln!("TODO: load mesh");
-            None
-            //Some(Mesh3D::from_alembic(&mesh)?)
+            match Mesh3D::from_alembic(device, &mesh) {
+                Ok(mesh) => {
+                    eprintln!("loaded mesh: {}", obj.name());
+                    Some(mesh)
+                }
+                Err(err) => {
+                    eprintln!("failed to load mesh `{}`: {}", obj.path(), err);
+                    None
+                }
+            }
         } else {
             None
         };
 
         let mut children = vec![];
         for child in obj.children() {
-            children.push(Self::load_alembic_object_recursive(&child)?);
+            children.push(Self::load_alembic_object_recursive(device, &child)?);
         }
 
-        eprintln!("loaded object: {}", obj.name());
+        //eprintln!("loaded object: {}", obj.name());
 
         Ok(Object {
             name: obj.name().to_string(),
@@ -358,9 +536,9 @@ pub struct Scene3D {
 }
 
 impl Scene3D {
-    fn load_from_alembic_inner(path: &Path) -> Result<Self, anyhow::Error> {
+    fn load_from_alembic_inner(device: &Device, path: &Path) -> Result<Self, anyhow::Error> {
         let archive = alembic_ogawa::Archive::open(path)?;
-        let root = Object::load_alembic_object_recursive(&archive.root()?)?;
+        let root = Object::load_alembic_object_recursive(device, &archive.root()?)?;
         Ok(Self { root })
     }
 }
@@ -372,6 +550,7 @@ mod tests {
     #[test]
     fn test_load_alembic() {
         let path = Path::new("../alembic-ogawa/tests/data/ellie_animation.abc");
-        let scene = Scene3D::load_from_alembic_inner(path).unwrap();
+        let (device, _) = unsafe { graal::create_device_and_command_stream_with_surface(None).unwrap() };
+        let scene = Scene3D::load_from_alembic_inner(&device, path).unwrap();
     }
 }

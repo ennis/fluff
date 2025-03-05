@@ -69,6 +69,10 @@ impl ObjectReader {
     pub fn name(&self) -> &str {
         &self.header.name
     }
+    
+    pub fn path(&self) -> &str {
+        &self.header.path
+    }
 
     /// Returns the number of child objects.
     pub fn child_count(&self) -> usize {

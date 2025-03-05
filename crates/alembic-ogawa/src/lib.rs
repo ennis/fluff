@@ -42,11 +42,14 @@ pub struct TimeSample<T> {
     pub value: T,
 }
 
+pub type SampleIndex = usize;
+
 // Reexports
 pub use archive::{Archive, TimeSampling};
 pub use metadata::Metadata;
 pub use object::ObjectReader;
-pub use property::{ArrayPropertyReader, CompoundPropertyReader, NDArraySample, PropertyType, ScalarPropertyReader};
+pub use data_type::DataType;
+pub use property::{ArrayPropertyReader, CompoundPropertyReader, NDArraySample, PropertyType, ScalarPropertyReader, TypedArrayPropertyReader, TypedScalarPropertyReader};
 
 // Q: should reader objects keep a reference to the archive?
 // Options:
@@ -132,20 +135,27 @@ mod tests {
     fn polymesh_schema() {
         let archive = Archive::open("tests/data/ellie_animation.abc").unwrap();
         let root = archive.root().unwrap();
+        // "/GEO-ellie_fannypack_strap_end_001/Data_GEO-ellie_fannypack_strap_end"
         let mesh = PolyMesh::new(
-            root.get("RIG-Ellie_001").unwrap()
-                .get("GEO-ellie_jacket_pin_5_001").unwrap()
-                .get("Data_GEO-ellie_jacket_pin_5").unwrap().properties(),
+            root.get("GEO-ellie_fannypack_strap_end_001").unwrap()
+                .get("Data_GEO-ellie_fannypack_strap_end").unwrap().properties(),
             ".geom",
         )
         .unwrap();
 
-        // dump all positions
-        for s in 0..mesh.sample_count() {
-            let time = mesh.positions.time_sampling().get_sample_time(s).unwrap();
-            let positions = mesh.positions.get(s).unwrap();
-            assert_eq!(positions.dimensions.len(), 1);
-            eprintln!("time={}, positions={:?}", time, positions.values);
+        // dump all indices
+        for s in 0..mesh.face_counts.sample_count() {
+            //let time = mesh.positions.time_sampling().get_sample_time(s).unwrap();
+            //let positions = mesh.positions.get(s).unwrap();
+            //assert_eq!(positions.dimensions.len(), 1);
+            //let indices = mesh.face_indices.get(s).unwrap();
+            //assert_eq!(indices.dimensions.len(), 1);
+            //let counts = mesh.face_counts.get(s).unwrap();
+           // assert_eq!(counts.dimensions.len(), 1);
+            
+            let face_counts = mesh.face_counts.get(0);
+
+            eprintln!("counts={:?}", face_counts);
         }
     }
 }
