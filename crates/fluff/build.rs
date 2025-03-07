@@ -20,6 +20,10 @@ fn main() {
 
         // Translate `slang/shared.slang`
         let slang_shared = Path::new(SLANG_SHARED);
+        // FIXME: this works, more or less, but the RustRover doesn't update its browsing info
+        //        when a shader is changed (need to clear the caches). This results in an extremely
+        //        poor developer experience. There wasn't a problem when we did the opposite
+        //        (generating shader code from rust structs).
         translate_slang_shared_decls(slang_shared, &mut output);
 
         // Compile and embed shaders

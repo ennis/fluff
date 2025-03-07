@@ -453,3 +453,4 @@ TODO:
 
 # Scalability
 When drawing close on a surface, should still look good when zooming **out**. Strokes should be properly filtered (anisotropic).
+

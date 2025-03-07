@@ -7,17 +7,10 @@ mod surface;
 mod types;
 pub mod util;
 
-use std::{
-    borrow::Cow,
-    marker::PhantomData,
-    ops::{Bound, RangeBounds},
-    os::raw::c_void,
-    ptr::NonNull,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::{borrow::Cow, marker::PhantomData, mem, ops::{Bound, RangeBounds}, os::raw::c_void, ptr::NonNull, sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+}};
 use std::mem::MaybeUninit;
 use tracing::debug;
 
@@ -68,6 +61,14 @@ pub struct DeviceAddressUntyped {
 pub struct DeviceAddress<T: ?Sized + 'static> {
     pub address: vk::DeviceAddress,
     pub _phantom: PhantomData<T>,
+}
+
+impl<T: ?Sized + 'static> DeviceAddress<T> {
+    /// Null (invalid) device address.
+    pub const NULL: Self = DeviceAddress {
+        address: 0,
+        _phantom: PhantomData,
+    };
 }
 
 impl<T: 'static> DeviceAddress<[T]> {
@@ -397,6 +398,15 @@ impl BufferUntyped {
         self.mapped_ptr
             .expect("buffer was not mapped in host memory (consider using MemoryLocation::CpuToGpu)")
             .as_ptr() as *mut u8
+    }
+
+    pub unsafe fn cast<T: Copy>(&self) -> &Buffer<[T]> {
+        if self.byte_size() % size_of::<T>() as u64 != 0 {
+            panic!("buffer size is not a multiple of the element size");
+        }
+        // TODO: alignment checks?
+        // SAFETY: Buffer<[T]> is a transparent wrapper around BufferUntyped (they have the same layout)
+        mem::transmute(self)
     }
 }
 
@@ -804,6 +814,7 @@ impl BufferUntyped {
 }
 
 /// Typed buffers.
+#[repr(transparent)]
 pub struct Buffer<T: ?Sized> {
     pub untyped: BufferUntyped,
     _marker: PhantomData<T>,

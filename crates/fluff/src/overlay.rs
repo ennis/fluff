@@ -493,11 +493,11 @@ impl OverlayRenderer {
 
         let vertex_buffer = encoder
             .device()
-            .upload_array_buffer(BufferUsage::VERTEX_BUFFER, &self.vertices);
+            .upload_slice(BufferUsage::VERTEX_BUFFER, &self.vertices);
         vertex_buffer.set_name("overlay vertex buffer");
         let index_buffer = encoder
             .device()
-            .upload_array_buffer(BufferUsage::INDEX_BUFFER, &self.indices);
+            .upload_slice(BufferUsage::INDEX_BUFFER, &self.indices);
         index_buffer.set_name("overlay index buffer");
 
         encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
@@ -507,7 +507,7 @@ impl OverlayRenderer {
         if !self.line_vertices.is_empty() {
             let line_vertex_buffer = encoder
                 .device()
-                .upload_array_buffer(BufferUsage::STORAGE_BUFFER, &self.line_vertices);
+                .upload_slice(BufferUsage::STORAGE_BUFFER, &self.line_vertices);
             line_vertex_buffer.set_name("overlay line vertex buffer");
 
             encoder.bind_graphics_pipeline(&self.line_pipeline);

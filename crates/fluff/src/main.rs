@@ -26,7 +26,6 @@ mod shaders;
 mod point_painter;
 mod ui;
 mod scene;
-mod tool;
 mod animation;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
@@ -36,7 +35,6 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         egui::FontData::from_static(include_bytes!("../../../data/Inter-Medium.otf")),
     );
 
-    //egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     fonts
         .families
         .entry(FontFamily::Proportional)

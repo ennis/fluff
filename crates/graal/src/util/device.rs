@@ -9,7 +9,7 @@ pub trait DeviceExt {
         memory_location: MemoryLocation,
         len: usize,
     ) -> Buffer<[T]>;
-    fn upload_array_buffer<T: Copy>(&self, usage: BufferUsage, data: &[T]) -> Buffer<[T]>;
+    fn upload_slice<T: Copy>(&self, usage: BufferUsage, data: &[T]) -> Buffer<[T]>;
 }
 
 impl DeviceExt for Device {
@@ -23,7 +23,7 @@ impl DeviceExt for Device {
         Buffer::new(buffer)
     }
 
-    fn upload_array_buffer<T: Copy>(&self, usage: BufferUsage, data: &[T]) -> Buffer<[T]> {
+    fn upload_slice<T: Copy>(&self, usage: BufferUsage, data: &[T]) -> Buffer<[T]> {
         let buffer = self.create_array_buffer(usage, MemoryLocation::CpuToGpu, data.len());
         unsafe {
             // copy data to mapped buffer
@@ -38,7 +38,7 @@ impl DeviceExt for Device {
     }
 
     fn upload<T: Copy>(&self, usage: BufferUsage, data: &T) -> Buffer<T> {
-        let buffer = self.upload_array_buffer(usage, slice::from_ref(data));
+        let buffer = self.upload_slice(usage, slice::from_ref(data));
         Buffer::new(buffer.untyped)
     }
 }

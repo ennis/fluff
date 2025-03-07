@@ -183,10 +183,10 @@ impl Renderer {
                 unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
             let vertex_buffer = cmd
                 .device()
-                .upload_array_buffer(BufferUsage::VERTEX_BUFFER, vertex_data);
+                .upload_slice(BufferUsage::VERTEX_BUFFER, vertex_data);
             let index_buffer = cmd
                 .device()
-                .upload_array_buffer(BufferUsage::INDEX_BUFFER, &mesh.indices);
+                .upload_slice(BufferUsage::INDEX_BUFFER, &mesh.indices);
             vertex_buffer.set_name("egui vertex buffer");
             index_buffer.set_name("egui index buffer");
             mesh_vertex_buffers.push(vertex_buffer);

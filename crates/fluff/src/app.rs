@@ -1,44 +1,39 @@
 use crate::shaders::TemporalAverageParams;
-use egui::{color_picker::{color_edit_button_srgba, Alpha}, Align2, Color32, DragValue, FontId, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, Ui, Widget, TextureHandle};
-use egui_extras::{Column, TableBuilder};
-use glam::{dvec2, dvec3, uvec2, vec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3Swizzles, Vec4Swizzles, Vec3};
-use graal::{prelude::*, Barrier, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment, Descriptor, DeviceAddress, ImageAccess, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassInfo, Texture2DHandleRange, ImageHandle};
-use std::{
-    collections::BTreeMap,
-    fs, mem,
-    path::{Path, PathBuf},
-    ptr,
+use egui::color_picker::{color_edit_button_srgba, Alpha};
+use egui::{
+    Align2, Color32, DragValue, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, TextureHandle, Ui,
+    Widget,
 };
+use egui_extras::{Column, TableBuilder};
+use glam::{dvec2, dvec3, uvec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3, Vec3Swizzles, Vec4Swizzles};
+use graal::prelude::*;
+use graal::{
+    Barrier, Buffer, BufferRange, ColorAttachment, ComputePipeline, ComputePipelineCreateInfo, DepthStencilAttachment,
+    Descriptor, DeviceAddress, ImageAccess, ImageCopyBuffer, ImageCopyView, ImageDataLayout, ImageHandle,
+    ImageSubresourceLayers, ImageView, Point3D, Rect3D, RenderPassInfo, Texture2DHandleRange,
+};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
-use egui::ImageData::Color;
-use tracing::{error, info, trace, warn};
+use std::{fs, ptr};
+use tracing::{info, trace, warn};
 
 use houdinio::Geo;
 use rand::{random, thread_rng, Rng};
-use uniform_cubic_splines::{spline, spline_inverse};
 use uniform_cubic_splines::basis::CatmullRom;
+use uniform_cubic_splines::{spline, spline_inverse};
 //use splines::Spline;
-use winit::{
-    event::{MouseButton, TouchPhase},
-    keyboard::NamedKey,
-};
+use winit::event::{MouseButton, TouchPhase};
+use winit::keyboard::NamedKey;
 
-use crate::{
-    camera_control::CameraControl,
-    engine::{Error},
-    overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer},
-    shaders,
-    shaders::{
-        ControlPoint, CurveDesc, DrawCurvesPushConstants, TileData,
-    },
-    util::resolve_file_sequence,
-};
-use crate::engine::PipelineCache;
-use crate::util::AppendBuffer;
-use crate::shaders::{Stroke, StrokeVertex, SUBGROUP_SIZE};
-use crate::scene::{Scene, load_stroke_animation_data};
+use crate::camera_control::{Camera, CameraControl};
+use crate::engine::{Error, PipelineCache, PrimitiveRenderPipelineDesc2};
+use crate::overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer};
+use crate::scene::{DebugRenderVisitor, Scene3D};
+use crate::shaders;
+use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex, TileData, SUBGROUP_SIZE};
 use crate::ui::{curve_editor_button, icon_button};
-
+use crate::util::{resolve_file_sequence, AppendBuffer};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -74,7 +69,11 @@ fn load_brush_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: Im
 
     // read image data
     unsafe {
-        ptr::copy_nonoverlapping(gray_image.as_raw().as_ptr(), staging_buffer.as_mut_ptr(), byte_size as usize);
+        ptr::copy_nonoverlapping(
+            gray_image.as_raw().as_ptr(),
+            staging_buffer.as_mut_ptr(),
+            byte_size as usize,
+        );
     }
     cmd.copy_buffer_to_image(
         ImageCopyBuffer {
@@ -91,7 +90,11 @@ fn load_brush_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: Im
             origin: vk::Offset3D { x: 0, y: 0, z: 0 },
             aspect: vk::ImageAspectFlags::COLOR,
         },
-        vk::Extent3D { width, height, depth: 1 },
+        vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        },
     );
 
     image
@@ -106,13 +109,12 @@ struct GeoFileData {
     geometry: Geo,
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
     let image = device.create_image(&ImageCreateInfo {
         memory_location: MemoryLocation::GpuOnly,
         type_: ImageType::Image2D,
-        usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+        usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSFER_DST,
         format: Format::D32_SFLOAT,
         width,
         height,
@@ -232,7 +234,9 @@ pub struct App {
     global_shader_macros: BTreeMap<String, String>,
     pcache: PipelineCache,
 
-    animation: Option<Scene>,
+    //animation: Option<Scene>,
+
+    scene_next: Scene3D,
 
     frame: i32,
     mode: RenderMode,
@@ -281,7 +285,6 @@ pub struct App {
     opacity_profile_pos: glam::Vec4,
     opacity_profile: glam::Vec4,
     opacity_response_curve: CubicCurve,
-
 }
 
 impl App {
@@ -363,14 +366,15 @@ impl App {
         Ok(())
     }*/
 
-
     fn setup(&mut self, cmd: &mut CommandStream, color_target: Image, width: u32, height: u32) -> Result<(), Error> {
         //let engine = &mut self.engine;
 
-        let Some(ref animation) = self.animation else { return Ok(()) };
-        let anim_frame = &animation.frames[self.current_frame];
-        let curve_count = anim_frame.curve_range.count;
-        let base_curve_index = anim_frame.curve_range.start;
+        //let Some(ref animation) = self.animation else {
+        //    return Ok(());
+        //};
+        //let anim_frame = &animation.frames[self.current_frame];
+        //let curve_count = anim_frame.curve_range.count;
+        //let base_curve_index = anim_frame.curve_range.start;
         let frame = self.current_frame as u32;
         let stroke_width = self.bin_rast_stroke_width;
         let viewport_size = [width, height];
@@ -385,9 +389,9 @@ impl App {
 
         let camera = self.camera_control.camera();
         let scene_params = shaders::SceneParams {
-            view: camera.view.to_cols_array_2d(),
-            proj: camera.projection.to_cols_array_2d(),
-            view_proj: camera.view_projection().to_cols_array_2d(),
+            view_matrix: camera.view.to_cols_array_2d(),
+            projection_matrix: camera.projection.to_cols_array_2d(),
+            view_projection_matrix: camera.view_projection().to_cols_array_2d(),
             eye: self.camera_control.eye().as_vec3(),
             // TODO frustum parameters
             near_clip: camera.frustum.near_plane,
@@ -400,7 +404,6 @@ impl App {
             cursor_pos: Default::default(),
             time,
         };
-
 
         // FIXME: can we maybe make `STORAGE_BUFFER` a bit less screaming?
         let scene_params_buf = self.device.upload(BufferUsage::STORAGE_BUFFER, &scene_params);
@@ -423,12 +426,14 @@ impl App {
         //    tile_count_x as usize * tile_count_y as usize,
         //);
 
-
-        let brush_texture_handles: Vec<_> = self.brush_textures.iter().map(|b| b.image_view.device_image_handle()).collect();
-        let brush_textures = self.device.upload_array_buffer(
-            BufferUsage::STORAGE_BUFFER,
-            &brush_texture_handles,
-        );
+        let brush_texture_handles: Vec<_> = self
+            .brush_textures
+            .iter()
+            .map(|b| b.image_view.device_image_handle())
+            .collect();
+        let brush_textures = self
+            .device
+            .upload_slice(BufferUsage::STORAGE_BUFFER, &brush_texture_handles);
 
         // TODO: consider allocating top-level image views alongside the image itself
         let color_target_view = color_target.create_top_level_view();
@@ -467,10 +472,9 @@ impl App {
         //    },
         //)?;
 
-        let temporal_average_pipeline = self.pcache.create_compute_pipeline(
-            "temporal_average",
-            &shaders::TEMPORAL_AVERAGE,
-        )?;
+        let temporal_average_pipeline = self
+            .pcache
+            .create_compute_pipeline("temporal_average", &shaders::TEMPORAL_AVERAGE)?;
 
         //let draw_strokes_pipeline = engine.create_mesh_render_pipeline(
         //    "draw_strokes",
@@ -595,7 +599,6 @@ impl App {
             _ => {}
         }*/
 
-
         if self.temporal_average {
             cmd.reference_resource(&temporal_avg_view);
             cmd.barrier(
@@ -692,9 +695,20 @@ impl App {
         }
         self.settings.last_geom_file = Some(path.to_path_buf());
         self.settings.save();
-        let geoms: Vec<_> = geo_files.into_iter().map(|g| g.geometry).collect();
-        self.animation = Some(load_stroke_animation_data(&self.device, &geoms));
+        //let geoms: Vec<_> = geo_files.into_iter().map(|g| g.geometry).collect();
+        //self.animation = Some(load_stroke_animation_data(&self.device, &geoms));
         self.current_frame = 0;
+    }
+
+    fn load_alembic_cache(&mut self, path: &Path) {
+        match Scene3D::load_from_alembic(&self.device, path) {
+            Ok(scene) => {
+                self.scene_next = scene;
+            }
+            Err(err) => {
+                eprintln!("Error loading alembic file: {}", err);
+            }
+        }
     }
 }
 
@@ -762,7 +776,7 @@ impl App {
         // load tweaks
         let mut pcache = PipelineCache::new(device.clone());
         let settings = SavedSettings::load().unwrap_or_default();
-        let tweaks: BTreeMap<String,String> = settings
+        let tweaks: BTreeMap<String, String> = settings
             .tweaks
             .iter()
             .filter(|tweak| tweak.enabled)
@@ -770,9 +784,10 @@ impl App {
             .collect();
         pcache.set_global_macro_definitions(tweaks.clone());
 
-        let mut app = App {
+        let app = App {
             device: device.clone(),
-            animation: None,
+            //animation: None,
+            scene_next: Scene3D::new(),
             depth_buffer,
             depth_buffer_view,
             color_target_format,
@@ -829,7 +844,10 @@ impl App {
         self.temporal_avg_image = device.create_image(&ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
             type_: ImageType::Image2D,
-            usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::COLOR_ATTACHMENT,
+            usage: ImageUsage::STORAGE
+                | ImageUsage::TRANSFER_SRC
+                | ImageUsage::TRANSFER_DST
+                | ImageUsage::COLOR_ATTACHMENT,
             format: Format::R16G16B16A16_SFLOAT,
             width,
             height,
@@ -842,7 +860,10 @@ impl App {
         self.frame_image = device.create_image(&ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
             type_: ImageType::Image2D,
-            usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::COLOR_ATTACHMENT,
+            usage: ImageUsage::STORAGE
+                | ImageUsage::TRANSFER_SRC
+                | ImageUsage::TRANSFER_DST
+                | ImageUsage::COLOR_ATTACHMENT,
             format: Format::R16G16B16A16_SFLOAT,
             width,
             height,
@@ -872,7 +893,9 @@ impl App {
         let camera = self.camera_control.camera();
 
         // project points on screen-aligned plane
-        let Some(first_point) = self.pen_points.first().cloned() else { return };
+        let Some(first_point) = self.pen_points.first().cloned() else {
+            return;
+        };
         let (eye, dir) = camera.screen_to_world_ray(first_point.position);
         let ground_plane = Plane::new(dvec3(0.0, 1.0, 0.0), dvec3(0.0, 0.0, 0.0));
 
@@ -903,11 +926,14 @@ impl App {
                 [self.opacity_profile_pos.z as f64, self.opacity_profile.z as f64],
                 [self.opacity_profile_pos.w as f64, self.opacity_profile.w as f64],
             )).as_vec4();*/
-            let color = *egui::Rgba::from(self.stroke_color).to_array().first_chunk::<4>().unwrap();
+            let color = *egui::Rgba::from(self.stroke_color)
+                .to_array()
+                .first_chunk::<4>()
+                .unwrap();
 
             //trace!("projected points: {:#?}", proj_points);
 
-            if let Some(ref mut anim) = self.animation.as_mut() {
+            /*if let Some(ref mut anim) = self.animation.as_mut() {
                 let base_vertex = anim.stroke_vertex_buffer.len() as u32;
                 let mut arc_length = 0.0;
                 let mut prev_pt = proj_points.first().unwrap().0;
@@ -918,7 +944,12 @@ impl App {
                     anim.stroke_vertex_buffer.push(StrokeVertex {
                         pos: point.as_vec3(),
                         s: *screen_space_arc_length as f32,
-                        color: [(color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8, (color[3] * 255.) as u8],
+                        color: [
+                            (color[0] * 255.) as u8,
+                            (color[1] * 255.) as u8,
+                            (color[2] * 255.) as u8,
+                            (color[3] * 255.) as u8,
+                        ],
                         width: (mapped_pressure * 255.) as u8,
                         opacity: (mapped_opacity * 255.) as u8,
                     });
@@ -931,7 +962,7 @@ impl App {
                     arc_length,
                 });
                 anim.frames[0].stroke_count += 1;
-            }
+            }*/
         }
     }
 
@@ -944,12 +975,11 @@ impl App {
         }
 
         if self.is_drawing {
-            let mut pressure = if let Some(force) = touch_event.force {
+            let pressure = if let Some(force) = touch_event.force {
                 force.normalized()
             } else {
                 1.0
             };
-
 
             const PEN_SPACING_THRESHOLD: f64 = 40.0;
 
@@ -995,17 +1025,24 @@ impl App {
         let blue = [0, 0, 255, 255];
 
         self.overlay.line(dvec3(0.0, 0.0, 0.0), dvec3(0.95, 0.0, 0.0), red, red);
-        self.overlay.line(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.95, 0.0), green, green);
-        self.overlay.line(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 0.95), blue, blue);
+        self.overlay
+            .line(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.95, 0.0), green, green);
+        self.overlay
+            .line(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 0.95), blue, blue);
 
-        self.overlay.cone(vec3(0.95, 0.0, 0.0), vec3(1.0, 0.0, 0.0), 0.02, red, red);
-        self.overlay.cone(vec3(0.0, 0.95, 0.0), vec3(0.0, 1.0, 0.0), 0.02, green, green);
-        self.overlay.cone(vec3(0.0, 0.0, 0.95), vec3(0.0, 0.0, 1.0), 0.02, blue, blue);
+        self.overlay
+            .cone(vec3(0.95, 0.0, 0.0), vec3(1.0, 0.0, 0.0), 0.02, red, red);
+        self.overlay
+            .cone(vec3(0.0, 0.95, 0.0), vec3(0.0, 1.0, 0.0), 0.02, green, green);
+        self.overlay
+            .cone(vec3(0.0, 0.0, 0.95), vec3(0.0, 0.0, 1.0), 0.02, blue, blue);
 
         let camera = self.camera_control.camera();
         let pen_line = self.pen_points.iter().map(|p| p.position).collect::<Vec<_>>();
-        self.overlay.screen_polyline(&camera, pen_line.as_slice(), [255, 128, 0, 255]);
+        self.overlay
+            .screen_polyline(&camera, pen_line.as_slice(), [255, 128, 0, 255]);
     }
+
 
     pub fn render(&mut self, cmd: &mut CommandStream, image: &Image) {
         if self.frame == 0 {
@@ -1052,6 +1089,65 @@ impl App {
                 [255, 255, 0, 255],
             );
         }
+
+        // Debug draw scene
+        cmd.debug_group("Scene", |cmd| {
+            let camera = self.camera_control.camera();
+
+            let geometry_pipeline = self.pcache.create_primitive_pipeline("geometry", &PrimitiveRenderPipelineDesc2 {
+                vertex_shader: shaders::GEOMETRY_VERTEX_SHADER,
+                fragment_shader: shaders::GEOMETRY_FRAGMENT_SHADER,
+                color_targets: vec![
+                    ColorTargetState {
+                        format: color_target_view.format(),
+                        blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
+                        ..Default::default()
+                    }
+                ],
+                rasterization_state: Default::default(),
+                depth_stencil_state: Some(DepthStencilState {
+                    format: Format::D32_SFLOAT,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    stencil_state: StencilState::default(),
+                }),
+                multisample_state: Default::default(),
+            }).unwrap();
+
+            let scene_params = cmd.upload_temporary(&shaders::SceneParams {
+                view_matrix: camera.view.to_cols_array_2d(),
+                projection_matrix: camera.projection.to_cols_array_2d(),
+                view_projection_matrix: camera.view_projection().to_cols_array_2d(),
+                eye: self.camera_control.eye().as_vec3(),
+                // TODO frustum parameters
+                near_clip: camera.frustum.near_plane,
+                far_clip: camera.frustum.far_plane,
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+                viewport_size: uvec2(width, height),
+                cursor_pos: Default::default(),
+                time: self.start_time.elapsed().as_secs_f32(),
+            });
+
+            let mut v = DebugRenderVisitor { camera: &camera, scene_params };
+            let mut encoder = cmd.begin_rendering(RenderPassInfo {
+                color_attachments: &[ColorAttachment {
+                    image_view: &color_target_view,
+                    clear_value: Some([0.0, 0.0, 0.0, 1.0]),
+                }],
+                depth_stencil_attachment: Some(DepthStencilAttachment {
+                    image_view: &self.depth_buffer_view,
+                    depth_clear_value: Some(1.0),
+                    stencil_clear_value: None,
+                }),
+            });
+            encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);
+            encoder.set_scissor(0, 0, width, height);
+            encoder.bind_graphics_pipeline(&geometry_pipeline);
+            self.scene_next.draw(&mut encoder, 0.0, &mut v);
+        });
 
         // Draw overlay
         cmd.debug_group("Overlay", |cmd| {
@@ -1127,9 +1223,18 @@ impl App {
                 ui.menu_button("File", |ui| {
                     if ui.button("Load .geo...").clicked() {
                         use rfd::FileDialog;
-                        let file = FileDialog::new().add_filter("Houdini JSON geometry", &["geo"]).pick_file();
+                        let file = FileDialog::new()
+                            .add_filter("Houdini JSON geometry", &["geo"])
+                            .pick_file();
                         if let Some(ref file) = file {
                             self.load_geo_file(file);
+                        }
+                    }
+                    if ui.button("Load alembic cache").clicked() {
+                        use rfd::FileDialog;
+                        let file = FileDialog::new().add_filter("Alembic cache", &["abc"]).pick_file();
+                        if let Some(ref file) = file {
+                            self.load_alembic_cache(file);
                         }
                     }
                     if egui::Button::new("Reload last geometry")
@@ -1160,15 +1265,21 @@ impl App {
                 ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
                 ui.label(format!("{:.2} ms/frame ({:.0} FPS)", dt * 1000., 1.0 / dt));
-                if let Some(anim) = &self.animation {
+                /*if let Some(anim) = &self.animation {
                     let curve_count = anim.frames[self.current_frame].curve_range.count;
                     let point_count = anim.position_buffer.len();
                     let stroke_count = anim.frames[self.current_frame].stroke_count;
                     let stroke_vertex_count = anim.stroke_vertex_buffer.len();
                     //ui.label(format!("{} points", point_count));
-                    ui.label(format!("{} curves (current frame), {} points (all frames)", curve_count, point_count));
-                    ui.label(format!("{} strokes (current frame), {} stroke vertices (all frames)", stroke_count, stroke_vertex_count));
-                }
+                    ui.label(format!(
+                        "{} curves (current frame), {} points (all frames)",
+                        curve_count, point_count
+                    ));
+                    ui.label(format!(
+                        "{} strokes (current frame), {} stroke vertices (all frames)",
+                        stroke_count, stroke_vertex_count
+                    ));
+                }*/
             });
 
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -1214,12 +1325,12 @@ impl App {
 
             ui.heading("Animation");
 
-            if let Some(ref animation) = self.animation {
+           /* if let Some(ref animation) = self.animation {
                 egui::DragValue::new(&mut self.current_frame)
                     .clamp_range(0..=(animation.frames.len() - 1))
                     .custom_formatter(|n, _| format!("Frame {} of {}", n, animation.frames.len()))
                     .ui(ui);
-            }
+            }*/
 
             ui.heading("Global settings");
 
@@ -1318,34 +1429,102 @@ impl App {
             });
             ui.label("Stroke width profile");
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.width_profile_pos.x).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.width_profile_pos.y).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.width_profile_pos.z).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.width_profile_pos.w).speed(0.01).clamp_range(0.0..=1.0));
+                ui.add(
+                    DragValue::new(&mut self.width_profile_pos.x)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile_pos.y)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile_pos.z)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile_pos.w)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
             });
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.width_profile.x).speed(0.1).clamp_range(0.0..=40.0));
-                ui.add(DragValue::new(&mut self.width_profile.y).speed(0.1).clamp_range(0.0..=40.0));
-                ui.add(DragValue::new(&mut self.width_profile.z).speed(0.1).clamp_range(0.0..=40.0));
-                ui.add(DragValue::new(&mut self.width_profile.w).speed(0.1).clamp_range(0.0..=40.0));
+                ui.add(
+                    DragValue::new(&mut self.width_profile.x)
+                        .speed(0.1)
+                        .clamp_range(0.0..=40.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile.y)
+                        .speed(0.1)
+                        .clamp_range(0.0..=40.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile.z)
+                        .speed(0.1)
+                        .clamp_range(0.0..=40.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.width_profile.w)
+                        .speed(0.1)
+                        .clamp_range(0.0..=40.0),
+                );
             });
             ui.label("Stroke opacity profile");
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.opacity_profile_pos.x).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile_pos.y).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile_pos.z).speed(0.01).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile_pos.w).speed(0.01).clamp_range(0.0..=1.0));
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile_pos.x)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile_pos.y)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile_pos.z)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile_pos.w)
+                        .speed(0.01)
+                        .clamp_range(0.0..=1.0),
+                );
             });
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.opacity_profile.x).speed(0.1).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile.y).speed(0.1).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile.z).speed(0.1).clamp_range(0.0..=1.0));
-                ui.add(DragValue::new(&mut self.opacity_profile.w).speed(0.1).clamp_range(0.0..=1.0));
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile.x)
+                        .speed(0.1)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile.y)
+                        .speed(0.1)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile.z)
+                        .speed(0.1)
+                        .clamp_range(0.0..=1.0),
+                );
+                ui.add(
+                    DragValue::new(&mut self.opacity_profile.w)
+                        .speed(0.1)
+                        .clamp_range(0.0..=1.0),
+                );
             });
 
             ui.horizontal(|ui| {
                 ui.label("Width response");
-                curve_editor_button(ui, &mut self.settings.pressure_response_curve.knots, &mut self.settings.pressure_response_curve.values);
+                curve_editor_button(
+                    ui,
+                    &mut self.settings.pressure_response_curve.knots,
+                    &mut self.settings.pressure_response_curve.values,
+                );
                 if ui.button("Load default").clicked() {
                     self.settings.pressure_response_curve = Default::default();
                 }
@@ -1353,7 +1532,11 @@ impl App {
 
             ui.horizontal(|ui| {
                 ui.label("Opacity response");
-                curve_editor_button(ui, &mut self.opacity_response_curve.knots, &mut self.opacity_response_curve.values);
+                curve_editor_button(
+                    ui,
+                    &mut self.opacity_response_curve.knots,
+                    &mut self.opacity_response_curve.values,
+                );
                 if ui.button("Load default").clicked() {
                     self.opacity_response_curve = Default::default();
                 }

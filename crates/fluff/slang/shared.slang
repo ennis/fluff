@@ -49,9 +49,9 @@ struct ControlPoint {
 
 // Scene camera parameters.
 struct SceneParams {
-    float4x4 view;
-    float4x4 proj;
-    float4x4 viewProj;
+    float4x4 viewMatrix;
+    float4x4 projectionMatrix;
+    float4x4 viewProjectionMatrix;
     float3 eye;
     float nearClip;
     float farClip;
@@ -116,3 +116,16 @@ struct PushConstants {
     float* pointer;
 };
 */
+
+struct GeometryData {
+    SceneParams* sceneParams;
+    uint* indices;
+    // Attribute buffers
+    float3* position;
+    float3* normal;
+    float2* texcoord;
+    float4* color;
+
+    // Object to world transform
+    float4x4 modelMatrix;
+};

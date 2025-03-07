@@ -400,7 +400,7 @@ impl CommandStream {
         pipeline_layout: vk::PipelineLayout,
         data: &[MaybeUninit<u8>],
     ) {
-        let size = mem::size_of_val(data);
+        let size = size_of_val(data);
 
         // Minimum push constant size guaranteed by Vulkan is 128 bytes.
         assert!(size <= 128, "push constant size must be <= 128 bytes");
@@ -556,7 +556,7 @@ impl CommandStream {
         self.pop_debug_group();
     }
 
-    /// Specifies that the resource will be used in the current frame.
+    /// Specifies that the resource will be used in the current submission.
     pub fn reference_resource<R: GpuResource>(&mut self, resource: &R) {
         resource.set_last_submission_index(self.submission_index);
     }

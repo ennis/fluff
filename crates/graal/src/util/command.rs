@@ -1,7 +1,4 @@
-use crate::{
-    aspects_for_format, util::DeviceExt, vk, BufferUsage, CommandStream, Image, ImageCopyBuffer, ImageCopyView,
-    ImageCreateInfo, ImageDataLayout, ImageSubresourceLayers, ImageUsage, Point3D, Rect3D, Size3D,
-};
+use crate::{aspects_for_format, util::DeviceExt, vk, BufferUsage, CommandStream, DeviceAddress, Image, ImageCopyBuffer, ImageCopyView, ImageCreateInfo, ImageDataLayout, ImageSubresourceLayers, ImageUsage, Point3D, Rect3D, Size3D};
 
 pub trait CommandStreamExt {
     /// Copies the data to a region of an image.
@@ -16,11 +13,19 @@ pub trait CommandStreamExt {
 
     /// Shorthand to `blit_image` for blitting the top-level mip level of an image.
     fn blit_full_image_top_mip_level(&mut self, src: &Image, dst: &Image);
+
+    /// Uploads data to a read-only storage buffer and returns a device pointer to it, valid
+    /// **only** for the current submission (i.e. until the next call to `present` or `flush`).
+    fn upload_temporary<T: Copy>(&mut self, data: &T) -> DeviceAddress<T>;
+    
+    /// Uploads a slice of data to a read-only storage buffer and returns a device pointer to it, valid
+    /// **only** for the current submission (i.e. until the next call to `present` or `flush`).
+    fn upload_temporary_slice<T: Copy>(&mut self, data: &[T]) -> DeviceAddress<[T]>;
 }
 
 impl CommandStreamExt for CommandStream {
     fn upload_image_data(&mut self, image: ImageCopyView, size: Size3D, data: &[u8]) {
-        let staging_buffer = self.device().upload_array_buffer(BufferUsage::TRANSFER_SRC, data);
+        let staging_buffer = self.device().upload_slice(BufferUsage::TRANSFER_SRC, data);
 
         let width = image.image.size().width;
         let height = image.image.size().height;
@@ -100,5 +105,17 @@ impl CommandStreamExt for CommandStream {
             },
             vk::Filter::NEAREST,
         );
+    }
+
+    fn upload_temporary<T: Copy>(&mut self, data: &T) -> DeviceAddress<T> {
+        let buffer = self.device().upload(BufferUsage::STORAGE_BUFFER, data);
+        self.reference_resource(&buffer);
+        buffer.device_address()
+    }
+
+    fn upload_temporary_slice<T: Copy>(&mut self, data: &[T]) -> DeviceAddress<[T]> {
+        let buffer = self.device().upload_slice(BufferUsage::STORAGE_BUFFER, data);
+        self.reference_resource(&buffer);
+        buffer.device_address()
     }
 }

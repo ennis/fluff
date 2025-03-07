@@ -101,7 +101,7 @@ pub fn compile_and_embed_shaders(
 
         for i in 0..entry_point_count {
             let ep = module.entry_point_by_index(i).unwrap();
-            let module_file_path = PathBuf::from(module.file_path());
+            let module_file_path = PathBuf::from(module.file_path()).canonicalize().unwrap();
             let entry_point_name = ep.function_reflection().name();
             let code = program.entry_point_code(i as i64, 0).unwrap();
 
