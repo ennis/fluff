@@ -1,3 +1,4 @@
+use crate::gpu;
 use crate::scene::{Attribute, Mesh3D, Object, Scene3D};
 use alembic_ogawa::geom::{GeomParam, GeometryScope, MeshTopologyVariance, PolyMesh, XForm};
 use alembic_ogawa::{DataType, ObjectReader, TimeSample, TypedArrayPropertyReader};
@@ -6,6 +7,7 @@ use graal::util::DeviceExt;
 use graal::{BufferUsage, Device, MemoryLocation};
 use std::mem::MaybeUninit;
 use std::path::Path;
+use tracing::{debug, info, warn};
 
 fn triangulate_indices(face_counts: &[i32], indices: &[i32], output: &mut [MaybeUninit<u32>]) {
     let mut ii = 0;
@@ -68,10 +70,10 @@ fn read_geom_param<T: DataType + Copy>(
 
     // number of unique samples
     let unique_sample_count = if let Some(ref indices) = gp.indices {
-        eprintln!("indexed geom param: {} unique samples", indices.dimensions(0)[0]);
+        debug!("indexed geom param: {} unique samples", indices.dimensions(0)[0]);
         indices.dimensions(0)[0]
     } else {
-        eprintln!("non-indexed geom param: {} samples", gp.values.sample_count());
+        debug!("non-indexed geom param: {} samples", gp.values.sample_count());
         gp.values.sample_count()
     };
 
@@ -117,7 +119,8 @@ eprintln!(
 );*/
 
 impl Mesh3D {
-    fn from_alembic(device: &Device, mesh: &PolyMesh) -> Result<Mesh3D, anyhow::Error> {
+    fn from_alembic(mesh: &PolyMesh) -> Result<Mesh3D, anyhow::Error> {
+        let device = gpu::device();
         if !matches!(
             mesh.topology_variance(),
             MeshTopologyVariance::Constant | MeshTopologyVariance::Homogeneous
@@ -178,7 +181,7 @@ impl Mesh3D {
 }
 
 impl Object {
-    fn load_alembic_object_recursive(device: &Device, obj: &ObjectReader) -> Result<Object, anyhow::Error> {
+    fn load_alembic_object_recursive(obj: &ObjectReader) -> Result<Object, anyhow::Error> {
         let mut transform = vec![];
         match XForm::new(obj.properties(), ".xform") {
             Ok(xform) => {
@@ -193,13 +196,13 @@ impl Object {
         }
 
         let mesh = if let Ok(mesh) = PolyMesh::new(obj.properties(), ".geom") {
-            match Mesh3D::from_alembic(device, &mesh) {
+            match Mesh3D::from_alembic(&mesh) {
                 Ok(mesh) => {
-                    eprintln!("loaded mesh: {}", obj.name());
+                    info!("loaded mesh: {}", obj.name());
                     Some(mesh)
                 }
                 Err(err) => {
-                    eprintln!("failed to load mesh `{}`: {}", obj.path(), err);
+                    warn!("failed to load mesh `{}`: {}", obj.path(), err);
                     None
                 }
             }
@@ -209,7 +212,7 @@ impl Object {
 
         let mut children = vec![];
         for child in obj.children() {
-            children.push(Self::load_alembic_object_recursive(device, &child)?);
+            children.push(Self::load_alembic_object_recursive(&child)?);
         }
 
         //eprintln!("loaded object: {}", obj.name());
@@ -224,13 +227,13 @@ impl Object {
 }
 
 impl Scene3D {
-    fn load_from_alembic_inner(device: &Device, path: &Path) -> Result<Self, anyhow::Error> {
+    fn load_from_alembic_inner(path: &Path) -> Result<Self, anyhow::Error> {
         let archive = alembic_ogawa::Archive::open(path)?;
-        let root = Object::load_alembic_object_recursive(device, &archive.root()?)?;
+        let root = Object::load_alembic_object_recursive(&archive.root()?)?;
         Ok(Self { root })
     }
-    
-    pub fn load_from_alembic(device: &Device, path: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
-        Self::load_from_alembic_inner(device, path.as_ref())
+
+    pub fn load_from_alembic(path: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+        Self::load_from_alembic_inner(path.as_ref())
     }
 }

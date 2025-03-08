@@ -257,7 +257,7 @@ fn get_preferred_swapchain_surface_format(surface_formats: &[vk::SurfaceFormatKH
 pub unsafe fn create_device_and_command_stream_with_surface(
     present_surface: Option<vk::SurfaceKHR>,
 ) -> Result<(Device, CommandStream), DeviceCreateError> {
-    let device = Device::new(present_surface)?;
+    let device = Device::with_surface(present_surface)?;
     let command_stream = device.create_command_stream(0);
     Ok((device, command_stream))
 }
@@ -554,10 +554,17 @@ impl Device {
         })
     }
 
+    /// Creates a new `Device`, automatically choosing a suitable physical device.
+    pub fn new() -> Result<Device, DeviceCreateError> {
+        unsafe {
+            Self::with_surface(None)
+        }
+    }
+
     /// Creates a new `Device` that can render to the specified `present_surface` if one is specified.
     ///
     /// Also creates queues as requested.
-    pub unsafe fn new(present_surface: Option<vk::SurfaceKHR>) -> Result<Device, DeviceCreateError> {
+    pub unsafe fn with_surface(present_surface: Option<vk::SurfaceKHR>) -> Result<Device, DeviceCreateError> {
         let instance = get_vulkan_instance();
         let vk_khr_surface = vk_khr_surface();
 

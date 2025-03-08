@@ -1,9 +1,11 @@
 use glam::{vec2, DVec4, Vec3};
 use graal::{BufferUsage, Device, MemoryLocation};
 use houdinio::Geo;
+use crate::gpu;
+use crate::gpu::AppendBuffer;
 use crate::overlay::CubicBezierSegment;
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex};
-use crate::util::{lagrange_interpolate_4, AppendBuffer};
+use crate::util::{lagrange_interpolate_4};
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -53,7 +55,8 @@ pub struct Scene {
 /// * position buffer: contains the control points of curves, all flattened into a single linear buffer.
 /// * curve buffer: consists of (start, size) pairs, defining the start and number of CPs of each curve in the position buffer.
 /// * animation buffer: consists of (start, size) defining the start and number of curves in the curve buffer for each animation frame.
-pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
+pub fn load_stroke_animation_data(geo_files: &[Geo]) -> Scene {
+    let device = gpu::device();
     let mut point_count = 0;
     let mut curve_count = 0;
 
@@ -78,23 +81,21 @@ pub fn load_stroke_animation_data(device: &Device, geo_files: &[Geo]) -> Scene {
     // Curve buffer: contains (start, end) pairs of curves in the point buffer
 
     let mut position_buffer = AppendBuffer::with_capacity(
-        device,
         BufferUsage::STORAGE_BUFFER,
         MemoryLocation::CpuToGpu,
         point_count,
     );
     position_buffer.set_name("control point buffer");
     let mut curve_buffer = AppendBuffer::with_capacity(
-        device,
         BufferUsage::STORAGE_BUFFER,
         MemoryLocation::CpuToGpu,
         curve_count,
     );
     curve_buffer.set_name("curve buffer");
 
-    let mut stroke_vertex_buffer = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+    let mut stroke_vertex_buffer = AppendBuffer::new(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
     stroke_vertex_buffer.set_name("stroke vertex buffer");
-    let mut stroke_buffer = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+    let mut stroke_buffer = AppendBuffer::new(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
     stroke_buffer.set_name("stroke buffer");
 
     let mut frames = vec![];

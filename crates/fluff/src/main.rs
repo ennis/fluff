@@ -1,32 +1,29 @@
 use egui::{FontFamily, FontId, TextStyle, ViewportBuilder, ViewportId};
 use egui_winit::create_window;
 use glam::{dvec2, DVec2};
-use std::{
-    fs,
-    time::{Duration, Instant},
-};
+use std::fs;
+use std::time::{Duration, Instant};
 
 use graal::vk;
-use winit::{
-    event::{Event, MouseScrollDelta, WindowEvent},
-    event_loop::EventLoop,
-    raw_window_handle::HasRawWindowHandle,
-};
+use winit::event::{Event, MouseScrollDelta, WindowEvent};
+use winit::event_loop::EventLoop;
+use winit::raw_window_handle::HasRawWindowHandle;
 
 use crate::app::App;
 
 mod aabb;
+mod animation;
 mod app;
 mod camera_control;
 mod egui_backend;
-mod overlay;
 mod engine;
-mod util;
-mod shaders;
+mod gpu;
+mod overlay;
 mod point_painter;
-mod ui;
 mod scene;
-mod animation;
+mod shaders;
+mod ui;
+mod util;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -50,7 +47,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         (TextStyle::Button, FontId::new(12.0, FontFamily::Proportional)),
         (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
     ]
-        .into();
+    .into();
     ctx.set_style(style);
 }
 
@@ -60,10 +57,14 @@ fn main() {
     // Create the event loop and the main window
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let egui_ctx = egui::Context::default();
-    let window = create_window(&egui_ctx, &event_loop, &ViewportBuilder::default().with_title("Fluff")).expect("failed to create window");
+    let window = create_window(&egui_ctx, &event_loop, &ViewportBuilder::default().with_title("Fluff"))
+        .expect("failed to create window");
+
+    gpu::init();
+    let device = gpu::device();
+    let mut command_stream = gpu::device().create_command_stream(0);
 
     let surface = graal::get_vulkan_surface(window.raw_window_handle().unwrap());
-    let (device, mut command_stream) = unsafe { graal::create_device_and_command_stream_with_surface(Some(surface)).expect("failed to create device") };
     let surface_format = vk::SurfaceFormatKHR {
         format: vk::Format::R16G16B16A16_SFLOAT,
         color_space: Default::default(),
@@ -71,7 +72,7 @@ fn main() {
     let (init_width, init_height) = window.inner_size().into();
     let mut swapchain = unsafe { device.create_swapchain(surface, surface_format, init_width, init_height) };
     let (mut width, mut height) = window.inner_size().into();
-    let mut app = App::new(&device, width, height, surface_format.format);
+    let mut app = App::new(width, height, surface_format.format);
 
     // egui stuff
     let mut egui_winit_state = egui_winit::State::new(egui_ctx, ViewportId::default(), &window, None, None);
@@ -110,7 +111,9 @@ fn main() {
                     }
 
                     match window_event {
-                        WindowEvent::CursorMoved { position, device_id, .. } => {
+                        WindowEvent::CursorMoved {
+                            position, device_id, ..
+                        } => {
                             cursor_pos = dvec2(position.x, position.y);
                             app.cursor_moved(cursor_pos);
                         }
@@ -137,7 +140,7 @@ fn main() {
                         }
                         WindowEvent::Resized(size) => unsafe {
                             (width, height) = (*size).into();
-                            app.resize(&device, width, height);
+                            app.resize(width, height);
                             device.resize_swapchain(&mut swapchain, width, height);
                         },
                         WindowEvent::RedrawRequested => unsafe {
@@ -185,9 +188,9 @@ fn main() {
 
             if event_loop.exiting() {
                 // save egui state
-                egui_winit_state
-                    .egui_ctx()
-                    .memory(|mem| fs::write("egui.json", serde_json::to_string(mem).unwrap()).expect("failed to save egui state"));
+                egui_winit_state.egui_ctx().memory(|mem| {
+                    fs::write("egui.json", serde_json::to_string(mem).unwrap()).expect("failed to save egui state")
+                });
             }
         })
         .expect("event loop run failed");

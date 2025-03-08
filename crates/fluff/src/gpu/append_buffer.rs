@@ -1,6 +1,7 @@
-use std::ptr;
-use graal::{Buffer, BufferUsage, CommandStream, Device, DeviceAddress, MemoryLocation};
+use crate::gpu;
 use graal::util::DeviceExt;
+use graal::{Buffer, BufferUsage, CommandStream, Device, DeviceAddress, MemoryLocation};
+use std::ptr;
 use tracing::trace;
 
 /// A resizable, append-only GPU buffer. Like `Vec<T>` but stored on GPU device memory.
@@ -16,13 +17,14 @@ pub struct AppendBuffer<T> {
 
 impl<T: Copy> AppendBuffer<T> {
     /// Creates an append buffer with the given usage flags and default capacity.
-    pub fn new(device: &Device, usage: BufferUsage, memory_location: MemoryLocation) -> AppendBuffer<T> {
-        Self::with_capacity(device, usage, memory_location, 16)
+    pub fn new(usage: BufferUsage, memory_location: MemoryLocation) -> AppendBuffer<T> {
+        Self::with_capacity(usage, memory_location, 16)
     }
 
     /// Creates an append buffer with the given usage flags and initial capacity.
-    pub fn with_capacity(device: &Device, mut usage: BufferUsage, memory_location: MemoryLocation, capacity: usize) -> Self {
+    pub fn with_capacity(mut usage: BufferUsage, memory_location: MemoryLocation, capacity: usize) -> Self {
         // Add TRANSFER_DST capacity if the buffer is not host-visible
+        let device = gpu::device();
         if memory_location != MemoryLocation::CpuToGpu {
             usage |= BufferUsage::TRANSFER_DST;
         }
@@ -86,11 +88,14 @@ impl<T: Copy> AppendBuffer<T> {
                 self.capacity() * size_of::<T>(),
                 new_capacity * size_of::<T>()
             );
-            let new_buffer = self
-                .buffer
-                .device()
-                .create_array_buffer(self.buffer.usage(), memory_location, new_capacity);
-            cmd.copy_buffer(&self.buffer.untyped, 0, &new_buffer.untyped, 0, (self.len * size_of::<T>()) as u64);
+            let new_buffer = gpu::device().create_array_buffer(self.buffer.usage(), memory_location, new_capacity);
+            cmd.copy_buffer(
+                &self.buffer.untyped,
+                0,
+                &new_buffer.untyped,
+                0,
+                (self.len * size_of::<T>()) as u64,
+            );
             self.buffer = new_buffer;
         }
     }
@@ -105,10 +110,8 @@ impl<T: Copy> AppendBuffer<T> {
                 self.capacity() * size_of::<T>(),
                 new_capacity * size_of::<T>()
             );
-            let new_buffer = self
-                .buffer
-                .device()
-                .create_array_buffer(self.buffer.usage(), self.buffer.memory_location(), new_capacity);
+            let new_buffer =
+                gpu::device().create_array_buffer(self.buffer.usage(), self.buffer.memory_location(), new_capacity);
             // Copy the old data to the new buffer
             unsafe {
                 ptr::copy_nonoverlapping(self.buffer.as_mut_ptr(), new_buffer.as_mut_ptr(), self.len);
@@ -163,10 +166,9 @@ impl<T: Copy> AppendBuffer<T> {
 
         self.reserve_gpu(cmd, n);
         // allocate staging buffer & copy pending elements
-        let staging_buf = self
-            .buffer
-            .device()
-            .create_array_buffer::<T>(BufferUsage::TRANSFER_SRC, MemoryLocation::CpuToGpu, n);
+
+        let staging_buf =
+            gpu::device().create_array_buffer::<T>(BufferUsage::TRANSFER_SRC, MemoryLocation::CpuToGpu, n);
         unsafe {
             ptr::copy_nonoverlapping(self.staging.as_ptr(), staging_buf.as_mut_ptr(), n);
         }

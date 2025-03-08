@@ -1,13 +1,9 @@
 use regex::Regex;
-use std::{fs, io, mem, path::{Path, PathBuf}, ptr};
-use bytemuck::{cast, cast_slice};
-use glam::{dmat4, dvec4, mat4, vec4};
-use graal::{BufferUsage, CommandStream, Format, Image, ImageCopyBuffer, ImageCopyView, ImageCreateInfo, ImageDataLayout, ImageType, ImageUsage, MemoryLocation, vk};
+use std::{fs, io, path::{Path, PathBuf}};
+use bytemuck::cast_slice;
+use glam::{dmat4, dvec4};
+use graal::{CommandStream, Format, Image, ImageCreateInfo, ImageType, ImageUsage, MemoryLocation};
 use graal::util::CommandStreamExt;
-
-pub mod gpu_append_buffer;
-
-pub use gpu_append_buffer::AppendBuffer;
 
 /// Given a path of the form `foo####.ext`, with `####` being a frame number, returns a list of all files in the same directory
 /// that follow the same pattern, sorted by frame number.

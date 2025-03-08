@@ -9,7 +9,7 @@ use crate::shaders::{
 use glam::{vec3, DVec2, DVec3, Mat4, Vec3};
 use graal::prelude::*;
 use graal::{ColorAttachment, DepthStencilAttachment, RenderPassInfo};
-
+use crate::gpu;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug)]
@@ -151,7 +151,7 @@ struct Pipelines {
     line_pipeline: GraphicsPipeline,
 }
 
-fn create_pipelines(device: &Device, target_color_format: Format, target_depth_format: Format) -> Pipelines {
+fn create_pipelines(target_color_format: Format, target_depth_format: Format) -> Pipelines {
     // Polygon pipeline
     let create_info = GraphicsPipelineCreateInfo {
         set_layouts: &[],
@@ -207,12 +207,12 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
         },
     };
 
-    let polygon_pipeline = device
+    let polygon_pipeline = gpu::device()
         .create_graphics_pipeline(create_info)
         .expect("failed to create pipeline");
 
     // Line pipeline
-    let descriptor_set_layout = device.create_push_descriptor_set_layout(&[vk::DescriptorSetLayoutBinding {
+    let descriptor_set_layout = gpu::device().create_push_descriptor_set_layout(&[vk::DescriptorSetLayoutBinding {
         binding: 0,
         descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
         descriptor_count: 1,
@@ -256,7 +256,7 @@ fn create_pipelines(device: &Device, target_color_format: Format, target_depth_f
         },
     };
 
-    let line_pipeline = device
+    let line_pipeline = gpu::device()
         .create_graphics_pipeline(create_info)
         .expect("failed to create pipeline");
 
@@ -299,11 +299,11 @@ impl OverlayRenderer {
     /// # Arguments
     ///
     /// * `format` format of the output image
-    pub fn new(device: &Device, target_color_format: Format, target_depth_format: Format) -> Self {
+    pub fn new(target_color_format: Format, target_depth_format: Format) -> Self {
         let Pipelines {
             polygon_pipeline,
             line_pipeline,
-        } = create_pipelines(device, target_color_format, target_depth_format);
+        } = create_pipelines(target_color_format, target_depth_format);
 
         Self {
             //camera: Camera::default(),

@@ -75,11 +75,12 @@ impl Scene3D {
 mod tests {
     use super::*;
     use std::path::Path;
+    use crate::gpu;
 
     #[test]
     fn load_alembic() {
+        gpu::init();
         let path = Path::new("../alembic-ogawa/tests/data/ellie_animation.abc");
-        let (device, _) = unsafe { graal::create_device_and_command_stream_with_surface(None).unwrap() };
-        let scene = Scene3D::load_from_alembic(&device, path).unwrap();
+        let scene = Scene3D::load_from_alembic(path).unwrap();
     }
 }

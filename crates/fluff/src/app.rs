@@ -1,8 +1,7 @@
 use crate::shaders::TemporalAverageParams;
 use egui::color_picker::{color_edit_button_srgba, Alpha};
 use egui::{
-    Align2, Color32, DragValue, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, TextureHandle, Ui,
-    Widget,
+    Align2, Color32, DragValue, Frame, Key, Margin, Modifiers, Response, Rounding, Slider, TextureHandle, Ui, Widget,
 };
 use egui_extras::{Column, TableBuilder};
 use glam::{dvec2, dvec3, uvec2, vec3, vec4, DVec2, DVec3, DVec4, Vec2, Vec3, Vec3Swizzles, Vec4Swizzles};
@@ -27,13 +26,13 @@ use winit::event::{MouseButton, TouchPhase};
 use winit::keyboard::NamedKey;
 
 use crate::camera_control::{Camera, CameraControl};
-use crate::engine::{Error, PipelineCache, PrimitiveRenderPipelineDesc2};
+use crate::gpu::{AppendBuffer, Error, PrimitiveRenderPipelineDesc2};
 use crate::overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer};
 use crate::scene::{DebugRenderVisitor, Scene3D};
-use crate::shaders;
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex, TileData, SUBGROUP_SIZE};
 use crate::ui::{curve_editor_button, icon_button};
-use crate::util::{resolve_file_sequence, AppendBuffer};
+use crate::util::{resolve_file_sequence};
+use crate::{gpu, shaders};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -110,8 +109,8 @@ struct GeoFileData {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-fn create_depth_buffer(device: &Device, width: u32, height: u32) -> Image {
-    let image = device.create_image(&ImageCreateInfo {
+fn create_depth_buffer(width: u32, height: u32) -> Image {
+    let image = gpu::device().create_image(&ImageCreateInfo {
         memory_location: MemoryLocation::GpuOnly,
         type_: ImageType::Image2D,
         usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSFER_DST,
@@ -232,10 +231,8 @@ pub struct App {
     camera_control: CameraControl,
     overlay: OverlayRenderer,
     global_shader_macros: BTreeMap<String, String>,
-    pcache: PipelineCache,
 
     //animation: Option<Scene>,
-
     scene_next: Scene3D,
 
     frame: i32,
@@ -406,7 +403,7 @@ impl App {
         };
 
         // FIXME: can we maybe make `STORAGE_BUFFER` a bit less screaming?
-        let scene_params_buf = self.device.upload(BufferUsage::STORAGE_BUFFER, &scene_params);
+        let scene_params_buf = gpu::device().upload(BufferUsage::STORAGE_BUFFER, &scene_params);
         cmd.reference_resource(&scene_params_buf);
 
         // FIXME: importing image sets will mean finding a contiguous range of free image handles
@@ -472,9 +469,7 @@ impl App {
         //    },
         //)?;
 
-        let temporal_average_pipeline = self
-            .pcache
-            .create_compute_pipeline("temporal_average", &shaders::TEMPORAL_AVERAGE)?;
+        let temporal_average_pipeline = gpu::create_compute_pipeline("temporal_average", &shaders::TEMPORAL_AVERAGE)?;
 
         //let draw_strokes_pipeline = engine.create_mesh_render_pipeline(
         //    "draw_strokes",
@@ -701,7 +696,7 @@ impl App {
     }
 
     fn load_alembic_cache(&mut self, path: &Path) {
-        match Scene3D::load_from_alembic(&self.device, path) {
+        match Scene3D::load_from_alembic(path) {
             Ok(scene) => {
                 self.scene_next = scene;
             }
@@ -740,11 +735,12 @@ impl App {
     /// # Arguments
     ///
     /// * `color_target_format` format of the swap chain images
-    pub fn new(device: &Device, width: u32, height: u32, color_target_format: Format) -> App {
-        let depth_buffer = create_depth_buffer(device, width, height);
+    pub fn new(width: u32, height: u32, color_target_format: Format) -> App {
+        let depth_buffer = create_depth_buffer(width, height);
         let depth_buffer_view = depth_buffer.create_top_level_view();
         let camera_control = CameraControl::new(width, height);
-        let overlay_renderer = OverlayRenderer::new(device, color_target_format, depth_buffer.format());
+        let overlay_renderer = OverlayRenderer::new(color_target_format, depth_buffer.format());
+        let device = gpu::device();
         let frame_image = device.create_image(&ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
             type_: ImageType::Image2D,
@@ -770,11 +766,10 @@ impl App {
             samples: 1,
         });
 
-        let drawn_curves = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
-        let drawn_control_points = AppendBuffer::new(device, BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+        let drawn_curves = AppendBuffer::new(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
+        let drawn_control_points = AppendBuffer::new(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
 
         // load tweaks
-        let mut pcache = PipelineCache::new(device.clone());
         let settings = SavedSettings::load().unwrap_or_default();
         let tweaks: BTreeMap<String, String> = settings
             .tweaks
@@ -782,7 +777,6 @@ impl App {
             .filter(|tweak| tweak.enabled)
             .map(|tweak| (tweak.name.clone(), tweak.value.clone()))
             .collect();
-        pcache.set_global_macro_definitions(tweaks.clone());
 
         let app = App {
             device: device.clone(),
@@ -830,16 +824,17 @@ impl App {
             opacity_profile: vec4(1.0, 1.0, 0.7, 0.),
             opacity_response_curve: Default::default(),
             frame_start_time: Instant::now(),
-            pcache,
         };
         app
     }
 
     /// Called when the main window is resized.
-    pub fn resize(&mut self, device: &Device, width: u32, height: u32) {
+    pub fn resize(&mut self, width: u32, height: u32) {
         // reallocate the depth buffer
+        let device = gpu::device();
+
         self.camera_control.resize(width, height);
-        self.depth_buffer = create_depth_buffer(device, width, height);
+        self.depth_buffer = create_depth_buffer(width, height);
         self.depth_buffer_view = self.depth_buffer.create_top_level_view();
         self.temporal_avg_image = device.create_image(&ImageCreateInfo {
             memory_location: MemoryLocation::GpuOnly,
@@ -885,7 +880,7 @@ impl App {
 
     pub fn key_input(&mut self, key: &winit::keyboard::Key, pressed: bool) {
         if *key == winit::keyboard::Key::Named(NamedKey::F5) && pressed {
-            self.pcache.clear();
+            gpu::invalidate_pipelines();
         }
     }
 
@@ -1043,7 +1038,6 @@ impl App {
             .screen_polyline(&camera, pen_line.as_slice(), [255, 128, 0, 255]);
     }
 
-
     pub fn render(&mut self, cmd: &mut CommandStream, image: &Image) {
         if self.frame == 0 {
             self.start_time = Instant::now();
@@ -1094,25 +1088,27 @@ impl App {
         cmd.debug_group("Scene", |cmd| {
             let camera = self.camera_control.camera();
 
-            let geometry_pipeline = self.pcache.create_primitive_pipeline("geometry", &PrimitiveRenderPipelineDesc2 {
-                vertex_shader: shaders::GEOMETRY_VERTEX_SHADER,
-                fragment_shader: shaders::GEOMETRY_FRAGMENT_SHADER,
-                color_targets: vec![
-                    ColorTargetState {
+            let geometry_pipeline = gpu::create_primitive_pipeline(
+                "geometry",
+                &PrimitiveRenderPipelineDesc2 {
+                    vertex_shader: shaders::GEOMETRY_VERTEX_SHADER,
+                    fragment_shader: shaders::GEOMETRY_FRAGMENT_SHADER,
+                    color_targets: vec![ColorTargetState {
                         format: color_target_view.format(),
                         blend_equation: Some(ColorBlendEquation::ALPHA_BLENDING),
                         ..Default::default()
-                    }
-                ],
-                rasterization_state: Default::default(),
-                depth_stencil_state: Some(DepthStencilState {
-                    format: Format::D32_SFLOAT,
-                    depth_write_enable: true,
-                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                    stencil_state: StencilState::default(),
-                }),
-                multisample_state: Default::default(),
-            }).unwrap();
+                    }],
+                    rasterization_state: Default::default(),
+                    depth_stencil_state: Some(DepthStencilState {
+                        format: Format::D32_SFLOAT,
+                        depth_write_enable: true,
+                        depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                        stencil_state: StencilState::default(),
+                    }),
+                    multisample_state: Default::default(),
+                },
+            )
+            .unwrap();
 
             let scene_params = cmd.upload_temporary(&shaders::SceneParams {
                 view_matrix: camera.view.to_cols_array_2d(),
@@ -1131,7 +1127,10 @@ impl App {
                 time: self.start_time.elapsed().as_secs_f32(),
             });
 
-            let mut v = DebugRenderVisitor { camera: &camera, scene_params };
+            let mut v = DebugRenderVisitor {
+                camera: &camera,
+                scene_params,
+            };
             let mut encoder = cmd.begin_rendering(RenderPassInfo {
                 color_attachments: &[ColorAttachment {
                     image_view: &color_target_view,
@@ -1325,7 +1324,7 @@ impl App {
 
             ui.heading("Animation");
 
-           /* if let Some(ref animation) = self.animation {
+            /* if let Some(ref animation) = self.animation {
                 egui::DragValue::new(&mut self.current_frame)
                     .clamp_range(0..=(animation.frames.len() - 1))
                     .custom_formatter(|n, _| format!("Frame {} of {}", n, animation.frames.len()))
@@ -1408,7 +1407,7 @@ impl App {
                     .map(|t| (t.name.clone(), t.value.clone()))
                     .collect();
                 info!("Will reload shaders on the next frame");
-                self.pcache.set_global_macro_definitions(defines);
+                gpu::set_global_pipeline_macro_definitions(defines);
             }
 
             if self.tweaks_changed {
