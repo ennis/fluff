@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementBuilder, ElementCtx, ElementRc, HitTestCtx};
+use crate::element::{Element, ElementBuilder, ElementCtx, ElementRc, HitTestCtx, TreeCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
@@ -41,7 +41,7 @@ impl Text {
 }
 
 impl Element for Text {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _tree:&TreeCtx,layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
@@ -50,7 +50,7 @@ impl Element for Text {
         Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _tree:&TreeCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
         let p = &mut self.paragraph;
         p.layout(size.width as f32);
@@ -66,9 +66,9 @@ impl Element for Text {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _cx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _cx: &TreeCtx, ctx: &mut PaintCtx) {
         self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
     }
 
-    fn event(&mut self, _cx: &ElementCtx, _event: &mut Event) {}
+    fn event(&mut self, _cx: &TreeCtx, _event: &mut Event) {}
 }

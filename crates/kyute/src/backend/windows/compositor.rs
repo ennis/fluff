@@ -18,7 +18,9 @@ use windows::Win32::Graphics::Direct3D12::{ID3D12Resource, D3D12_RESOURCE_STATE_
 use windows::Win32::Graphics::DirectComposition::{
     IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual3,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT,  DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
+};
 use windows::Win32::Graphics::Dxgi::{
     IDXGISwapChain3, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
@@ -29,7 +31,7 @@ use windows::Win32::System::Threading::WaitForSingleObject;
 use crate::backend::windows::BackendInner;
 use crate::backend::ApplicationBackend;
 use crate::compositor::ColorType;
-use crate::Size;
+use crate::{AppGlobals, Size};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -38,7 +40,7 @@ const SWAP_CHAIN_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
 const SKIA_COLOR_TYPE: skia_safe::ColorType = sk::ColorType::RGBA8888;
 
 /// Windows drawable surface backend.
-pub(crate) struct DrawableSurface {
+pub struct DrawableSurface {
     composition_device: IDCompositionDesktopDevice,
     context: DirectContext,
     swap_chain: IDXGISwapChain3,
@@ -50,8 +52,14 @@ thread_local! {
 }
 
 impl DrawableSurface {
-    pub(crate) fn surface(&self) -> sk::Surface {
+    pub fn skia(&self) -> sk::Surface {
         self.surface.clone()
+    }
+
+    /// Returns the size of the surface in physical pixels.
+    pub fn physical_size(&self) -> Size {
+        let surface = self.skia();
+        Size::new(surface.width() as f64, surface.height() as f64)
     }
 
     fn present(&mut self) {
@@ -109,8 +117,12 @@ impl Drop for Layer {
 }
 
 impl Layer {
+    pub fn new(size: Size, format: ColorType) -> Layer {
+        AppGlobals::get().backend.create_surface_layer(size, format)
+    }
+
     /// Resizes a surface layer.
-    pub(crate) fn set_surface_size(&self, size: Size) {
+    pub fn resize(&self, size: Size) {
         // skip if same size
         if self.size.get() == size {
             return;
@@ -203,6 +215,12 @@ impl Layer {
         }
     }
 
+    pub(crate) fn add_child(&self, child: &Layer) {
+        unsafe {
+            self.visual.AddVisual(&child.visual, true, None).unwrap();
+        }
+    }
+
     /// Binds a composition layer to a window.
     ///
     /// # Safety
@@ -273,7 +291,7 @@ impl BackendInner {
             color_space,
             surface_props.as_ref(),
         )
-            .expect("skia surface creation failed");
+        .expect("skia surface creation failed");
         sk_surface
     }
 }
@@ -324,8 +342,6 @@ impl ApplicationBackend {
                 // SAFETY: we own the handle
                 frame_latency_waitable: { Owned::new(frame_latency_waitable) },
             };
-
-            // Create the composition surface representing the swap chain in the compositor
 
             // Create the visual+brush holding the surface
             let visual = self.0.composition_device.CreateVisual().unwrap();

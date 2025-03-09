@@ -1,4 +1,4 @@
-use crate::element::ElementAny;
+use crate::element::{ElementAny, TreeCtx};
 use crate::layout::{
     Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue,
 };
@@ -50,7 +50,7 @@ impl FlexChild {
     }
 }
 
-pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
@@ -100,7 +100,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
             .element
-            .measure(&LayoutInput::from_logical(
+            .measure(ctx, &LayoutInput::from_logical(
                 main_axis,
                 main_size_constraint,
                 cross_size_constraint,
@@ -111,7 +111,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
         // also measure the max width so that we know how much it can grow
         let max_item_main = child
             .element
-            .measure(&LayoutInput::from_logical(
+            .measure(ctx, &LayoutInput::from_logical(
                 main_axis,
                 SizeConstraint::MAX,
                 cross_size_constraint,
@@ -169,7 +169,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
             let shrink = still_to_reclaim / (child_count - i) as f64;
             let (item_main, item_cross) = children[i]
                 .element
-                .measure(&LayoutInput::from_logical(
+                .measure(ctx, &LayoutInput::from_logical(
                     main_axis,
                     SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
                     cross_size_constraint,
@@ -272,7 +272,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
             // Concrete example: text elements
             measures[i].cross = child
                 .element
-                .measure(&LayoutInput::from_logical(
+                .measure(ctx, &LayoutInput::from_logical(
                     main_axis,
                     measures[i].main.into(),
                     cross_size_constraint,
@@ -295,7 +295,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
             let layout = child
                 .element
-                .layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+                .layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
@@ -323,7 +323,7 @@ pub fn flex_layout(mode: LayoutMode, p: &FlexLayoutParams, children: &[FlexChild
         // due to baseline alignment)
         child_layouts[i] = child
             .element
-            .layout(Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+            .layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
     }
 
     trace!(

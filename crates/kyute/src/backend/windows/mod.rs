@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub(crate) use compositor::{DrawableSurface, Layer};
+pub use compositor::{DrawableSurface, Layer};
 use skia_safe::gpu::Protected;
 use threadbound::ThreadBound;
 use windows::core::{IUnknown, Interface, Owned};

@@ -1,5 +1,6 @@
 //! Immediate drawing widget.
 use crate::element::prelude::*;
+use crate::element::TreeCtx;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::{Event, PaintCtx};
 use kurbo::{Point, Size};
@@ -76,11 +77,11 @@ impl<V> Element for Draw<V>
 where
     V: Visual + 'static,
 {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         self.visual.layout(layout_input)
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         self.visual.layout(&LayoutInput {
             width: size.width.into(),
             height: size.height.into(),
@@ -98,7 +99,7 @@ where
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _ectx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _ectx: &TreeCtx, ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
         //self.draw_subscription.unsubscribe();
@@ -115,7 +116,7 @@ where
         //});
     }
 
-    fn event(&mut self, _ectx: &ElementCtx, _event: &mut Event) {
+    fn event(&mut self, _ectx: &TreeCtx, _event: &mut Event) {
         // TODO
         //self.visual.event(&mut self.ctx, event);
     }

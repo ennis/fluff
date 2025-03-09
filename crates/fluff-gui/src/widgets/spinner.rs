@@ -10,6 +10,7 @@ use kyute::kurbo::{Insets, Vec2};
 use kyute::model::EventSource;
 use kyute::text::Selection;
 use kyute::{Color, Point, Rect, Size};
+use kyute::element::TreeCtx;
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -254,13 +255,13 @@ impl SpinnerBase {
 }
 
 impl Element for SpinnerBase {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let width = layout_input.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
         Size { width, height }
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         let baseline = self.text_edit.layout(size).baseline.unwrap_or(0.);
         self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
 
@@ -275,7 +276,7 @@ impl Element for SpinnerBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ecx: &TreeCtx, ctx: &mut PaintCtx) {
         let bounds = ecx.bounds();
         let rrect = bounds.to_rounded_rect(0.);
 
@@ -297,7 +298,7 @@ impl Element for SpinnerBase {
         buttons.paint(ctx);
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         let bounds = cx.bounds();
         let buttons = self.place_buttons(cx.bounds());
 

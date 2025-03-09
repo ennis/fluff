@@ -1,6 +1,8 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement};
+use crate::element::{
+    Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, TreeCtx, WeakElement,
+};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::event::Event;
@@ -268,6 +270,7 @@ impl Frame {
     /// * `cross` - cross axis size constraint (available space)
     fn measure_content(
         &self,
+        ctx: &TreeCtx,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
@@ -277,12 +280,15 @@ impl Frame {
         let height = height_constraint.deflate(self.padding.y_value());
 
         let size = if let Some(content) = &self.content {
-            content.measure(&LayoutInput {
-                parent_width,
-                parent_height,
-                width,
-                height,
-            })
+            content.measure(
+                ctx,
+                &LayoutInput {
+                    parent_width,
+                    parent_height,
+                    width,
+                    height,
+                },
+            )
         } else {
             Size::ZERO
         };
@@ -293,6 +299,7 @@ impl Frame {
     /// Measures a box element sized according to the specified constraints.
     fn measure_inner(
         &self,
+        ctx: &TreeCtx,
         parent_width: Option<f64>,
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
@@ -323,7 +330,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(parent_width, parent_height, cstr, height_constraint)
+                        self.measure_content(ctx, parent_width, parent_height, cstr, height_constraint)
                             .width,
                     )
                 }
@@ -336,7 +343,7 @@ impl Frame {
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(ctx, parent_width, parent_height, width_constraint, height_constraint)
                 .width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
@@ -359,7 +366,7 @@ impl Frame {
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(parent_width, parent_height, updated_width_constraint, cstr)
+                        self.measure_content(ctx, parent_width, parent_height, updated_width_constraint, cstr)
                             .height,
                     )
                 }
@@ -368,7 +375,7 @@ impl Frame {
         };
 
         let mut height = eval_height(self.height).unwrap_or_else(|| {
-            self.measure_content(parent_width, parent_height, width_constraint, height_constraint)
+            self.measure_content(ctx, parent_width, parent_height, width_constraint, height_constraint)
                 .height
         });
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
@@ -385,10 +392,11 @@ impl Element for Frame {
         self.content.clone().into_iter().collect()
     }
 
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, ctx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let output = self.measure_inner(
+            ctx,
             layout_input.parent_width,
             layout_input.parent_height,
             layout_input.width,
@@ -397,12 +405,12 @@ impl Element for Frame {
         output
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, ctx: &TreeCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Frame::layout").entered();
         let content_area = size - self.padding.size();
 
         let mut output = if let Some(ref content) = self.content {
-            let output = content.layout(content_area);
+            let output = content.layout(ctx, content_area);
             content.set_offset(Vec2::new(self.padding.x0, self.padding.y0));
             output
         } else {
@@ -422,7 +430,7 @@ impl Element for Frame {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ecx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ecx: &TreeCtx, ctx: &mut PaintCtx) {
         self.resolve_style();
 
         let rect = ecx.bounds();
@@ -460,12 +468,12 @@ impl Element for Frame {
 
         // paint children
         if let Some(content) = &self.content {
-            content.paint(ctx);
+            content.paint(ecx, ctx);
         }
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
-        fn update_state(this: &mut Frame, cx: &ElementCtx, state: ElementState) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+        fn update_state(this: &mut Frame, cx: &TreeCtx, state: ElementState) {
             this.state = state;
             this.weak.emit(ElementStateChanged(state));
             if this.state_affects_style {
@@ -477,24 +485,24 @@ impl Element for Frame {
         match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
-                update_state(self,cx, self.state);
+                update_state(self, cx, self.state);
                 self.weak.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
                     self.weak.emit(ActivatedEvent(false));
-                    update_state(self,cx, self.state);
+                    update_state(self, cx, self.state);
                     self.weak.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
-                update_state(self,cx, self.state);
+                update_state(self, cx, self.state);
                 self.weak.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
-                update_state(self,cx, self.state);
+                update_state(self, cx, self.state);
                 self.weak.emit(HoveredEvent(false));
             }
             _ => {}

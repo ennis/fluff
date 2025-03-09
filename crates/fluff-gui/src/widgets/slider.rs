@@ -1,7 +1,7 @@
 use crate::colors;
 use crate::widgets::{PaintExt, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
-use kyute::element::{ElementBuilder, ElementCtx, HitTestCtx, WeakElement};
+use kyute::element::{ElementBuilder, ElementCtx, HitTestCtx, TreeCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
 use kyute::event::ScrollDelta;
 use kyute::kurbo::{Line, PathEl, Vec2};
@@ -185,11 +185,11 @@ impl Slider {
 }
 
 impl Element for Slider {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         self.base.measure(layout_input)
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self,_cx: &TreeCtx,  size: Size) -> LayoutOutput {
         self.base.layout(size)
     }
 
@@ -197,11 +197,11 @@ impl Element for Slider {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
         self.base.paint(ctx, ectx.bounds());
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         match event {
             Event::PointerDown(_) => {
                 cx.set_pointer_capture();

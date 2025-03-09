@@ -2,7 +2,7 @@ use crate::colors;
 use crate::widgets::TEXT_STYLE;
 use kyute::drawing::{vec2, Image, PlacementExt, BASELINE_CENTER};
 use kyute::element::prelude::*;
-use kyute::element::WeakElement;
+use kyute::element::{TreeCtx, WeakElement};
 use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
@@ -45,7 +45,7 @@ impl EventSource for Button {
 }*/
 
 impl Element for Button {
-    fn measure(&mut self, input: &LayoutInput) -> Size {
+    fn measure(&mut self, cx: &TreeCtx, input: &LayoutInput) -> Size {
         // layout label with available space, but don't go below the minimum width
         self.label
             .layout(input.width.available().unwrap_or_default().max(BUTTON_MIN_WIDTH));
@@ -55,7 +55,7 @@ impl Element for Button {
         Size::new(w, h)
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
         self.label.layout(size.width - 20.);
         LayoutOutput {
             width: size.width,
@@ -68,7 +68,7 @@ impl Element for Button {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &ElementCtx,  ctx: &mut PaintCtx) {
+    fn paint(&mut self, cx: &TreeCtx,  ctx: &mut PaintCtx) {
         let mut rect = cx.bounds();
         rect.y1 -= 1.;
         let rect = rect.to_rounded_rect(BUTTON_RADIUS);
@@ -102,7 +102,7 @@ impl Element for Button {
         ctx.draw_text_layout(pos, &self.label);
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         let repaint = match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);

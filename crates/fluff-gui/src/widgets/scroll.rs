@@ -4,7 +4,7 @@ use crate::colors::{SCROLL_BAR, SCROLL_BAR_BACKGROUND};
 use kyute::element::prelude::*;
 use kyute::layout::{Axis, AxisSizeHelper};
 use kyute::{Point, Rect, Size};
-
+use kyute::element::TreeCtx;
 //const SCROLL_BAR_WIDTH: f64 = 18.0;
 //const SCROLL_BAR_BUTTON_SIZE: f64 = 18.0;
 
@@ -151,14 +151,14 @@ impl ScrollBarBase {
 }
 
 impl Element for ScrollBarBase {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         match self.direction {
             Axis::Vertical => Size::new(self.cross_size, layout_input.height.available().unwrap_or_default()),
             Axis::Horizontal => Size::new(layout_input.width.available().unwrap_or_default(), self.cross_size),
         }
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         self.track_length = match self.direction {
             Axis::Vertical => size.height,
             Axis::Horizontal => size.width,
@@ -174,7 +174,7 @@ impl Element for ScrollBarBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
         let bounds = ectx.bounds();
 
         // paint scrollbar background
@@ -204,7 +204,7 @@ impl Element for ScrollBarBase {
         ctx.fill_rect(thumb_rect, SCROLL_BAR);
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         let bounds = cx.bounds();
 
         match event {

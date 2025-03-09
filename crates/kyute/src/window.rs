@@ -26,9 +26,7 @@ use crate::app_globals::AppGlobals;
 use crate::application::{with_event_loop_window_target, WindowHandler};
 use crate::compositor::{ColorType, Layer};
 use crate::drawing::ToSkia;
-use crate::element::{
-    dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
-};
+use crate::element::{dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, TreeCtx, WeakElementAny};
 use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
@@ -671,7 +669,7 @@ impl WindowInner {
                 self.weak_this.emit(Resized(sizef));
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
-                    self.layer.set_surface_size(sizef);
+                    self.layer.resize(sizef);
                 }
                 self.needs_layout.set(true);
             }
@@ -705,13 +703,13 @@ impl WindowInner {
         }
 
         if self.needs_layout.replace(false) {
-            let size = self.root.measure(&LayoutInput {
+            let size = self.root.measure_root(&LayoutInput {
                 parent_width: Some(size.width),
                 parent_height: Some(size.height),
                 width: SizeConstraint::Available(size.width),
                 height: SizeConstraint::Available(size.height),
             });
-            let _geom = self.root.layout(size);
+            let _geom = self.root.layout_root(size);
         }
 
         let surface = self.layer.acquire_drawing_surface();
@@ -721,7 +719,7 @@ impl WindowInner {
             let mut skia_surface = surface.skia();
             skia_surface.canvas().clear(self.background.get().to_skia());
 
-            self.root.paint_on_surface(&surface, scale_factor);
+            self.root.paint_on_surface(None, &surface, scale_factor);
 
             // **** DEBUGGING ****
             //draw_crosshair(skia_surface.canvas(), self.cursor_pos.get());
@@ -967,7 +965,7 @@ impl Window {
         // Get the physical size from the window
         let phy_size = window.inner_size();
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
-        let layer = Layer::new_surface(phy_size, ColorType::RGBAF16);
+        let layer = Layer::new(phy_size, ColorType::RGBAF16);
 
         let raw_window_handle = window
             .window_handle()

@@ -2,12 +2,10 @@ use crate::application::run_queued;
 use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{
-    watch_multi_once_with_location, with_tracking_scope, EventSource,
-};
+use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventSource};
 use crate::window::WindowHandle;
-use crate::{PaintCtx};
-use bitflags::{bitflags};
+use crate::{compositor, PaintCtx};
+use bitflags::bitflags;
 use kurbo::{Point, Rect, Size, Vec2};
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -18,11 +16,11 @@ use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
+use typed_arena::Arena;
 
 pub mod prelude {
     pub use crate::element::{
-        Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement,
-        WeakElementAny,
+        Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement, WeakElementAny,
     };
     pub use crate::event::Event;
     pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
@@ -77,14 +75,14 @@ pub fn set_keyboard_focus(target: WeakElementAny) {
             // Send FocusLost event
             if let Some(prev_focus) = prev_focus.element.upgrade() {
                 prev_focus.0.ctx.focused.set(false);
-                prev_focus.send_event(&mut Event::FocusLost);
+                dispatch_event(prev_focus.clone(), &mut Event::FocusLost, false);
             }
         }
 
         if let Some(target) = target.upgrade() {
             // Send a FocusGained event to the newly focused element.
             target.0.ctx.focused.set(true);
-            target.send_event(&mut Event::FocusGained);
+            dispatch_event(target, &mut Event::FocusGained, false);
         }
 
         // Update the global focus.
@@ -95,10 +93,9 @@ pub fn set_keyboard_focus(target: WeakElementAny) {
 
         // If necessary, activate the target window.
         //if let Some(_parent_window) = parent_window.shared.upgrade() {
-            //parent_window.
-            //war!("activate window")
+        //parent_window.
+        //war!("activate window")
         //}
-
     });
 }
 
@@ -108,7 +105,7 @@ pub fn clear_keyboard_focus() {
         if let Some(prev_focus) = prev_focus {
             if let Some(prev_focus) = prev_focus.element.upgrade() {
                 prev_focus.0.ctx.focused.set(false);
-                prev_focus.send_event(&mut Event::FocusLost);
+                dispatch_event(prev_focus, &mut Event::FocusLost, false);
             }
         }
         FOCUSED_ELEMENT.replace(None);
@@ -133,11 +130,41 @@ impl HitTestCtx {
     }
 }
 
+/// Context providing access to the current element and its ancestors in the UI tree.
+pub struct TreeCtx<'a> {
+    pub parent: Option<&'a TreeCtx<'a>>,
+    pub this: &'a ElementCtx,
+}
+
+impl<'a> Deref for TreeCtx<'a> {
+    type Target = ElementCtx;
+
+    fn deref(&self) -> &Self::Target {
+        self.this
+    }
+}
+
 /// Methods of elements in the element tree.
 pub trait Element: Any {
     /// Returns the list of children of this element.
     fn children(&self) -> Vec<ElementAny> {
         Vec::new()
+    }
+
+    /// Called when the element is added to the tree.
+    fn added(&mut self, ctx: &TreeCtx) {
+        // by default, propagate to children
+        for child in self.children() {
+            child.borrow_mut().added(ctx);
+        }
+    }
+
+    /// Called when the element is removed from the tree.
+    fn removed(&mut self, ctx: &TreeCtx) {
+        for child in self.children() {
+            // FIXME: context
+            child.borrow_mut().removed(ctx);
+        }
     }
 
     /// Asks the element to measure itself under the specified constraints, but without actually laying
@@ -153,7 +180,7 @@ pub trait Element: Any {
     ///        use up all the space regardless of other elements in the flex, leading to overflow.
     ///        Basically, elements by themselves can NEVER be flexible, they can only be flexible
     ///        by wrapping them in FlexItem.
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size;
+    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size;
 
     /// Specifies the size of the element, and lays out its children.
     ///
@@ -166,7 +193,8 @@ pub trait Element: Any {
     /// in ElementCtx.
     ///
     /// FIXME: LayoutOutput is useless here, it should always return the size passed in argument
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    #[allow(unused_variables)]
+    fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
         LayoutOutput {
             width: size.width,
             height: size.height,
@@ -188,11 +216,11 @@ pub trait Element: Any {
     ///        Storing the context in `ElemBox` wouldn't work because we want it to be shareable,
     ///        but `&mut ElemBox<Self>` would give exclusive access to it (barring stuff like UnsafePinned).
     #[allow(unused_variables)]
-    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx);
+    fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(&mut self, ctx: &ElementCtx, event: &mut Event) {}
+    fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {}
 }
 
 /*
@@ -278,7 +306,7 @@ impl<T: Element> ElemCell<T> {
         });
         let weak = UniqueRc::downgrade(&rc);
         rc.ctx.weak_this = WeakElement(weak.clone());
-        rc.ctx.weak_this_any = weak.clone();
+        //rc.ctx.weak_this_any = weak.clone();
         rc
     }
 
@@ -294,7 +322,7 @@ impl<T: Element> ElemCell<T> {
         // SAFETY: the value is now initialized
         let mut urc: UniqueRc<ElemCell<T>> = unsafe { mem::transmute(urc) };
         urc.ctx.weak_this = WeakElement(weak.clone());
-        urc.ctx.weak_this_any = weak;
+        //urc.ctx.weak_this_any = weak;
         urc
     }
 }
@@ -319,7 +347,7 @@ impl<T: ?Sized> WeakElement<T> {
 }
 
 impl<T: ?Sized + 'static> WeakElement<T> {
-    pub fn run_later(&self, f: impl FnOnce(&mut T, &ElementCtx) + 'static) {
+    pub fn run_later(&self, f: impl FnOnce(&mut T, &TreeCtx) + 'static) {
         let this = self.clone();
         run_queued(move || {
             if let Some(this) = this.upgrade() {
@@ -367,11 +395,11 @@ impl Default for WeakElementAny {
         // this is never instantiated, so it's fine
         struct Dummy;
         impl Element for Dummy {
-            fn measure(&mut self, _layout_input: &LayoutInput) -> Size {
+            fn measure(&mut self, _tree: &TreeCtx, _layout_input: &LayoutInput) -> Size {
                 unimplemented!()
             }
 
-            fn layout(&mut self, _size: Size) -> LayoutOutput {
+            fn layout(&mut self, _tree: &TreeCtx, _size: Size) -> LayoutOutput {
                 unimplemented!()
             }
 
@@ -379,7 +407,7 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
 
-            fn paint(&mut self, _ectx: &ElementCtx, _ctx: &mut PaintCtx) {
+            fn paint(&mut self, _ectx: &TreeCtx, _ctx: &mut PaintCtx) {
                 unimplemented!()
             }
         }
@@ -417,7 +445,7 @@ impl PartialOrd for WeakElementAny {
     }
 }
 
-struct ElemCell<T:?Sized> {
+struct ElemCell<T: ?Sized> {
     ctx: ElementCtx,
     element: RefCell<T>,
 }
@@ -455,16 +483,36 @@ impl<T: ?Sized> ElementRc<T> {
     }
 
     /// Invokes a method on this widget.
-    ///
-    /// Propagates the dirty flags up the tree.
-    pub fn invoke<R>(&self, f: impl FnOnce(&mut T, &ElementCtx) -> R) -> R {
-        let r = f(&mut *self.0.element.borrow_mut(), &self.0.ctx);
-        self.0.ctx.propagate_dirty_flags();
+    pub fn invoke<R>(&self, f: impl FnOnce(&mut T, &TreeCtx) -> R) -> R {
+        // TODO: dedup from dispatch_event
+        let mut ancestors = vec![];
+        let mut current = self.parent();
+        while let Some(parent) = current {
+            ancestors.push(parent.clone());
+            current = Some(parent);
+        }
+        ancestors.reverse();
+
+        // Build ctx chain
+        let mut arena = Arena::new();
+        let mut tree = None;
+        for e in ancestors.iter() {
+            tree = Some(&*arena.alloc(TreeCtx {
+                parent: tree,
+                this: &e.0.ctx,
+            }));
+        }
+        let tree = TreeCtx {
+            parent: tree,
+            this: &self.0.ctx,
+        };
+
+        let r = f(&mut *self.0.element.borrow_mut(), &tree);
         r
     }
 }
 
-impl<T: Element + ?Sized> ElementRc<T> {
+impl<T: ?Sized> ElementRc<T> {
     /// Returns whether this element has a parent.
     pub fn has_parent(&self) -> bool {
         self.parent().is_some()
@@ -527,7 +575,6 @@ impl ElementAny {
     /// Returns the list of ancestors of this visual, plus this visual itself, sorted from the root
     /// to this visual.
     pub fn ancestors_and_self(&self) -> Vec<ElementAny> {
-
         let mut ancestors = Vec::new();
         let mut current = self.clone();
         while let Some(parent) = current.parent() {
@@ -552,26 +599,53 @@ impl ElementAny {
         current.0.ctx.window.clone()
     }
 
+    /// Returns the parent compositor layer of this element (disregarding the element's own layer if it has one).
+    ///
+    // Issue: I want to return a borrow, but I need to upgrade the parent, and the borrow can't outlive
+    // the upgrade.
+    pub fn get_parent_layer(&self) -> Option<compositor::Layer> {
+        //if let Some(parent) = self.parent.upgrade() {
+        //    parent.get_parent_layer()
+        //} else {
+        //    // no parent, this is the root element
+        //    None
+        //}
+        todo!()
+    }
+
     /// Returns the transform of this element.
     pub fn offset(&self) -> Vec2 {
         self.0.ctx.offset.get()
     }
 
-    pub fn measure(&self, layout_input: &LayoutInput) -> Size {
+    fn measure_inner(&self, parent: Option<&TreeCtx>, layout_input: &LayoutInput) -> Size {
         let ref mut inner = *self.borrow_mut();
-        inner.measure(layout_input)
+        let child_tree = TreeCtx {
+            parent,
+            this: &self.0.ctx,
+        };
+        inner.measure(&child_tree, layout_input)
+    }
+
+    pub fn measure(&self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
+        self.measure_inner(Some(tree), layout_input)
+    }
+
+    pub fn measure_root(&self, layout_input: &LayoutInput) -> Size {
+        self.measure_inner(None, layout_input)
     }
 
     /// Invokes layout on this element and its children, recursively.
-    pub fn layout(&self, size: Size) -> LayoutOutput {
+    fn layout_inner(&self, parent: Option<&TreeCtx>, size: Size) -> LayoutOutput {
         let ctx = &self.0.ctx;
+        let child_tree = TreeCtx { parent, this: ctx };
         let ref mut inner = *self.borrow_mut();
         ctx.geometry.set(LayoutOutput {
             width: size.width,
             height: size.height,
             baseline: None,
         });
-        let output =  inner.layout(size);
+        let output = inner.layout(&child_tree, size);
         ctx.geometry.set(LayoutOutput {
             width: size.width,
             height: size.height,
@@ -581,6 +655,14 @@ impl ElementAny {
         f.remove(ChangeFlags::LAYOUT);
         ctx.change_flags.set(f);
         output
+    }
+
+    pub fn layout(&self, tree: &TreeCtx, size: Size) -> LayoutOutput {
+        self.layout_inner(Some(tree), size)
+    }
+
+    pub fn layout_root(&self, size: Size) -> LayoutOutput {
+        self.layout_inner(None, size)
     }
 
     /// Returns the list of children of this element.
@@ -608,18 +690,19 @@ impl ElementAny {
         hit
     }
 
-    pub fn send_event(&self, event: &mut Event) {
+    pub(crate) fn send_event(&self, tree: &TreeCtx, event: &mut Event) {
         let ref mut inner = *self.borrow_mut();
-        let ctx = &self.0.ctx;
-        inner.event(ctx, event);
+        inner.event(tree, event);
         //ctx.propagate_dirty_flags()
         //inner.ctx.propagate_dirty_flags();
     }
 
-    pub fn paint(&self, parent_ctx: &mut PaintCtx) {
+    fn paint_inner(&self, parent: Option<&TreeCtx>, parent_ctx: &mut PaintCtx) {
         let ref mut inner = *self.borrow_mut();
         let ctx = &self.0.ctx;
+        let child_tree = TreeCtx { parent, this: ctx };
 
+        // update window-relative position
         let offset = ctx.offset.get();
         ctx.window_position.set(parent_ctx.bounds.origin() + offset);
 
@@ -630,13 +713,17 @@ impl ElementAny {
 
         let prev_bounds = parent_ctx.bounds;
         parent_ctx.bounds = Rect::from_origin_size(ctx.window_position.get(), ctx.size());
-        inner.paint(ctx, parent_ctx);
+        inner.paint(&child_tree, parent_ctx);
         parent_ctx.bounds = prev_bounds;
     }
 
-    pub(crate) fn paint_on_surface(&self, surface: &DrawableSurface, scale_factor: f64) {
+    pub fn paint(&self, tree: &TreeCtx, parent_ctx: &mut PaintCtx) {
+        self.paint_inner(Some(tree), parent_ctx);
+    }
+
+    pub(crate) fn paint_on_surface(&self, parent: Option<&TreeCtx>, surface: &DrawableSurface, scale_factor: f64) {
         let mut ctx = PaintCtx::new(surface, scale_factor);
-        self.paint(&mut ctx);
+        self.paint_inner(parent, &mut ctx);
     }
 
     pub fn add_offset(&self, offset: Vec2) {
@@ -669,7 +756,6 @@ pub trait IntoElementAny {
     {
         self.into_root_element(parent_window).as_dyn()
     }
-
 }
 
 impl<T> IntoElementAny for T
@@ -695,14 +781,20 @@ where
 
 /// Context associated to each element and passed to `Element` methods.
 pub struct ElementCtx {
-   // _pinned: PhantomPinned,
+    // _pinned: PhantomPinned,
+
+    // TODO: make this a raw pointer (somehow). This is because with weak pointers it's impossible
+    //       to borrow stuff from a parent element.
+    //       To be fully safe, this implies that the parent is pinned in memory (which should be
+    //       the case anyway), but this means that we can't use Rc.
     parent: WeakElementAny,
     /// Weak pointer to this element (~= `Weak<RefCell<dyn Element>>`)
     weak_this: WeakElementAny,
-    /// Weak pointer to this element (~= `Weak<dyn Any>`)
-    /// This is used for event and subscription functions which expect a `Weak<dyn Any>`
-    /// we can't use `weak_this` because it can't coerce dyn Any, even with trait upcasting.
-    weak_this_any: Weak<dyn Any>,
+    // Weak pointer to this element (~= `Weak<dyn Any>`)
+    // This is used for event and subscription functions which expect a `Weak<dyn Any>`
+    // we can't use `weak_this` because it can't coerce dyn Any, even with trait upcasting.
+    // TODO: remove this, it's not used
+    //weak_this_any: Weak<dyn Any>,
     change_flags: Cell<ChangeFlags>,
     /// Pointer to the parent owner window. Valid only for the root element the window.
     pub(crate) window: WindowHandle,
@@ -718,6 +810,8 @@ pub struct ElementCtx {
     focusable: bool,
     /// Whether this element currently has focus.
     focused: Cell<bool>,
+    /// The compositor layer associated with this element, if the element uses a separate layer.
+    layer: Option<compositor::Layer>,
 }
 
 impl ElementCtx {
@@ -725,7 +819,7 @@ impl ElementCtx {
         ElementCtx {
             parent: WeakElementAny::default(),
             weak_this: WeakElementAny::default(),
-            weak_this_any: Weak::<()>::default(),
+            //weak_this_any: Weak::<()>::default(),
             change_flags: Default::default(),
             window: WindowHandle::default(),
             offset: Default::default(),
@@ -734,6 +828,7 @@ impl ElementCtx {
             name: String::new(),
             focusable: false,
             focused: Cell::new(false),
+            layer: None,
         }
     }
 
@@ -782,16 +877,16 @@ impl ElementCtx {
     }*/
 
     /// Maps a point in local coordinates to window coordinates.
-   //pub fn map_to_window(&self, local_point: Point) -> Point {
-   //    local_point + self.window_position.get()
-   //}
+    //pub fn map_to_window(&self, local_point: Point) -> Point {
+    //    local_point + self.window_position.get()
+    //}
 
     /// Maps a point in window coordinates to screen coordinates.
     pub fn map_to_monitor(&self, window_point: Point) -> Point {
         //let window_point = self.map_to_window(local_point);
         self.get_parent_window().map_to_screen(window_point)
     }
-    
+
     /// Maps a rectangle in window coordinates to screen coordinates.
     pub fn map_rect_to_monitor(&self, window_rect: Rect) -> Rect {
         window_rect.with_origin(self.map_to_monitor(window_rect.origin()))
@@ -860,6 +955,16 @@ impl ElementCtx {
             self.window.clone()
         }
     }
+
+    /// Returns the parent compositor layer of this element (disregarding the element's own layer if it has one).
+    pub fn get_parent_layer(&self) -> Option<compositor::Layer> {
+        if let Some(parent) = self.parent.upgrade() {
+            parent.get_parent_layer()
+        } else {
+            // no parent, this is the root element
+            None
+        }
+    }
 }
 
 /*
@@ -924,14 +1029,24 @@ impl<T: Element> ElementBuilder<T> {
         self
     }
 
+    /// Measures the element with the specified layout input.
+    pub fn measure(&self, layout_input: &LayoutInput) -> Size {
+        let ref mut inner = *self.0.element.borrow_mut();
+        let child_tree = TreeCtx {
+            parent: None,
+            this: &self.0.ctx,
+        };
+        inner.measure(&child_tree, layout_input)
+    }
+
     /// Runs the specified function when the element emits the specified event.
     #[track_caller]
-    pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut T, &ElementCtx, &Event) + 'static) -> Self {
+    pub fn on<Event: 'static>(self, mut f: impl FnMut(&mut T, &TreeCtx, &Event) + 'static) -> Self {
         let weak = self.weak();
         self.subscribe(move |e| {
             if let Some(this) = weak.upgrade() {
                 this.invoke(|this, cx| {
-                    f(this,cx, e);
+                    f(this, cx, e);
                 });
                 true
             } else {
@@ -943,15 +1058,15 @@ impl<T: Element> ElementBuilder<T> {
 
     /// Runs the specified function on the widget, and runs it again when it changes.
     #[track_caller]
-    pub fn dynamic(mut self, func: impl FnMut(&mut T, &ElementCtx) + 'static) -> Self {
+    pub fn dynamic(mut self, func: impl FnMut(&mut T, &TreeCtx) + 'static) -> Self {
         fn dynamic_helper<T: Element>(
             this: &mut T,
-            ctx: &ElementCtx,
+            ctx: &TreeCtx,
             weak: WeakElement<T>,
-            mut func: impl FnMut(&mut T, &ElementCtx) + 'static,
+            mut func: impl FnMut(&mut T, &TreeCtx) + 'static,
             caller: &'static Location<'static>,
         ) {
-            let (_, deps) = with_tracking_scope(|| func(this,ctx));
+            let (_, deps) = with_tracking_scope(|| func(this, ctx));
             if !deps.reads.is_empty() {
                 watch_multi_once_with_location(
                     deps.reads.into_iter().map(|w| w.0),
@@ -969,14 +1084,23 @@ impl<T: Element> ElementBuilder<T> {
 
         let weak = self.weak();
         let this = &mut *self.0;
-        dynamic_helper(this.element.get_mut(), &this.ctx, weak, func, Location::caller());
+        dynamic_helper(
+            this.element.get_mut(),
+            &TreeCtx {
+                this: &this.ctx,
+                parent: None,
+            },
+            weak,
+            func,
+            Location::caller(),
+        );
         self
     }
 
     pub fn with_tracking_scope<R>(
         &mut self,
         scope: impl FnOnce() -> R,
-        on_changed: impl FnOnce(&mut T, &ElementCtx) + 'static,
+        on_changed: impl FnOnce(&mut T, &TreeCtx) + 'static,
     ) -> R {
         let weak_this = self.weak();
         let (r, tracking_scope) = with_tracking_scope(scope);
@@ -1045,23 +1169,24 @@ pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bo
     // get dispatch chain
     let chain = target.ancestors_and_self();
 
-    //// compute local-to-root transforms for each visual in the dispatch chain
-    //// TODO: do this only for events that need it
-    //let transforms: Vec<Affine> = chain
-    //    .iter()
-    //    .scan(Affine::default(), |acc, element| {
-    //        *acc = *acc * element.transform();
-    //        Some(*acc)
-    //    })
-    //    .collect();
+    // Build ctx chain
+    let mut arena = Arena::new();
+    let mut tree = None;
+    for e in chain.iter() {
+        tree = Some(&*arena.alloc(TreeCtx {
+            parent: tree,
+            this: &e.0.ctx,
+        }));
+    }
+    let tree = tree.unwrap();
 
     if bubbling {
         // dispatch the event, bubbling from the target up the root
         for element in chain.iter() {
-            element.send_event(event);
+            element.send_event(tree, event);
         }
     } else {
         // dispatch the event to the target only
-        target.send_event(event);
+        target.send_event(tree, event);
     }
 }

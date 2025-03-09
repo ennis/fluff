@@ -36,7 +36,7 @@ use crate::{gpu, shaders};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Loads a grayscale image into a R8_SRGB buffer.
+/// Loads a grayscale image into a R8_UNORM buffer.
 fn load_brush_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: ImageUsage, mipmaps: bool) -> Image {
     let path = path.as_ref();
     let device = cmd.device().clone();
@@ -52,7 +52,7 @@ fn load_brush_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: Im
         memory_location: MemoryLocation::GpuOnly,
         type_: ImageType::Image2D,
         usage: usage | ImageUsage::TRANSFER_DST,
-        format: Format::R8_SRGB,
+        format: Format::R8_UNORM,
         width,
         height,
         depth: 1,
@@ -127,16 +127,6 @@ fn create_depth_buffer(width: u32, height: u32) -> Image {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Default)]
-struct Pipelines {
-    curve_binning_pipeline: Option<GraphicsPipeline>,
-    draw_curves_pipeline: Option<ComputePipeline>,
-    draw_curves_oit_pipeline: Option<GraphicsPipeline>,
-    draw_curves_oit_v2_pipeline: Option<GraphicsPipeline>,
-    draw_curves_oit_resolve_pipeline: Option<GraphicsPipeline>,
-    temporal_average_pipeline: Option<ComputePipeline>,
-}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum RenderMode {

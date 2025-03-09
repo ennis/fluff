@@ -5,7 +5,7 @@ use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT
 use kyute::application::{run_after, spawn};
 use kyute::drawing::{point, vec2, BorderPosition, Image};
 use kyute::element::prelude::*;
-use kyute::element::WeakElement;
+use kyute::element::{TreeCtx, WeakElement};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::{emit_global, wait_event_global};
@@ -226,11 +226,6 @@ impl MenuBase {
         })
     }
 
-    /// Calculates the size of this menu.
-    fn calculate_size(&mut self) -> Size {
-        self.measure(&LayoutInput::default())
-    }
-
     /// Opens a menu at the specified position.
     fn open(mut self: ElementBuilder<Self>, at: Point, popup_placement: PopupPlacement) -> Window {
         self.open_around(Rect::from_origin_size(at, Size::ZERO), popup_placement)
@@ -353,7 +348,7 @@ const MENU_SUBMENU_ARROW_SPACE: f64 = 16.0;
 const SUBMENU_CLOSE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl Element for MenuBase {
-    fn measure(&mut self, _input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, _input: &LayoutInput) -> Size {
         // minimum menu width
         let mut width = 100.0f64;
         let mut height = 0.0f64;
@@ -381,7 +376,7 @@ impl Element for MenuBase {
         }
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         for item in self.items.iter_mut() {
             match item {
                 InternalMenuItem::Entry { label, .. } => {
@@ -401,7 +396,7 @@ impl Element for MenuBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
         let bounds = cx.bounds();
         let mut y = self.insets.y0;
 
@@ -469,7 +464,7 @@ impl Element for MenuBase {
         }
     }
 
-    fn event(&mut self, cx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         let bounds = cx.bounds();
         match event {
             Event::PointerMove(event) => {
@@ -793,13 +788,13 @@ impl<ID: 'static> MenuBar<ID> {
 }
 
 impl<ID: 'static> Element for MenuBar<ID> {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let width = layout_input.width.available().unwrap_or_default();
         let height = 24.0;
         Size { width, height }
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
         let mut x = MENU_BAR_LEFT_PADDING;
         for entry in self.entries.iter_mut() {
             entry.title.layout(f64::INFINITY);
@@ -825,7 +820,7 @@ impl<ID: 'static> Element for MenuBar<ID> {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
         let bounds = ectx.bounds();
         for entry in self.entries.iter_mut() {
             let text_offset = point(bounds.x0 + entry.title_offset.x, bounds.y0 + entry.title_offset.y);
@@ -833,7 +828,7 @@ impl<ID: 'static> Element for MenuBar<ID> {
         }
     }
 
-    fn event(&mut self, ctx: &ElementCtx, event: &mut Event) {
+    fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {
         match event {
             Event::PointerDown(event) => {
                 let local_pos = event.position - ctx.bounds().origin();

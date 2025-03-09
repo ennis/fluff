@@ -1,29 +1,9 @@
 //! System compositor interface
-use raw_window_handle::RawWindowHandle;
 use skia_safe as sk;
 
-use crate::app_globals::AppGlobals;
-use crate::{backend, Size};
+use crate::backend;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// A drawable surface
-pub struct DrawableSurface {
-    backend: backend::DrawableSurface,
-}
-
-impl DrawableSurface {
-    /// Returns the underlying skia surface.
-    pub fn skia(&self) -> sk::Surface {
-        self.backend.surface()
-    }
-
-    /// Returns the size of the surface in physical pixels.
-    pub fn physical_size(&self) -> Size {
-        let surface = self.backend.surface();
-        Size::new(surface.width() as f64, surface.height() as f64)
-    }
-}
 
 /// Pixel format of a drawable surface.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
@@ -77,6 +57,10 @@ impl ColorType {
     }
 }
 
+pub use backend::DrawableSurface;
+pub use backend::Layer;
+
+/*
 /// Handle to a compositor layer.
 pub struct Layer(backend::Layer);
 
@@ -107,8 +91,13 @@ impl Layer {
     }
 
     /// Resizes a surface layer.
-    pub fn set_surface_size(&self, size: Size) {
-        self.0.set_surface_size(size);
+    pub fn resize(&self, size: Size) {
+        self.0.resize(size);
+    }
+    
+    /// Adds a child layer to this layer.
+    pub fn add_child(&self, child: &Layer) {
+        self.0.add_child(&child.0);
     }
 
     /// Binds a layer to a native window.
@@ -124,7 +113,5 @@ impl Layer {
     ///
     /// * size Size of the surface in pixels
     /// * format Pixel format
-    pub fn new_surface(size: Size, format: ColorType) -> Layer {
-        Layer(AppGlobals::get().backend.create_surface_layer(size, format))
-    }
 }
+*/

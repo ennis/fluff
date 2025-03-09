@@ -1,4 +1,4 @@
-use crate::element::{ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElementAny};
+use crate::element::{ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, TreeCtx, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
 use crate::{Element, PaintCtx};
@@ -191,11 +191,12 @@ impl Element for Flex {
         self.children.iter().map(|child| child.element.clone()).collect()
     }
 
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
         let output = flex_layout(
             LayoutMode::Measure,
+            cx,
             &FlexLayoutParams {
                 direction: self.direction,
                 width_constraint: layout_input.width,
@@ -215,9 +216,10 @@ impl Element for Flex {
         }
     }
 
-    fn layout(&mut self, size: Size) -> LayoutOutput {
+    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
         let mut output = flex_layout(
             LayoutMode::Place,
+            cx,
             &FlexLayoutParams {
                 direction: self.direction,
                 width_constraint: SizeConstraint::Available(size.width),
@@ -244,9 +246,9 @@ impl Element for Flex {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _cx: &ElementCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
-            child.element.paint(ctx);
+            child.element.paint(cx, ctx);
         }
     }
 }
