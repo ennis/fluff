@@ -178,7 +178,7 @@ impl Slider {
         })
     }
 
-    pub fn set_value(&mut self, cx: &ElementCtx, value: f64) {
+    pub fn set_value(&mut self, cx: &TreeCtx, value: f64) {
         self.base.set_value(value);
         cx.mark_needs_paint();
     }

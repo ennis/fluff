@@ -651,7 +651,7 @@ pub trait ContextMenuExt {
     );
 }
 
-impl ContextMenuExt for ElementCtx {
+impl ContextMenuExt for TreeCtx<'_> {
     fn open_context_menu<ID: Clone + 'static>(
         &self,
         click_position: Point,
@@ -761,7 +761,7 @@ impl<ID: 'static> MenuBar<ID> {
         None
     }
 
-    fn open_menu(&mut self, cx: &ElementCtx, entry_index: usize) {
+    fn open_menu(&mut self, cx: &TreeCtx, entry_index: usize) {
         let Some(nodes) = self.nodes.child_item_range(self.entries[entry_index].index) else {
             // no items in menu
             return;

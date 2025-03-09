@@ -165,7 +165,7 @@ impl SpinnerBase {
     }
 
     /// Sets the current value of the spinner.
-    pub fn set_value(&mut self, cx: &ElementCtx, mut value: f64) {
+    pub fn set_value(&mut self, cx: &TreeCtx, mut value: f64) {
         if self.clamp_to_integer {
             value = value.round();
         }
@@ -176,7 +176,7 @@ impl SpinnerBase {
 
     /////////////////////////////
 
-    fn update_text(&mut self, cx: &ElementCtx) {
+    fn update_text(&mut self, cx: &TreeCtx) {
         let str = self.format_value();
         self.text_edit.set_text(str);
         cx.mark_needs_layout();
@@ -211,7 +211,7 @@ impl SpinnerBase {
         true
     }
 
-    fn handle_scroll(&mut self, cx: &ElementCtx, scroll_delta_lines: f64) {
+    fn handle_scroll(&mut self, cx: &TreeCtx, scroll_delta_lines: f64) {
         if self.editing {
             let text = self.text_edit.text();
             if !text.parse::<f64>().is_ok() {

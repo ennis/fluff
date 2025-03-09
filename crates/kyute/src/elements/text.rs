@@ -33,7 +33,7 @@ impl Text {
         })
     }
 
-    pub fn set_text(&mut self, cx: &ElementCtx, text_style: &TextStyle, text: &[TextRun]) {
+    pub fn set_text(&mut self, cx: &TreeCtx, text_style: &TextStyle, text: &[TextRun]) {
         let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
         cx.mark_needs_layout();

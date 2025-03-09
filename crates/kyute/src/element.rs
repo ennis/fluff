@@ -136,6 +136,65 @@ pub struct TreeCtx<'a> {
     pub this: &'a ElementCtx,
 }
 
+
+impl<'a> TreeCtx<'a> {
+
+    /// Returns the parent window of this element.
+    ///
+    /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
+    /// root to get the window handle.
+    pub fn get_parent_window(&self) -> WindowHandle {
+        if let Some(parent) = self.parent {
+            parent.get_parent_window()
+        } else {
+            // no parent, this is the root element
+            self.this.window.clone()
+        }
+    }
+
+    /// Maps a point in window coordinates to screen coordinates.
+    pub fn map_to_monitor(&self, window_point: Point) -> Point {
+        //let window_point = self.map_to_window(local_point);
+        self.get_parent_window().map_to_screen(window_point)
+    }
+
+    /// Maps a rectangle in window coordinates to screen coordinates.
+    pub fn map_rect_to_monitor(&self, window_rect: Rect) -> Rect {
+        window_rect.with_origin(self.map_to_monitor(window_rect.origin()))
+    }
+
+    fn propagate_dirty_flags(&self) {
+        let flags = self.change_flags.get();
+        if let Some(parent) = self.parent {
+            //let mut parent = parent.borrow_mut();
+            let parent_flags = parent.this.change_flags.get();
+            if parent_flags.contains(flags) {
+                // the parent already has the flags, no need to propagate
+                return;
+            }
+            parent.this.change_flags.set(parent_flags | flags);
+            parent.propagate_dirty_flags();
+        } else {
+            // no parent, this is the root element and it should have a window
+            if flags.contains(ChangeFlags::LAYOUT) {
+                self.window.mark_needs_layout();
+            } else if flags.contains(ChangeFlags::PAINT) {
+                self.window.mark_needs_paint();
+            }
+        }
+    }
+
+    pub fn mark_needs_layout(&self) {
+        self.this.change_flags.set(self.this.change_flags.get() | ChangeFlags::LAYOUT);
+        self.propagate_dirty_flags();
+    }
+
+    pub fn mark_needs_paint(&self) {
+        self.this.change_flags.set(self.this.change_flags.get() | ChangeFlags::PAINT);
+        self.propagate_dirty_flags();
+    }
+}
+
 impl<'a> Deref for TreeCtx<'a> {
     type Target = ElementCtx;
 
@@ -223,81 +282,6 @@ pub trait Element: Any {
     fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {}
 }
 
-/*
-impl dyn Element + 'static {
-    /// Downcasts the element to a concrete type.
-    pub fn downcast<T: 'static>(&self) -> Option<&T> {
-        if (*self).type_id() == TypeId::of::<T>() {
-            unsafe {
-                // SAFETY: we just checked that the type matches
-                let raw = self as *const dyn Element as *const T;
-                Some(&*raw)
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Downcasts the element to a concrete type.
-    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        // (*self) because of https://users.rust-lang.org/t/calling-the-any-traits-type-id-on-a-mutable-reference-causes-a-weird-compiler-error/84658/2
-        if (*self).type_id() == TypeId::of::<T>() {
-            unsafe {
-                // SAFETY: we just checked that the type matches
-                let raw = self as *mut dyn Element as *mut T;
-                Some(&mut *raw)
-            }
-        } else {
-            None
-        }
-    }
-}*/
-
-/*
-impl<'a, T:?Sized> Deref for ElemMut<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.element
-    }
-}
-
-impl<'a, T:?Sized> DerefMut for ElemMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.element
-    }
-}*/
-
-/*
-impl<'a> ElemMut<'a, dyn Element> {
-    /// Downcasts the element to a concrete type.
-    pub fn downcast<T: 'static>(&self) -> Option<&ElemMut<T>> {
-        if self.element.type_id() == TypeId::of::<T>() {
-            unsafe {
-                // SAFETY: we just checked that the type matches
-                let raw = self as *const ElemMut<dyn Element> as *const ElemMut<T>;
-                Some(&*raw)
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Downcasts the element to a concrete type.
-    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut ElemMut<T>> {
-        // (*self) because of https://users.rust-lang.org/t/calling-the-any-traits-type-id-on-a-mutable-reference-causes-a-weird-compiler-error/84658/2
-        if self.element.type_id() == TypeId::of::<T>() {
-            unsafe {
-                // SAFETY: we just checked that the type matches
-                let raw = self as *mut ElemMut<dyn Element> as *mut ElemMut<T>;
-                Some(&mut *raw)
-            }
-        } else {
-            None
-        }
-    }
-}*/
-
 impl<T: Element> ElemCell<T> {
     fn new(element: T) -> UniqueRc<ElemCell<T>> {
         let mut rc = UniqueRc::new(ElemCell {
@@ -368,17 +352,6 @@ impl<T: 'static> EventSource for WeakElement<T> {
         self.0.clone()
     }
 }
-
-/*
-impl EventSource for WeakElementAny {
-    fn as_weak(&self) -> Weak<dyn Any> {
-        // FIXME: that's not great, we need to upgrade to get the Weak<Any> inside
-        //        the ElemBox. This may fail in reasonable situations.
-        //        This is doubly stupid because we don't care about the Any in the
-        //        subscription system, we just need to be able to compare Weak pointers.
-        self.0.upgrade().unwrap().borrow().ctx.weak_this_any.clone()
-    }
-}*/
 
 impl WeakElementAny {
     pub unsafe fn downcast_unchecked<T: 'static>(self) -> WeakElement<T> {
@@ -453,6 +426,8 @@ struct ElemCell<T: ?Sized> {
 /// Strong reference to an element in the element tree.
 // Yes it's a big fat Rc<RefCell>, deal with it.
 // FIXME: consider eliminating the wrapper and use a typedef instead (move methods to ElemCell)
+//        ISSUE: the wrapper is here for a reason: it implements by-reference Eq/Ord/Hash.
+//        We can't do that with a typedef.
 pub struct ElementRc<T: ?Sized>(Rc<ElemCell<T>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
@@ -862,15 +837,6 @@ impl ElementCtx {
         self.offset.get()
     }
 
-    pub fn mark_needs_layout(&self) {
-        self.change_flags.set(self.change_flags.get() | ChangeFlags::LAYOUT);
-        self.propagate_dirty_flags();
-    }
-
-    pub fn mark_needs_paint(&self) {
-        self.change_flags.set(self.change_flags.get() | ChangeFlags::PAINT);
-        self.propagate_dirty_flags();
-    }
 
     /*pub fn mark_structure_changed(&mut self) {
         self.change_flags |= ChangeFlags::STRUCTURE;
@@ -881,16 +847,6 @@ impl ElementCtx {
     //    local_point + self.window_position.get()
     //}
 
-    /// Maps a point in window coordinates to screen coordinates.
-    pub fn map_to_monitor(&self, window_point: Point) -> Point {
-        //let window_point = self.map_to_window(local_point);
-        self.get_parent_window().map_to_screen(window_point)
-    }
-
-    /// Maps a rectangle in window coordinates to screen coordinates.
-    pub fn map_rect_to_monitor(&self, window_rect: Rect) -> Rect {
-        window_rect.with_origin(self.map_to_monitor(window_rect.origin()))
-    }
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
     ///
@@ -922,39 +878,7 @@ impl ElementCtx {
         self.focused.get()
     }
 
-    fn propagate_dirty_flags(&self) {
-        let flags = self.change_flags.get();
-        if let Some(parent) = self.parent.upgrade() {
-            //let mut parent = parent.borrow_mut();
-            let parent_flags = parent.0.ctx.change_flags.get();
-            if parent_flags.contains(flags) {
-                // the parent already has the flags, no need to propagate
-                return;
-            }
-            parent.0.ctx.change_flags.set(parent_flags | flags);
-            parent.0.ctx.propagate_dirty_flags();
-        } else {
-            // no parent, this is the root element and it should have a window
-            if flags.contains(ChangeFlags::LAYOUT) {
-                self.window.mark_needs_layout();
-            } else if flags.contains(ChangeFlags::PAINT) {
-                self.window.mark_needs_paint();
-            }
-        }
-    }
 
-    /// Returns the parent window of this element.
-    ///
-    /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
-    /// root to get the window handle.
-    pub fn get_parent_window(&self) -> WindowHandle {
-        if let Some(parent) = self.parent.upgrade() {
-            parent.get_parent_window()
-        } else {
-            // no parent, this is the root element
-            self.window.clone()
-        }
-    }
 
     /// Returns the parent compositor layer of this element (disregarding the element's own layer if it has one).
     pub fn get_parent_layer(&self) -> Option<compositor::Layer> {

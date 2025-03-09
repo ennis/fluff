@@ -241,7 +241,7 @@ impl Frame {
     }
 
     /// Sets the background color.
-    pub fn set_background_color(&mut self, cx: &ElementCtx, color: Color) {
+    pub fn set_background_color(&mut self, cx: &TreeCtx, color: Color) {
         self.style.background_color = color;
         self.style_changed = true;
         cx.mark_needs_paint();
