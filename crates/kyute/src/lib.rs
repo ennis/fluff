@@ -22,7 +22,7 @@ mod util;
 pub mod window;
 
 // reexports
-pub use app_globals::AppGlobals;
+pub use app_globals::{app_backend, caret_blink_time, double_click_time, init_application, teardown_application};
 pub use element::{Element, IntoElementAny};
 pub use element_state::ElementState;
 pub use event::Event;
@@ -34,6 +34,5 @@ pub use paint_ctx::PaintCtx;
 pub use skia_safe;
 pub use window::{Window, WindowOptions};
 
-pub use tokio::select;
 pub use futures::future::AbortHandle;
-
+pub use tokio::select;

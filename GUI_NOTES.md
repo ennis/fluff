@@ -1536,3 +1536,29 @@ It can be used to access other elements in the tree, given a `&mut ElementRef`.
      - scaling, rotations are largely untested so far
      - unlikely to be of any use in the future
        - arbitrary transforms will be used in zoom&pan views, but they are separate from the widget hierarchy
+
+
+# Q: where/how to keep references to compositor layers
+
+Use case: a widget that provides its own compositor layer. The layer must be inserted in the tree, which means
+that the widget must retrieve a reference to the parent layer in the UI tree. Ideally the layer should be inserted 
+when the widget is parented to a window (mounted). 
+Thus, the widget must have access to some data belonging to the parent.
+
+Options:
+- (A) store `Layer` in `ElementCtx`
+  - unergonomic: the widget doesn't directly own the layer, `ElementCtx` must be passed by mutable reference (tricky)
+  - unergonomic: it must be stored as `Option<Layer>`, which adds syntactical overhead on every access (`.as_ref().unwrap()` everywhere...)
+- (B) store `Layer` in the Element itself, and pass down a reference to children via `TreeCtx`
+  - impossible, because we need to be able to build a `TreeCtx` "from the middle" of the tree, we don't always build the `TreeCtx` chain from the root
+  - unergonomic: the widget with a custom layer must override all methods with `TreeCtx` to pass the layer down
+- (C) make `Layer` a clonable refcounted type, store `Option<Layer>` in `ElementCtx`, widgets can hold their own reference.
+  - sanest option; most backend frameworks (DirectComposition, AppKit) implement layers (and many other things) as refcounted objects
+
+What would other languages do?
+- in C#, `Layer`s would have reference semantics, and the layer would be stored in a nullable field in the base class
+- in Swift/ObjC, same thing (see `NSView::layer`)
+  - this would require `Layer` to be a refcounted reference type and be clonable
+
+Conclusion: not worth the hassle to have unique ownership semantics to `Layer`. 
+Go with option (C) and don't think about it anymore. 

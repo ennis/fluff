@@ -1,5 +1,5 @@
 use crate::backend::ApplicationBackend;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -13,9 +13,38 @@ pub struct AppGlobals {
 }
 
 thread_local! {
-    static APP_GLOBALS: RefCell<Option<Rc<AppGlobals>>> = RefCell::new(None);
+    static APP_BACKEND: OnceCell<&'static ApplicationBackend> = OnceCell::new();
 }
 
+
+pub fn init_application() {
+    APP_BACKEND.with(|g| {
+        g.get_or_init(|| {
+            Box::leak(Box::new(ApplicationBackend::new()))
+        });
+    });
+}
+
+pub fn teardown_application() {
+    app_backend().teardown();
+}
+
+pub fn app_backend() -> &'static ApplicationBackend {
+    APP_BACKEND.with(|g| *g.get().expect("an application should be active on this thread"))
+}
+
+/// Returns the system's double click time.
+pub fn double_click_time() -> Duration {
+    app_backend().double_click_time()
+}
+
+/// Returns the system's caret blink time.
+pub fn caret_blink_time() -> Duration {
+    app_backend().get_caret_blink_time()
+}
+
+
+/*
 impl AppGlobals {
     /// Creates a new `Application` instance.
     pub fn new() -> Rc<AppGlobals> {
@@ -35,17 +64,8 @@ impl AppGlobals {
         AppGlobals::try_get().expect("an application should be active on this thread")
     }
 
-    /// Returns the system's double click time.
-    pub fn double_click_time(&self) -> Duration {
-        self.backend.double_click_time()
-    }
-
-    /// Returns the system's caret blink time.
-    pub fn caret_blink_time(&self) -> Duration {
-        self.backend.get_caret_blink_time()
-    }
-
     pub fn teardown() {
         APP_GLOBALS.with(|g| g.replace(None));
     }
 }
+*/

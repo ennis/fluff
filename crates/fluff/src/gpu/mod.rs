@@ -14,6 +14,9 @@ use tracing::warn;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+// TODO: in theory `Device` could be thread safe, and we could have a global device
+//       usable across threads. But for now, we'll keep it simple and only allow
+//       access on the main thread.
 thread_local! {
     static DEVICE: OnceCell<&'static graal::Device> = OnceCell::new();
     static PIPELINE_MANAGER: OnceCell<RefCell<pipelines::PipelineManager>> = OnceCell::new();
@@ -29,9 +32,7 @@ pub fn init() {
         return;
     }
 
-    // TODO: in theory `Device` could be thread safe, and we could have a global device
-    //       usable across threads. But for now, we'll keep it simple and only allow
-    //       access on the main thread.
+    // Leaking is necessary here because `thread_local` won't allow a reference to escape the closure.
     DEVICE.with(|device| {
         device.get_or_init(|| Box::leak(Box::new(graal::Device::new().expect("failed to create GPU device"))));
     });

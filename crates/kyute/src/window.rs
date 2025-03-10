@@ -31,7 +31,7 @@ use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
-use crate::{application, Color, EventSource};
+use crate::{app_backend, application, double_click_time, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -434,7 +434,7 @@ impl WindowInner {
                 if last.device_id == device_id
                     && last.button == button
                     && last.position == self.cursor_pos.get()
-                    && (click_time - last.time) < AppGlobals::get().double_click_time() =>
+                    && (click_time - last.time) < double_click_time() =>
             {
                 // same device, button, position, and within the platform specified double-click time
                 if state.is_pressed() {
@@ -965,7 +965,7 @@ impl Window {
         // Get the physical size from the window
         let phy_size = window.inner_size();
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
-        let layer = Layer::new(phy_size, ColorType::RGBAF16);
+        let layer = app_backend().create_surface_layer(phy_size, ColorType::RGBAF16);
 
         let raw_window_handle = window
             .window_handle()

@@ -93,7 +93,7 @@ struct GpuFenceData {
     value: Cell<u64>,
 }
 
-struct BackendInner {
+pub struct ApplicationBackend {
     //pub(crate) dispatcher_queue_controller: DispatcherQueueController,
     adapter: IDXGIAdapter1,
     d3d12_device: D3D12Device,        // thread safe
@@ -108,38 +108,6 @@ struct BackendInner {
     //debug: IDXGIDebug1,
     direct_context: RefCell<skia_safe::gpu::DirectContext>,
     pub(crate) composition_device: IDCompositionDesktopDevice,
-}
-
-impl BackendInner {
-    /// Waits for submitted GPU commands to complete.
-    fn wait_for_gpu(&self) {
-        //let _span = span!("wait_for_gpu_command_completion");
-        unsafe {
-            let mut val = self.sync.value.get();
-            val += 1;
-            self.sync.value.set(val);
-            self.command_queue
-                .Signal(&self.sync.fence, val)
-                .expect("ID3D12CommandQueue::Signal failed");
-            if self.sync.fence.GetCompletedValue() < val {
-                self.sync
-                    .fence
-                    .SetEventOnCompletion(val, *self.sync.event)
-                    .expect("SetEventOnCompletion failed");
-                WaitForSingleObject(*self.sync.event, 0xFFFFFFFF);
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ApplicationBackend(Rc<BackendInner>);
-
-impl Drop for ApplicationBackend {
-    fn drop(&mut self) {
-        // Synchronize with the GPU when dropping the backend.
-        self.0.wait_for_gpu();
-    }
 }
 
 impl ApplicationBackend {
@@ -256,7 +224,7 @@ impl ApplicationBackend {
 
         //let compositor = Compositor::new().expect("failed to create compositor");
 
-        let composition_device : IDCompositionDesktopDevice =
+        let composition_device: IDCompositionDesktopDevice =
             unsafe { DCompositionCreateDevice3(None).expect("failed to create composition device") };
 
         //let composition_device_debug : IDCompositionDeviceDebug = composition_device.cast().unwrap();
@@ -279,7 +247,7 @@ impl ApplicationBackend {
             }
         };
 
-        ApplicationBackend(Rc::new(BackendInner {
+        ApplicationBackend {
             d3d12_device,
             command_queue,
             command_allocator,
@@ -288,7 +256,27 @@ impl ApplicationBackend {
             composition_device,
             sync,
             direct_context: RefCell::new(direct_context),
-        }))
+        }
+    }
+
+    /// Waits for submitted GPU commands to complete.
+    pub(crate) fn wait_for_gpu(&self) {
+        //let _span = span!("wait_for_gpu_command_completion");
+        unsafe {
+            let mut val = self.sync.value.get();
+            val += 1;
+            self.sync.value.set(val);
+            self.command_queue
+                .Signal(&self.sync.fence, val)
+                .expect("ID3D12CommandQueue::Signal failed");
+            if self.sync.fence.GetCompletedValue() < val {
+                self.sync
+                    .fence
+                    .SetEventOnCompletion(val, *self.sync.event)
+                    .expect("SetEventOnCompletion failed");
+                WaitForSingleObject(*self.sync.event, 0xFFFFFFFF);
+            }
+        }
     }
 
     /// Returns the system double click time in milliseconds.
@@ -306,5 +294,9 @@ impl ApplicationBackend {
             // TODO it may return INFINITE, which should be treated as no blinking
             Duration::from_millis(ms as u64)
         }
+    }
+
+    pub(crate) fn teardown(&self) {
+        self.wait_for_gpu();
     }
 }
