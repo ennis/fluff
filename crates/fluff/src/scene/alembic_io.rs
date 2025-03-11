@@ -4,7 +4,7 @@ use alembic_ogawa::geom::{GeomParam, GeometryScope, MeshTopologyVariance, PolyMe
 use alembic_ogawa::{DataType, ObjectReader, TimeSample, TypedArrayPropertyReader};
 use anyhow::bail;
 use graal::util::DeviceExt;
-use graal::{BufferUsage, Device, MemoryLocation};
+use graal::{BufferUsage, MemoryLocation, RcDevice};
 use std::mem::MaybeUninit;
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -27,7 +27,7 @@ fn triangulate_indices(face_counts: &[i32], indices: &[i32], output: &mut [Maybe
 }
 
 fn read_attribute_samples<T: DataType + Copy>(
-    device: &Device,
+    device: &RcDevice,
     expected_count: usize,
     attribute: &TypedArrayPropertyReader<T>,
 ) -> Result<Attribute<[T]>, anyhow::Error> {
@@ -51,7 +51,7 @@ fn read_attribute_samples<T: DataType + Copy>(
 }
 
 fn read_geom_param<T: DataType + Copy>(
-    device: &Device,
+    device: &RcDevice,
     face_vertex_count: usize,
     gp: &GeomParam<T>,
 ) -> Result<Attribute<[T]>, anyhow::Error> {

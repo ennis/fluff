@@ -1,5 +1,5 @@
 use glam::{vec2, DVec4, Vec3};
-use graal::{BufferUsage, Device, MemoryLocation};
+use graal::{BufferUsage, RcDevice, MemoryLocation};
 use houdinio::Geo;
 use crate::gpu;
 use crate::gpu::AppendBuffer;

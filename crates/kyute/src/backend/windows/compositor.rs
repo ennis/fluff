@@ -117,7 +117,7 @@ impl Drop for LayerInner {
 }
 
 impl LayerInner {
-    pub fn new(size: Size, format: ColorType) -> Rc<LayerInner> {
+    pub(crate) fn new(size: Size, format: ColorType) -> Rc<LayerInner> {
         app_backend().create_surface_layer(size, format)
     }
 
@@ -128,6 +128,7 @@ impl LayerInner {
 
     /// Resizes a surface layer.
     pub fn resize(&self, size: Size) {
+        
         let app = app_backend();
         // skip if same size
         if self.size.get() == size {
@@ -220,10 +221,21 @@ impl LayerInner {
         }
     }
 
-    pub(crate) fn add_child(&self, child: &Layer) {
+    pub fn add_child(&self, child: &Layer) {
         unsafe {
             self.visual.AddVisual(&child.visual, true, None).unwrap();
         }
+    }
+    
+    pub fn remove_child(&self, child: &Layer) {
+        unsafe {
+            self.visual.RemoveVisual(&child.visual).unwrap();
+        }
+    }
+    
+    /// Returns the underlying D3D swap chain associated with the layer.
+    pub fn swap_chain(&self) -> &IDXGISwapChain3 {
+        &self.swap_chain
     }
 
     /// Binds a composition layer to a window.
@@ -302,7 +314,7 @@ impl ApplicationBackend {
     /// Creates a surface layer.
     ///
     /// FIXME: don't ignore format
-    pub(crate) fn create_surface_layer(&self, size: Size, _format: ColorType) -> Layer {
+    pub fn create_surface_layer(&self, size: Size, _format: ColorType) -> Layer {
         trace!("create_surface_layer size {size:?}");
         unsafe {
             // Create the swap chain backing the layer

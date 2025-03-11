@@ -373,6 +373,16 @@ pub struct LayoutOutput {
     pub baseline: Option<f64>,
 }
 
+impl From<Size> for LayoutOutput {
+    fn from(size: Size) -> Self {
+        LayoutOutput {
+            width: size.width,
+            height: size.height,
+            baseline: None,
+        }
+    }
+}
+
 impl fmt::Debug for LayoutOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:.2}×{:.2}", self.width, self.height)?;
@@ -384,6 +394,7 @@ impl fmt::Debug for LayoutOutput {
 }
 
 impl LayoutOutput {
+    
     pub fn from_main_cross_sizes(axis: Axis, main: f64, cross: f64, baseline: Option<f64>) -> Self {
         match axis {
             Axis::Horizontal => LayoutOutput {

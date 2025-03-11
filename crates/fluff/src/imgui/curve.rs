@@ -1,7 +1,7 @@
 use egui::{emath::RectTransform, pos2, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
 use uniform_cubic_splines::{basis::CatmullRom, spline, spline_inverse};
 
-use crate::ui::popup_button;
+use crate::imgui::popup_button;
 
 pub fn curve_editor(ui: &mut Ui, abscissae: &mut [f64], values: &mut [f64]) -> Response {
     assert_eq!(abscissae.len(), values.len());

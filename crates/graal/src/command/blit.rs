@@ -14,7 +14,7 @@ impl CommandStream {
         let cb = self.get_or_create_command_buffer();
         unsafe {
             // SAFETY: FFI call and parameters are valid
-            self.device
+            self.device.raw
                 .cmd_fill_buffer(cb, buffer.buffer.handle, buffer.offset, buffer.size, data);
         }
     }
@@ -27,7 +27,7 @@ impl CommandStream {
         let cb = self.get_or_create_command_buffer();
         unsafe {
             // SAFETY: FFI call and parameters are valid
-            self.device.cmd_clear_color_image(
+            self.device.raw.cmd_clear_color_image(
                 cb,
                 image.handle,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -50,7 +50,7 @@ impl CommandStream {
         let cb = self.get_or_create_command_buffer();
         unsafe {
             // SAFETY: FFI call and parameters are valid
-            self.device.cmd_clear_depth_stencil_image(
+            self.device.raw.cmd_clear_depth_stencil_image(
                 cb,
                 image.handle,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -109,7 +109,7 @@ impl CommandStream {
         // SAFETY: FFI call and parameters are valid
         let cb = self.get_or_create_command_buffer();
         unsafe {
-            self.device.cmd_copy_image(
+            self.device.raw.cmd_copy_image(
                 cb,
                 source.image.handle,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -139,7 +139,7 @@ impl CommandStream {
         // SAFETY: FFI call and parameters are valid
         let cb = self.get_or_create_command_buffer();
         unsafe {
-            self.device.cmd_copy_buffer(
+            self.device.raw.cmd_copy_buffer(
                 cb,
                 source.handle(),
                 destination.handle(),
@@ -181,7 +181,7 @@ impl CommandStream {
         // SAFETY: FFI call and parameters are valid
         let cb = self.get_or_create_command_buffer();
         unsafe {
-            self.device.cmd_copy_buffer_to_image(
+            self.device.raw.cmd_copy_buffer_to_image(
                 cb,
                 source.buffer.handle(),
                 destination.image.handle(),
@@ -249,7 +249,7 @@ impl CommandStream {
         // SAFETY: command buffer is OK, params OK
         let cb = self.get_or_create_command_buffer();
         unsafe {
-            self.device.cmd_blit_image(
+            self.device.raw.cmd_blit_image(
                 cb,
                 src.handle,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,

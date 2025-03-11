@@ -3,10 +3,11 @@ use color_print::cprintln;
 use scoped_tls::scoped_thread_local;
 use slotmap::{new_key_type, Key, KeyData, SlotMap};
 use std::any::{type_name, Any, TypeId};
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::rc::{Rc, Weak};
 
@@ -135,6 +136,37 @@ impl SubscriptionKey {
     }
 }
 
+/// A writable reference to the data of a model.
+///
+/// This is akin to `RefMut` of `RefCell`.
+pub struct ModelMut<'a, T> {
+    rm: RefMut<'a, T>,
+}
+
+impl<'a, T> Deref for ModelMut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &*self.rm
+    }
+}
+
+impl<'a,T> DerefMut for ModelMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.rm
+    }
+}
+
+pub struct ModelRef<'a, T> {
+    r: Ref<'a, T>,
+}
+
+impl<'a, T> Deref for ModelRef<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &*self.r
+    }
+}
+
 /// A container for a mutable piece of data that allows subscribers to listen for changes to the data.
 ///
 /// `Model` instances have reference semantics similar to `Rc`. They can be cheaply cloned, and clones
@@ -148,6 +180,12 @@ impl<T: Any> EventSource for Model<T> {
         let weak = Rc::downgrade(&self.inner);
         let weak: Weak<dyn Any> = weak;
         weak
+    }
+}
+
+impl<T:Any> EventSource for WeakModel<T> {
+    fn as_weak(&self) -> Weak<dyn Any> {
+        self.inner.clone() as Weak<dyn Any>
     }
 }
 
@@ -178,6 +216,19 @@ impl<T: Any> Model<T> {
         });
         Self { inner }
     }
+    
+    pub fn new_cyclic<F>(f: F) -> Self
+    where
+        F: FnOnce(WeakModel<T>) -> T,
+    {
+        let inner = Rc::new_cyclic(|weak| ModelInner {
+            header: ModelHeader {
+                _type_id: TypeId::of::<T>(),
+            },
+            data: RefCell::new(f(WeakModel { inner: weak.clone() })),
+        });
+        Self { inner }
+    }
 
     /// Returns a clone of the data inside this model.
     ///
@@ -188,6 +239,24 @@ impl<T: Any> Model<T> {
     {
         track_read(self.as_weak());
         self.inner.data.borrow().clone()
+    }
+
+    /// Returns a writable reference to the data.
+    pub fn write(&self) -> ModelMut<T> {
+        // TODO figure out whether we want to keep implicit tracking
+        //track_write(self.as_weak());
+        ModelMut {
+            rm: self.inner.data.borrow_mut(),
+        }
+    }
+
+    /// Returns a reference to the data.
+    pub fn read(&self) -> ModelRef<T> {
+        // TODO figure out whether we want to keep implicit tracking
+        //track_read(self.as_weak());
+        ModelRef {
+            r: self.inner.data.borrow(),
+        }
     }
 
     /// Sets the data inside this model, and returns the previous data.
@@ -221,6 +290,13 @@ impl<T: Any> Model<T> {
         track_write(self.as_weak());
         f(&mut *self.inner.data.borrow_mut());
         self.emit(DataChanged);
+    }
+
+
+    /// Updates the data.
+    #[track_caller]
+    pub fn modify(&self, f: impl FnOnce(&mut T, WeakModel<T>)) {
+        f(&mut *self.inner.data.borrow_mut(), self.downgrade());
     }
 
     /// Returns a type-erased reference to the model.

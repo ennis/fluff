@@ -1,12 +1,9 @@
-use std::{
-    ffi::{c_char, c_void, CString},
-    mem,
-    mem::MaybeUninit,
-    ops::Deref,
-    ptr,
-    sync::Arc,
-    time::Duration,
-};
+use std::ffi::{c_char, c_void, CString};
+use std::mem::MaybeUninit;
+use std::ops::Deref;
+use std::sync::Arc;
+use std::time::Duration;
+use std::{mem, ptr};
 
 use ash::prelude::VkResult;
 use fxhash::FxHashMap;
@@ -14,11 +11,10 @@ use fxhash::FxHashMap;
 pub use compute::ComputeEncoder;
 pub use render::{RenderEncoder, RenderPassInfo};
 
+use crate::device::{ActiveSubmission, QueueShared};
 use crate::{
-    aspects_for_format,
-    device::{ActiveSubmission, QueueShared},
-    vk, vk_ext_debug_utils, BufferAccess, BufferUntyped, CommandPool, Descriptor, Device, GpuResource, Image,
-    ImageAccess, ImageId, MemoryAccess, Swapchain, SwapchainImage,
+    aspects_for_format, vk, vk_ext_debug_utils, BufferAccess, BufferUntyped, CommandPool, Descriptor, GpuResource,
+    Image, ImageAccess, ImageId, MemoryAccess, RcDevice, Swapchain, SwapchainImage,
 };
 
 mod blit;
@@ -128,7 +124,7 @@ impl Barrier {
 
 ///
 pub struct CommandStream {
-    pub(crate) device: Device,
+    pub(crate) device: RcDevice,
     /// The queue on which we're submitting work.
     ///
     /// NOTE: for now, and most likely for the foreseeable future, we assume that
@@ -232,7 +228,7 @@ pub struct SemaphoreWait {
 }
 
 impl CommandStream {
-    pub(super) fn new(device: Device, command_pool: CommandPool, queue: Arc<QueueShared>) -> CommandStream {
+    pub(super) fn new(device: RcDevice, command_pool: CommandPool, queue: Arc<QueueShared>) -> CommandStream {
         //let submission_index = device.inner.tracker.lock().
         CommandStream {
             device,
@@ -255,10 +251,10 @@ impl CommandStream {
         bind_point: vk::PipelineBindPoint,
         pipeline_layout: vk::PipelineLayout,
     ) {
-        let texture_set = self.device.inner.texture_descriptors.lock().unwrap().set;
-        let image_set = self.device.inner.image_descriptors.lock().unwrap().set;
-        let sampler_set = self.device.inner.sampler_descriptors.lock().unwrap().set;
-        self.device.cmd_bind_descriptor_sets(
+        let texture_set = self.device.texture_descriptors.lock().unwrap().set;
+        let image_set = self.device.image_descriptors.lock().unwrap().set;
+        let sampler_set = self.device.sampler_descriptors.lock().unwrap().set;
+        self.device.raw.cmd_bind_descriptor_sets(
             command_buffer,
             bind_point,
             pipeline_layout,
@@ -419,7 +415,7 @@ impl CommandStream {
         // Use the raw function pointer because the wrapper takes a `&[u8]` slice which we can't
         // get from `&[MaybeUninit<u8>]` safely (even if we won't read uninitialized data).
         unsafe {
-            (self.device.deref().fp_v1_0().cmd_push_constants)(
+            (self.device.raw.fp_v1_0().cmd_push_constants)(
                 command_buffer,
                 pipeline_layout,
                 stages,
@@ -500,7 +496,7 @@ impl CommandStream {
             // a global memory barrier is needed or there are image layout transitions
             let command_buffer = self.get_or_create_command_buffer();
             unsafe {
-                self.device.cmd_pipeline_barrier2(
+                self.device.raw.cmd_pipeline_barrier2(
                     command_buffer,
                     &vk::DependencyInfo {
                         dependency_flags: Default::default(),
@@ -523,7 +519,7 @@ impl CommandStream {
     }
 
     /// Returns the device associated with this queue.
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> &RcDevice {
         &self.device
     }
 
@@ -739,6 +735,7 @@ impl CommandStream {
         // on the semaphore (not that the wait has completed).
         let semaphore = {
             self.device
+                .raw
                 .create_semaphore(&vk::SemaphoreCreateInfo { ..Default::default() }, None)
                 .expect("vkCreateSemaphore failed")
         };
@@ -752,18 +749,20 @@ impl CommandStream {
             Err(err) => {
                 // delete the semaphore before returning
                 unsafe {
-                    self.device.destroy_semaphore(semaphore, None);
+                    self.device.raw.destroy_semaphore(semaphore, None);
                 }
                 return Err(err);
             }
         };
 
         // Schedule deletion of the semaphore after the wait is over
-        let device_clone = self.device.clone();
-        self.device.call_later(self.submission_index, move || {
-            // SAFETY: the semaphore is not used after this point
-            unsafe {
-                device_clone.destroy_semaphore(semaphore, None);
+        self.device.call_later(self.submission_index, {
+            let device = self.device.clone();
+            move || {
+                // SAFETY: the semaphore is not used after this point
+                unsafe {
+                    device.raw.destroy_semaphore(semaphore, None);
+                }
             }
         });
 
@@ -836,7 +835,7 @@ impl CommandStream {
         // Close the current command buffer if there is one
         self.close_command_buffer();
 
-        let mut tracker = self.device.inner.tracker.lock().unwrap();
+        let mut tracker = self.device.tracker.lock().unwrap();
 
         // The complete list of command buffers to submit, including fixup command buffers between the ones passed to this function.
         let mut command_buffers = mem::take(&mut self.command_buffers_to_submit);
@@ -894,6 +893,7 @@ impl CommandStream {
                 let fixup_command_buffer = self.command_pool.alloc(&self.device.raw());
                 unsafe {
                     self.device
+                        .raw
                         .begin_command_buffer(
                             fixup_command_buffer,
                             &vk::CommandBufferBeginInfo {
@@ -910,7 +910,7 @@ impl CommandStream {
                             ..Default::default()
                         },
                     );
-                    self.device.cmd_pipeline_barrier2(
+                    self.device.raw.cmd_pipeline_barrier2(
                         fixup_command_buffer,
                         &vk::DependencyInfo {
                             dependency_flags: Default::default(),
@@ -927,7 +927,7 @@ impl CommandStream {
                         },
                     );
                     vk_ext_debug_utils().cmd_end_debug_utils_label(fixup_command_buffer);
-                    self.device.end_command_buffer(fixup_command_buffer).unwrap();
+                    self.device.raw.end_command_buffer(fixup_command_buffer).unwrap();
                 }
                 command_buffers.insert(0, fixup_command_buffer);
             }
@@ -1040,6 +1040,7 @@ impl CommandStream {
         // Do the submission
         let result = unsafe {
             self.device
+                .raw
                 .queue_submit(self.queue.queue, &[submit_info], vk::Fence::null())
         };
 

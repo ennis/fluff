@@ -6,7 +6,6 @@ pub mod flex;
 pub mod frame;
 pub mod text;
 pub mod text_edit;
-//mod layer;
 
 use crate::element_state::ElementState;
 pub use draw::{Draw, Visual};

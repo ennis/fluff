@@ -1,7 +1,7 @@
 use crate::gpu;
 use crate::gpu::with_pipeline_manager;
 use graal::{
-    vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, Device, FragmentState,
+    vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, RcDevice, FragmentState,
     GraphicsPipeline, GraphicsPipelineCreateInfo, MultisampleState, PreRasterizationShaders, RasterizationState,
     ShaderDescriptor,
 };

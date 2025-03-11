@@ -948,10 +948,12 @@ dependencies = [
  "egui",
  "egui-winit",
  "egui_extras",
+ "fluff-gui",
  "glam 0.24.2",
  "graal",
  "houdinio",
  "image",
+ "kyute",
  "num-traits",
  "obj",
  "rand 0.9.0-beta.3",
@@ -967,6 +969,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.2.25",
  "uniform-cubic-splines",
+ "windows 0.58.0",
  "winit 0.29.15",
 ]
 

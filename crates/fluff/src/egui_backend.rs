@@ -262,7 +262,7 @@ impl Renderer {
     }
 }
 
-fn create_pipeline(device: &Device) -> GraphicsPipeline {
+fn create_pipeline(device: &RcDevice) -> GraphicsPipeline {
     let set_layout = device.create_push_descriptor_set_layout(&[
         vk::DescriptorSetLayoutBinding {
             binding: 0,

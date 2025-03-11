@@ -1,9 +1,13 @@
+
+//! TODO: implement a single table for all descriptors, with VK_EXT_mutable_descriptor_type
+
 use crate::{Device, ImageViewId, SamplerId};
 use ash::{vk, vk::DescriptorType};
 use std::{ffi::c_void, ptr};
 use tracing::trace;
 
 type DT = vk::DescriptorType;
+
 
 unsafe fn create_bindless_layout(
     device: &ash::Device,
@@ -90,7 +94,7 @@ impl BindlessDescriptorTable {
 
 impl Device {
     pub(super) unsafe fn write_global_texture_descriptor(&self, id: ImageViewId, image_view: vk::ImageView) {
-        let d = self.inner.texture_descriptors.lock().unwrap();
+        let d = self.texture_descriptors.lock().unwrap();
         let dst_array_element = id.index();
         assert!(dst_array_element < d.count as u32);
         let write = vk::WriteDescriptorSet {
@@ -107,11 +111,11 @@ impl Device {
             ..Default::default()
         };
         trace!("texture_descriptors[{}] = {:?}", dst_array_element, image_view);
-        self.update_descriptor_sets(&[write], &[]);
+        self.raw.update_descriptor_sets(&[write], &[]);
     }
 
     pub(super) unsafe fn write_global_storage_image_descriptor(&self, id: ImageViewId, image_view: vk::ImageView) {
-        let d = self.inner.image_descriptors.lock().unwrap();
+        let d = self.image_descriptors.lock().unwrap();
         let dst_array_element = id.index();
         assert!(dst_array_element < d.count as u32);
         let write = vk::WriteDescriptorSet {
@@ -128,11 +132,11 @@ impl Device {
             ..Default::default()
         };
         trace!("image_descriptors[{}] = {:?}", dst_array_element, image_view);
-        self.update_descriptor_sets(&[write], &[]);
+        self.raw.update_descriptor_sets(&[write], &[]);
     }
 
     pub(super) unsafe fn write_global_sampler_descriptor(&self, id: SamplerId, sampler: vk::Sampler) {
-        let d = self.inner.sampler_descriptors.lock().unwrap();
+        let d = self.sampler_descriptors.lock().unwrap();
         let dst_array_element = id.index();
         assert!(dst_array_element < d.count as u32);
         let write = vk::WriteDescriptorSet {
@@ -148,6 +152,6 @@ impl Device {
             ..Default::default()
         };
         trace!("sampler_descriptors[{}] = {:?}", dst_array_element, sampler);
-        self.inner.device.update_descriptor_sets(&[write], &[]);
+        self.raw.update_descriptor_sets(&[write], &[]);
     }
 }

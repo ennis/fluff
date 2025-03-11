@@ -30,7 +30,7 @@ use crate::gpu::{AppendBuffer, Error, PrimitiveRenderPipelineDesc2};
 use crate::overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer};
 use crate::scene::{DebugRenderVisitor, Scene3D};
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex, TileData, SUBGROUP_SIZE};
-use crate::ui::{curve_editor_button, icon_button};
+use crate::imgui::{curve_editor_button, icon_button};
 use crate::util::{resolve_file_sequence};
 use crate::{gpu, shaders};
 
@@ -214,7 +214,6 @@ impl SavedSettings {
 
 pub struct App {
     // Keep a copy of the device so we don't have to pass it around everywhere.
-    device: Device,
     depth_buffer: Image,
     depth_buffer_view: ImageView,
     color_target_format: Format,
@@ -418,8 +417,7 @@ impl App {
             .iter()
             .map(|b| b.image_view.device_image_handle())
             .collect();
-        let brush_textures = self
-            .device
+        let brush_textures = gpu::device()
             .upload_slice(BufferUsage::STORAGE_BUFFER, &brush_texture_handles);
 
         // TODO: consider allocating top-level image views alongside the image itself
@@ -769,7 +767,6 @@ impl App {
             .collect();
 
         let app = App {
-            device: device.clone(),
             //animation: None,
             scene_next: Scene3D::new(),
             depth_buffer,

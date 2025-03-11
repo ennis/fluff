@@ -16,14 +16,14 @@ mod animation;
 mod app;
 mod camera_control;
 mod egui_backend;
-mod engine;
 mod gpu;
 mod overlay;
-mod point_painter;
 mod scene;
 mod shaders;
-mod ui;
+mod imgui;
 mod util;
+mod ui;
+mod data;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

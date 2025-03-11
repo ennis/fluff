@@ -12,7 +12,6 @@ use std::{borrow::Cow, marker::PhantomData, mem, ops::{Bound, RangeBounds}, os::
     Arc,
 }};
 use std::mem::MaybeUninit;
-use tracing::debug;
 
 // --- reexports ---
 
@@ -33,7 +32,7 @@ pub mod prelude {
     pub use crate::{
         util::{CommandStreamExt, DeviceExt},
         vk, Buffer, BufferUsage, ClearColorValue, ColorBlendEquation, ColorTargetState, CommandStream, ComputeEncoder,
-        DepthStencilState, Device, Format, FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, Image,
+        DepthStencilState, RcDevice, Format, FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, Image,
         ImageCreateInfo, ImageType, ImageUsage, ImageView, MemoryLocation, PipelineBindPoint, PipelineLayoutDescriptor,
         Point2D, PreRasterizationShaders, RasterizationState, Rect2D, RenderEncoder, Sampler, SamplerCreateInfo,
         ShaderCode, ShaderSource, Size2D, StencilState, Vertex, VertexBufferDescriptor, ShaderDescriptor,
@@ -141,7 +140,7 @@ pub struct SwapchainImage {
 /// TODO Drop impl
 #[derive(Clone)]
 pub struct GraphicsPipeline {
-    pub(crate) device: Device,
+    pub(crate) device: RcDevice,
     pub(crate) pipeline: vk::Pipeline,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     // Push descriptors require live VkDescriptorSetLayouts (kill me already)
@@ -167,7 +166,7 @@ impl GraphicsPipeline {
 /// TODO Drop impl
 #[derive(Clone)]
 pub struct ComputePipeline {
-    pub(crate) device: Device,
+    pub(crate) device: RcDevice,
     pub(crate) pipeline: vk::Pipeline,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     _descriptor_set_layouts: Vec<DescriptorSetLayout>,
@@ -287,7 +286,7 @@ pub trait GpuResource {
 
 #[derive(Debug)]
 struct BufferInner {
-    device: Device,
+    device: RcDevice,
     id: BufferId,
     memory_location: MemoryLocation,
     last_submission_index: AtomicU64,
@@ -302,15 +301,10 @@ impl Drop for BufferInner {
         // This prevents `drop` from being called while the resource is still in use, and thus it's safe to delete the
         // resource here.
         unsafe {
-            /*debug!(
-                "dropping buffer handle={:?}, last_sub={}",
-                self.handle,
-                self.last_submission_index.load(Ordering::Relaxed)
-            );*/
             // retire the ID
-            self.device.inner.buffer_ids.lock().unwrap().remove(self.id);
+            self.device.buffer_ids.lock().unwrap().remove(self.id);
             self.device.free_memory(&mut self.allocation);
-            self.device.destroy_buffer(self.handle, None);
+            self.device.raw.destroy_buffer(self.handle, None);
         }
     }
 }
@@ -383,7 +377,7 @@ impl BufferUntyped {
     }
 
     /// Returns the device on which the buffer was created.
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> &RcDevice {
         &self.inner.as_ref().unwrap().device
     }
 
@@ -421,7 +415,7 @@ impl<T: ?Sized> From<Buffer<T>> for BufferUntyped {
 
 #[derive(Debug)]
 struct ImageInner {
-    device: Device,
+    device: RcDevice,
     id: ImageId,
     // Number of user references to this image (via `graal::Image`)
     //user_ref_count: AtomicU32,
@@ -435,10 +429,10 @@ impl Drop for ImageInner {
     fn drop(&mut self) {
         if !self.swapchain_image {
             unsafe {
-                debug!("dropping image {:?} (handle: {:?})", self.id, self.handle);
-                self.device.inner.image_ids.lock().unwrap().remove(self.id);
+                //debug!("dropping image {:?} (handle: {:?})", self.id, self.handle);
+                self.device.image_ids.lock().unwrap().remove(self.id);
                 self.device.free_memory(&mut self.allocation);
-                self.device.destroy_image(self.handle, None);
+                self.device.raw.destroy_image(self.handle, None);
             }
         }
     }
@@ -522,7 +516,7 @@ impl Image {
         self.handle
     }
 
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> &RcDevice {
         &self.inner.as_ref().unwrap().device
     }
 
@@ -578,8 +572,8 @@ struct ImageViewInner {
 impl Drop for ImageViewInner {
     fn drop(&mut self) {
         unsafe {
-            self.image.device().inner.image_view_ids.lock().unwrap().remove(self.id);
-            self.image.device().destroy_image_view(self.handle, None);
+            self.image.device().image_view_ids.lock().unwrap().remove(self.id);
+            self.image.device().raw.destroy_image_view(self.handle, None);
         }
     }
 }
@@ -677,7 +671,7 @@ impl ImageView {
 
 #[derive(Clone, Debug)]
 pub struct DescriptorSetLayout {
-    device: Device,
+    device: RcDevice,
     last_submission_index: Option<Arc<AtomicU64>>,
     pub handle: vk::DescriptorSetLayout,
 }
@@ -689,7 +683,7 @@ impl Drop for DescriptorSetLayout {
             let handle = self.handle;
             self.device
                 .call_later(last_submission_index.load(Ordering::Relaxed), move || unsafe {
-                    device.destroy_descriptor_set_layout(handle, None);
+                    device.raw.destroy_descriptor_set_layout(handle, None);
                 });
         }
     }
@@ -878,7 +872,7 @@ impl<T: ?Sized> Buffer<T> {
     }
 
     /// Returns the device on which the buffer was created.
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> &RcDevice {
         self.untyped.device()
     }
 }

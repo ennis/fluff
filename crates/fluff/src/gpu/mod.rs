@@ -18,7 +18,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 //       usable across threads. But for now, we'll keep it simple and only allow
 //       access on the main thread.
 thread_local! {
-    static DEVICE: OnceCell<&'static graal::Device> = OnceCell::new();
+    static DEVICE: OnceCell<&'static graal::RcDevice> = OnceCell::new();
     static PIPELINE_MANAGER: OnceCell<RefCell<pipelines::PipelineManager>> = OnceCell::new();
 }
 
@@ -48,7 +48,7 @@ pub fn init() {
 /// # Panics
 ///
 /// Panics if [`init`] hasn't been called.
-pub fn device() -> &'static graal::Device {
+pub fn device() -> &'static graal::RcDevice {
     DEVICE.with(|device| *device.get().expect("GPU device not initialized"))
 }
 

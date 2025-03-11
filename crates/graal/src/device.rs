@@ -28,47 +28,8 @@ use tracing::{debug, error};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//pub(crate) const BINDLESS_TEXTURE_SET: u32 = 0;
-//pub(crate) const BINDLESS_STORAGE_IMAGE_SET: u32 = 1;
-//pub(crate) const BINDLESS_SAMPLER_SET: u32 = 2;
-
-/// Wrapper around a vulkan device, associated queues and tracked resources.
-#[derive(Clone)]
-pub struct Device {
-    pub(crate) inner: Rc<DeviceInner>,
-}
-
-impl fmt::Debug for Device {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Device").finish_non_exhaustive()
-    }
-}
-
-impl Deref for Device {
-    type Target = ash::Device;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.device
-    }
-}
-
-/// Weak reference to a device
-#[derive(Clone)]
-pub struct WeakDevice {
-    pub(crate) inner: Weak<DeviceInner>,
-}
-
-impl WeakDevice {
-    pub(crate) fn upgrade(&self) -> Option<Device> {
-        self.inner.upgrade().map(|inner| Device { inner })
-    }
-}
-
-impl fmt::Debug for WeakDevice {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("WeakDevice").finish_non_exhaustive()
-    }
-}
+pub type RcDevice = Rc<Device>;
+pub type WeakDevice = Weak<Device>;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 pub(crate) struct ActiveSubmission {
@@ -113,15 +74,17 @@ where
 
 // FIXME: Mutexes are useless here since this is wrapped in Rc and can't be sent across threads.
 // Just use RefCells
-pub(crate) struct DeviceInner {
+pub struct Device {
     /// Underlying vulkan device
-    device: ash::Device,
+    pub(crate) raw: ash::Device,
 
     /// Platform-specific extension functions
-    _platform_extensions: platform_impl::PlatformExtensions,
+    pub(crate) platform_extensions: platform_impl::PlatformExtensions,
     physical_device: vk::PhysicalDevice,
     queues: Vec<Arc<QueueShared>>,
     allocator: Mutex<gpu_allocator::vulkan::Allocator>,
+
+    // --- Extensions ---
     vk_khr_swapchain: ash::extensions::khr::Swapchain,
     vk_ext_shader_object: ash::extensions::ext::ShaderObject,
     vk_khr_push_descriptor: ash::extensions::khr::PushDescriptor,
@@ -130,7 +93,7 @@ pub(crate) struct DeviceInner {
     //vk_ext_descriptor_buffer: ash::extensions::ext::DescriptorBuffer,
 
     // physical device properties
-    _physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub(crate) physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
     _physical_device_descriptor_buffer_properties: vk::PhysicalDeviceDescriptorBufferPropertiesEXT,
     physical_device_properties: vk::PhysicalDeviceProperties2,
 
@@ -143,18 +106,25 @@ pub(crate) struct DeviceInner {
     // Command pools per queue and thread.
     free_command_pools: Mutex<Vec<CommandPool>>,
     next_submission_index: AtomicU64,
+
     /// Resources that have a zero user reference count and that should be ready for deletion soon,
     /// but we're waiting for the GPU to finish using them.
     dropped_resources: Mutex<Vec<(u64, Box<dyn DeleteLater>)>>,
     pub(crate) tracker: Mutex<DeviceTracker>,
     sampler_cache: Mutex<HashMap<SamplerCreateInfo, Sampler>>,
-    //compiler: shaderc::Compiler,
-    //groups: Mutex<ResourceGroupMap>,
+
     pub(crate) texture_descriptors: Mutex<BindlessDescriptorTable>,
     pub(crate) image_descriptors: Mutex<BindlessDescriptorTable>,
     pub(crate) sampler_descriptors: Mutex<BindlessDescriptorTable>,
     //image_handles: Mutex<SlotMap<I>>
 }
+
+impl fmt::Debug for Device {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("DeviceInner").finish_non_exhaustive()
+    }
+}
+
 /// Errors during device creation.
 #[derive(thiserror::Error, Debug)]
 pub enum DeviceCreateError {
@@ -233,7 +203,7 @@ pub enum ResourceAllocation {
     External,
 }
 
-/// Chooses a swapchain surface format among a list of supported formats.
+/// Chooses a swap chain surface format among a list of supported formats.
 ///
 /// TODO there's only one supported format right now...
 fn get_preferred_swapchain_surface_format(surface_formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
@@ -256,14 +226,14 @@ fn get_preferred_swapchain_surface_format(surface_formats: &[vk::SurfaceFormatKH
 /// `present_surface` must be a valid surface handle, or `None`
 pub unsafe fn create_device_and_command_stream_with_surface(
     present_surface: Option<vk::SurfaceKHR>,
-) -> Result<(Device, CommandStream), DeviceCreateError> {
+) -> Result<(RcDevice, CommandStream), DeviceCreateError> {
     let device = Device::with_surface(present_surface)?;
     let command_stream = device.create_command_stream(0);
     Ok((device, command_stream))
 }
 
 /// Creates a `Device` and a `CommandStream`. A physical device is chosen automatically.
-pub fn create_device_and_command_stream() -> Result<(Device, CommandStream), DeviceCreateError> {
+pub fn create_device_and_command_stream() -> Result<(RcDevice, CommandStream), DeviceCreateError> {
     unsafe { create_device_and_command_stream_with_surface(None) }
 }
 
@@ -389,14 +359,14 @@ const DEVICE_EXTENSIONS: &[&str] = &[
 ];
 
 impl Device {
-    /*fn find_compatible_memory_type_internal(
+    fn find_compatible_memory_type_internal(
         &self,
         memory_type_bits: u32,
         memory_properties: vk::MemoryPropertyFlags,
     ) -> Option<u32> {
-        for i in 0..self.inner.physical_device_memory_properties.memory_type_count {
+        for i in 0..self.physical_device_memory_properties.memory_type_count {
             if memory_type_bits & (1 << i) != 0
-                && self.inner.physical_device_memory_properties.memory_types[i as usize]
+                && self.physical_device_memory_properties.memory_types[i as usize]
                     .property_flags
                     .contains(memory_properties)
             {
@@ -404,9 +374,8 @@ impl Device {
             }
         }
         None
-    }*/
+    }
 
-    /*
     /// Returns the index of the first memory type compatible with the specified memory type bitmask and additional memory property flags.
     pub(crate) fn find_compatible_memory_type(
         &self,
@@ -420,7 +389,7 @@ impl Device {
             required_memory_properties | preferred_memory_properties,
         )
         .or_else(|| self.find_compatible_memory_type_internal(memory_type_bits, required_memory_properties))
-    }*/
+    }
 
     /*/// Returns whether this device is compatible for presentation on the specified surface.
     ///
@@ -436,7 +405,7 @@ impl Device {
         physical_device: vk::PhysicalDevice,
         device: vk::Device,
         queue_config: &[QueueFamilyConfig],
-    ) -> Result<Device, DeviceCreateError> {
+    ) -> Result<RcDevice, DeviceCreateError> {
         let entry = get_vulkan_entry();
         let instance = get_vulkan_instance();
         let device = ash::Device::load(instance.fp_v1_0(), device);
@@ -521,50 +490,46 @@ impl Device {
         ));
         let sampler_descriptors = Mutex::new(BindlessDescriptorTable::new(&device, vk::DescriptorType::SAMPLER, 4096));
 
-        Ok(Device {
-            inner: Rc::new(DeviceInner {
-                device,
-                _platform_extensions: platform_extensions,
-                physical_device,
-                physical_device_properties,
-                _physical_device_descriptor_buffer_properties: physical_device_descriptor_buffer_properties,
-                _physical_device_memory_properties: physical_device_memory_properties,
-                queues,
-                allocator: Mutex::new(allocator),
-                vk_khr_swapchain,
-                vk_ext_shader_object,
-                vk_khr_push_descriptor,
-                vk_ext_mesh_shader,
-                vk_ext_extended_dynamic_state3,
-                //vk_ext_descriptor_buffer,
-                image_ids: Mutex::new(Default::default()),
-                sampler_ids: Mutex::new(Default::default()),
-                buffer_ids: Mutex::new(Default::default()),
-                tracker: Mutex::new(DeviceTracker::new()),
-                sampler_cache: Mutex::new(Default::default()),
-                //compiler,
-                free_command_pools: Mutex::new(Default::default()),
-                image_view_ids: Mutex::new(Default::default()),
-                dropped_resources: Mutex::new(vec![]),
-                next_submission_index: AtomicU64::new(1),
-                texture_descriptors,
-                image_descriptors,
-                sampler_descriptors,
-            }),
-        })
+        Ok(Rc::new(Device {
+            raw: device,
+            platform_extensions,
+            physical_device,
+            physical_device_properties,
+            _physical_device_descriptor_buffer_properties: physical_device_descriptor_buffer_properties,
+            physical_device_memory_properties,
+            queues,
+            allocator: Mutex::new(allocator),
+            vk_khr_swapchain,
+            vk_ext_shader_object,
+            vk_khr_push_descriptor,
+            vk_ext_mesh_shader,
+            vk_ext_extended_dynamic_state3,
+            //vk_ext_descriptor_buffer,
+            image_ids: Mutex::new(Default::default()),
+            sampler_ids: Mutex::new(Default::default()),
+            buffer_ids: Mutex::new(Default::default()),
+            tracker: Mutex::new(DeviceTracker::new()),
+            sampler_cache: Mutex::new(Default::default()),
+            //compiler,
+            free_command_pools: Mutex::new(Default::default()),
+            image_view_ids: Mutex::new(Default::default()),
+            dropped_resources: Mutex::new(vec![]),
+            next_submission_index: AtomicU64::new(1),
+            texture_descriptors,
+            image_descriptors,
+            sampler_descriptors,
+        }))
     }
 
     /// Creates a new `Device`, automatically choosing a suitable physical device.
-    pub fn new() -> Result<Device, DeviceCreateError> {
-        unsafe {
-            Self::with_surface(None)
-        }
+    pub fn new() -> Result<RcDevice, DeviceCreateError> {
+        unsafe { Self::with_surface(None) }
     }
 
     /// Creates a new `Device` that can render to the specified `present_surface` if one is specified.
     ///
     /// Also creates queues as requested.
-    pub unsafe fn with_surface(present_surface: Option<vk::SurfaceKHR>) -> Result<Device, DeviceCreateError> {
+    pub unsafe fn with_surface(present_surface: Option<vk::SurfaceKHR>) -> Result<RcDevice, DeviceCreateError> {
         let instance = get_vulkan_instance();
         let vk_khr_surface = vk_khr_surface();
 
@@ -727,48 +692,48 @@ impl Device {
 
     /// Returns the physical device that this device was created on.
     pub fn physical_device(&self) -> vk::PhysicalDevice {
-        self.inner.physical_device
+        self.physical_device
     }
 
     /// Returns the physical device properties.
     pub fn physical_device_properties(&self) -> &vk::PhysicalDeviceProperties2 {
-        &self.inner.physical_device_properties
+        &self.physical_device_properties
     }
 
-    pub fn create_command_stream(&self, queue_index: usize) -> CommandStream {
-        let command_pool = self.get_or_create_command_pool(self.inner.queues[queue_index].family);
-        CommandStream::new(self.clone(), command_pool, self.inner.queues[queue_index].clone())
+    pub fn create_command_stream(self: &Rc<Self>, queue_index: usize) -> CommandStream {
+        let command_pool = self.get_or_create_command_pool(self.queues[queue_index].family);
+        CommandStream::new(self.clone(), command_pool, self.queues[queue_index].clone())
     }
 }
 
-struct ShaderModuleGuard {
-    device: Device,
+struct ShaderModuleGuard<'a> {
+    device: &'a Device,
     module: vk::ShaderModule,
 }
 
-impl Drop for ShaderModuleGuard {
+impl<'a> Drop for ShaderModuleGuard<'a> {
     fn drop(&mut self) {
         unsafe {
-            self.device.inner.device.destroy_shader_module(self.module, None);
+            self.device.raw.destroy_shader_module(self.module, None);
         }
     }
 }
 
 /// Helper to create PipelineShaderStageCreateInfo
-fn create_stage(
-    device: &Device,
+fn create_stage<'a>(
+    device: &'a Device,
     p_next: *const c_void,
     stage: vk::ShaderStageFlags,
     code: &[u32],
     entry_point: &CStr,
-) -> Result<(vk::PipelineShaderStageCreateInfo, ShaderModuleGuard), Error> {
+) -> Result<(vk::PipelineShaderStageCreateInfo, ShaderModuleGuard<'a>), Error> {
     let create_info = vk::ShaderModuleCreateInfo {
         flags: Default::default(),
         code_size: code.len() * 4,
         p_code: code.as_ptr(),
         ..Default::default()
     };
-    let module = unsafe { device.inner.device.create_shader_module(&create_info, None)? };
+    let module = unsafe { device.raw.create_shader_module(&create_info, None)? };
     let stage_create_info = vk::PipelineShaderStageCreateInfo {
         p_next,
         flags: Default::default(),
@@ -778,46 +743,34 @@ fn create_stage(
         p_specialization_info: ptr::null(),
         ..Default::default()
     };
-    Ok((
-        stage_create_info,
-        ShaderModuleGuard {
-            device: device.clone(),
-            module,
-        },
-    ))
+    Ok((stage_create_info, ShaderModuleGuard { device, module }))
 }
 
 impl Device {
-    pub fn weak(&self) -> WeakDevice {
-        WeakDevice {
-            inner: Rc::downgrade(&self.inner),
-        }
-    }
-
     pub fn raw(&self) -> &ash::Device {
-        &self.inner.device
+        &self.raw
     }
 
     /// Function pointers for VK_KHR_swapchain.
     pub fn khr_swapchain(&self) -> &ash::extensions::khr::Swapchain {
-        &self.inner.vk_khr_swapchain
+        &self.vk_khr_swapchain
     }
 
     /// Function pointers for VK_KHR_push_descriptor.
     pub fn khr_push_descriptor(&self) -> &ash::extensions::khr::PushDescriptor {
-        &self.inner.vk_khr_push_descriptor
+        &self.vk_khr_push_descriptor
     }
 
     pub fn ext_extended_dynamic_state3(&self) -> &ash::extensions::ext::ExtendedDynamicState3 {
-        &self.inner.vk_ext_extended_dynamic_state3
+        &self.vk_ext_extended_dynamic_state3
     }
 
     pub fn ext_mesh_shader(&self) -> &ash::extensions::ext::MeshShader {
-        &self.inner.vk_ext_mesh_shader
+        &self.vk_ext_mesh_shader
     }
 
     pub fn ext_shader_object(&self) -> &ash::extensions::ext::ShaderObject {
-        &self.inner.vk_ext_shader_object
+        &self.vk_ext_shader_object
     }
 
     /*pub fn ext_descriptor_buffer(&self) -> &ash::extensions::ext::DescriptorBuffer {
@@ -836,7 +789,7 @@ impl Device {
         let object_name = CString::new(name).unwrap();
         vk_ext_debug_utils()
             .set_debug_utils_object_name(
-                self.inner.device.handle(),
+                self.raw.handle(),
                 &vk::DebugUtilsObjectNameInfoEXT {
                     object_type: H::TYPE,
                     object_handle: handle.as_raw(),
@@ -848,8 +801,7 @@ impl Device {
     }
 
     pub(crate) fn next_submission_index(&self) -> u64 {
-        self.inner
-            .next_submission_index
+        self.next_submission_index
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1
     }
@@ -859,7 +811,12 @@ impl Device {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     /// Creates a new buffer resource.
-    pub fn create_buffer(&self, usage: BufferUsage, memory_location: MemoryLocation, byte_size: u64) -> BufferUntyped {
+    pub fn create_buffer(
+        self: &Rc<Self>,
+        usage: BufferUsage,
+        memory_location: MemoryLocation,
+        byte_size: u64,
+    ) -> BufferUntyped {
         assert!(byte_size > 0, "buffer size must be greater than zero");
 
         // create the buffer object first
@@ -873,14 +830,13 @@ impl Device {
             ..Default::default()
         };
         let handle = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_buffer(&create_info, None)
                 .expect("failed to create buffer")
         };
 
         // get its memory requirements
-        let mem_req = unsafe { self.inner.device.get_buffer_memory_requirements(handle) };
+        let mem_req = unsafe { self.raw.get_buffer_memory_requirements(handle) };
 
         let allocation_create_desc = AllocationCreateDesc {
             name: "",
@@ -890,15 +846,13 @@ impl Device {
             allocation_scheme: AllocationScheme::GpuAllocatorManaged,
         };
         let allocation = self
-            .inner
             .allocator
             .lock()
             .unwrap()
             .allocate(&allocation_create_desc)
             .expect("failed to allocate device memory");
         unsafe {
-            self.inner
-                .device
+            self.raw
                 .bind_buffer_memory(handle, allocation.memory(), allocation.offset())
                 .unwrap();
         }
@@ -906,13 +860,13 @@ impl Device {
         let allocation = ResourceAllocation::Allocation { allocation };
 
         let device_address = unsafe {
-            self.get_buffer_device_address(&vk::BufferDeviceAddressInfo {
+            self.raw.get_buffer_device_address(&vk::BufferDeviceAddressInfo {
                 buffer: handle,
                 ..Default::default()
             })
         };
 
-        let id = self.inner.buffer_ids.lock().unwrap().insert(());
+        let id = self.buffer_ids.lock().unwrap().insert(());
         BufferUntyped {
             inner: Some(Arc::new(BufferInner {
                 device: self.clone(),
@@ -958,13 +912,13 @@ impl Device {
     }*/
 
     pub(crate) fn register_swapchain_image(
-        &self,
+        self: &Rc<Self>,
         handle: vk::Image,
         format: vk::Format,
         width: u32,
         height: u32,
     ) -> Image {
-        let id = self.inner.image_ids.lock().unwrap().insert(());
+        let id = self.image_ids.lock().unwrap().insert(());
         Image {
             inner: Some(Arc::new(ImageInner {
                 device: self.clone(),
@@ -1001,7 +955,7 @@ impl Device {
     ///
     /// # Examples
     ///
-    pub fn create_image(&self, image_info: &ImageCreateInfo) -> Image {
+    pub fn create_image(self: &Rc<Self>, image_info: &ImageCreateInfo) -> Image {
         let create_info = vk::ImageCreateInfo {
             image_type: image_info.type_.into(),
             format: image_info.format,
@@ -1021,12 +975,11 @@ impl Device {
             ..Default::default()
         };
         let handle = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_image(&create_info, None)
                 .expect("failed to create image")
         };
-        let mem_req = unsafe { self.inner.device.get_image_memory_requirements(handle) };
+        let mem_req = unsafe { self.raw.get_image_memory_requirements(handle) };
 
         let allocation_create_desc = AllocationCreateDesc {
             name: "",
@@ -1036,20 +989,18 @@ impl Device {
             allocation_scheme: AllocationScheme::GpuAllocatorManaged,
         };
         let allocation = self
-            .inner
             .allocator
             .lock()
             .unwrap()
             .allocate(&allocation_create_desc)
             .expect("failed to allocate device memory");
         unsafe {
-            self.inner
-                .device
+            self.raw
                 .bind_image_memory(handle, allocation.memory(), allocation.offset() as u64)
                 .unwrap();
         }
 
-        let id = self.inner.image_ids.lock().unwrap().insert(());
+        let id = self.image_ids.lock().unwrap().insert(());
 
         Image {
             handle,
@@ -1101,13 +1052,12 @@ impl Device {
 
         // SAFETY: the device is valid, the create info is valid
         let handle = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_image_view(&create_info, None)
                 .expect("failed to create image view")
         };
 
-        let id = self.inner.image_view_ids.lock().unwrap().insert(());
+        let id = self.image_view_ids.lock().unwrap().insert(());
 
         // Update the global descriptor table
         let usage = image.usage();
@@ -1160,9 +1110,10 @@ impl Device {
     }*/
 
     pub fn delete_later<T: 'static>(&self, submission_index: u64, object: T) {
-        let queue_timeline = self.inner.queues[0].timeline;
+        let queue_timeline = self.queues[0].timeline;
         let last_completed_submission_index = unsafe {
-            self.get_semaphore_counter_value(queue_timeline)
+            self.raw
+                .get_semaphore_counter_value(queue_timeline)
                 .expect("get_semaphore_counter_value failed")
         };
         if submission_index <= last_completed_submission_index {
@@ -1171,8 +1122,7 @@ impl Device {
         }
 
         // otherwise move it to the deferred deletion list
-        self.inner
-            .dropped_resources
+        self.dropped_resources
             .lock()
             .unwrap()
             .push((submission_index, Box::new(object)));
@@ -1185,14 +1135,13 @@ impl Device {
     pub(crate) unsafe fn free_memory(&self, allocation: &mut ResourceAllocation) {
         match mem::replace(allocation, ResourceAllocation::External) {
             ResourceAllocation::Allocation { allocation } => self
-                .inner
                 .allocator
                 .lock()
                 .unwrap()
                 .free(allocation)
                 .expect("failed to free memory"),
             ResourceAllocation::DeviceMemory { device_memory } => unsafe {
-                self.inner.device.free_memory(device_memory, None);
+                self.raw.free_memory(device_memory, None);
             },
             ResourceAllocation::External => {
                 unreachable!()
@@ -1203,23 +1152,24 @@ impl Device {
     // Cleanup expired resources.
     pub fn cleanup(&self) {
         // TODO multiple queues
-        let queue_timeline = self.inner.queues[0].timeline;
+        let queue_timeline = self.queues[0].timeline;
         let last_completed_submission_index = unsafe {
-            self.get_semaphore_counter_value(queue_timeline)
+            self.raw
+                .get_semaphore_counter_value(queue_timeline)
                 .expect("get_semaphore_counter_value failed")
         };
 
-        let mut tracker = self.inner.tracker.lock().unwrap();
+        let mut tracker = self.tracker.lock().unwrap();
         /*let mut image_ids = self.inner.image_ids.lock().unwrap();
         let mut buffer_ids = self.inner.buffer_ids.lock().unwrap();
         let mut image_view_ids = self.inner.image_view_ids.lock().unwrap();*/
-        let mut dropped_resources = self.inner.dropped_resources.lock().unwrap();
+        let mut dropped_resources = self.dropped_resources.lock().unwrap();
 
         dropped_resources.retain(|(submission, _object)| *submission > last_completed_submission_index);
 
         // process all completed submissions, oldest to newest
         //let mut active_submissions = tracker.active_submissions.lock().unwrap();
-        let mut free_command_pools = self.inner.free_command_pools.lock().unwrap();
+        let mut free_command_pools = self.free_command_pools.lock().unwrap();
 
         loop {
             let Some(submission) = tracker.active_submissions.front() else {
@@ -1233,7 +1183,7 @@ impl Device {
             for mut command_pool in submission.command_pools {
                 // SAFETY: command buffers are not in use anymore
                 unsafe {
-                    command_pool.reset(&self.inner.device);
+                    command_pool.reset(&self.raw);
                 }
                 free_command_pools.push(command_pool);
             }
@@ -1263,7 +1213,7 @@ impl Device {
     /// Returns the list of supported swapchain formats for the given surface.
     pub unsafe fn get_surface_formats(&self, surface: vk::SurfaceKHR) -> Vec<vk::SurfaceFormatKHR> {
         vk_khr_surface()
-            .get_physical_device_surface_formats(self.inner.physical_device, surface)
+            .get_physical_device_surface_formats(self.physical_device, surface)
             .unwrap()
     }
 
@@ -1275,7 +1225,7 @@ impl Device {
 
     /// Resizes a swapchain.
     pub unsafe fn resize_swapchain(&self, swapchain: &mut Swapchain, width: u32, height: u32) {
-        let phy = self.inner.physical_device;
+        let phy = self.physical_device;
         let capabilities = vk_khr_surface()
             .get_physical_device_surface_capabilities(phy, swapchain.surface)
             .unwrap();
@@ -1317,27 +1267,22 @@ impl Device {
         };
 
         let new_handle = self
-            .inner
             .vk_khr_swapchain
             .create_swapchain(&create_info, None)
             .expect("failed to create swapchain");
         if swapchain.handle != vk::SwapchainKHR::null() {
             // FIXME what if the images are in use?
-            self.inner.vk_khr_swapchain.destroy_swapchain(swapchain.handle, None);
+            self.vk_khr_swapchain.destroy_swapchain(swapchain.handle, None);
         }
 
         swapchain.handle = new_handle;
         swapchain.width = width;
         swapchain.height = height;
-        swapchain.images = self
-            .inner
-            .vk_khr_swapchain
-            .get_swapchain_images(swapchain.handle)
-            .unwrap();
+        swapchain.images = self.vk_khr_swapchain.get_swapchain_images(swapchain.handle).unwrap();
     }
 
-    pub fn create_sampler(&self, info: &SamplerCreateInfo) -> Sampler {
-        if let Some(sampler) = self.inner.sampler_cache.lock().unwrap().get(info) {
+    pub fn create_sampler(self: &Rc<Self>, info: &SamplerCreateInfo) -> Sampler {
+        if let Some(sampler) = self.sampler_cache.lock().unwrap().get(info) {
             return sampler.clone();
         }
 
@@ -1361,44 +1306,42 @@ impl Device {
         };
 
         let sampler = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_sampler(&create_info, None)
                 .expect("failed to create sampler")
         };
-        let id = self.inner.sampler_ids.lock().unwrap().insert(());
+        let id = self.sampler_ids.lock().unwrap().insert(());
         unsafe {
             self.write_global_sampler_descriptor(id, sampler);
         }
         let sampler = Sampler {
-            device: self.weak(),
+            device: Rc::downgrade(self),
             id,
             sampler,
         };
-        self.inner
-            .sampler_cache
-            .lock()
-            .unwrap()
-            .insert(info.clone(), sampler.clone());
+        self.sampler_cache.lock().unwrap().insert(info.clone(), sampler.clone());
         sampler
     }
 
     pub(crate) fn get_or_create_command_pool(&self, queue_family: u32) -> CommandPool {
-        let free_command_pools = &mut self.inner.free_command_pools.lock().unwrap();
+        let free_command_pools = &mut self.free_command_pools.lock().unwrap();
         let index = free_command_pools
             .iter()
             .position(|pool| pool.queue_family == queue_family);
         if let Some(index) = index {
             return free_command_pools.swap_remove(index);
         } else {
-            unsafe { CommandPool::new(&self.inner.device, queue_family) }
+            unsafe { CommandPool::new(&self.raw, queue_family) }
         }
     }
 
     /// FIXME: this should be a constructor of `DescriptorSetLayout`, because now we have two
     /// functions with very similar names (`create_descriptor_set_layout` and `create_descriptor_set_layout_from_handle`)
     /// that have totally different semantics (one returns a raw vulkan handle, the other returns a RAII wrapper `DescriptorSetLayout`).
-    pub fn create_descriptor_set_layout_from_handle(&self, handle: vk::DescriptorSetLayout) -> DescriptorSetLayout {
+    pub fn create_descriptor_set_layout_from_handle(
+        self: &Rc<Self>,
+        handle: vk::DescriptorSetLayout,
+    ) -> DescriptorSetLayout {
         DescriptorSetLayout {
             device: self.clone(),
             last_submission_index: Some(Arc::new(Default::default())),
@@ -1407,7 +1350,7 @@ impl Device {
     }
 
     pub fn create_push_descriptor_set_layout(
-        &self,
+        self: &Rc<Self>,
         bindings: &[vk::DescriptorSetLayoutBinding],
     ) -> DescriptorSetLayout {
         let create_info = vk::DescriptorSetLayoutCreateInfo {
@@ -1417,13 +1360,13 @@ impl Device {
             ..Default::default()
         };
         let handle = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_descriptor_set_layout(&create_info, None)
                 .expect("failed to create descriptor set layout")
         };
         self.create_descriptor_set_layout_from_handle(handle)
     }
+
     /// Creates a pipeline layout object.
     fn create_pipeline_layout(
         &self,
@@ -1434,9 +1377,9 @@ impl Device {
         let layout_handles: Vec<_> = if descriptor_set_layouts.is_empty() {
             // Empty set layouts means use the universal bindless layouts
             vec![
-                self.inner.texture_descriptors.lock().unwrap().layout,
-                self.inner.image_descriptors.lock().unwrap().layout,
-                self.inner.sampler_descriptors.lock().unwrap().layout,
+                self.texture_descriptors.lock().unwrap().layout,
+                self.image_descriptors.lock().unwrap().layout,
+                self.sampler_descriptors.lock().unwrap().layout,
             ]
         } else {
             descriptor_set_layouts.iter().map(|layout| layout.handle).collect()
@@ -1472,8 +1415,7 @@ impl Device {
         };
 
         let pipeline_layout = unsafe {
-            self.inner
-                .device
+            self.raw
                 .create_pipeline_layout(&create_info, None)
                 .expect("failed to create pipeline layout")
         };
@@ -1481,7 +1423,10 @@ impl Device {
         pipeline_layout
     }
 
-    pub fn create_compute_pipeline(&self, create_info: ComputePipelineCreateInfo) -> Result<ComputePipeline, Error> {
+    pub fn create_compute_pipeline(
+        self: &Rc<Self>,
+        create_info: ComputePipelineCreateInfo,
+    ) -> Result<ComputePipeline, Error> {
         let pipeline_layout = self.create_pipeline_layout(
             vk::PipelineBindPoint::COMPUTE,
             create_info.set_layouts,
@@ -1514,8 +1459,7 @@ impl Device {
 
         let pipeline = unsafe {
             match self
-                .inner
-                .device
+                .raw
                 .create_compute_pipelines(vk::PipelineCache::null(), &[cpci], None)
             {
                 Ok(pipelines) => pipelines[0],
@@ -1535,7 +1479,10 @@ impl Device {
     }
 
     /// Creates a graphics pipeline.
-    pub fn create_graphics_pipeline(&self, create_info: GraphicsPipelineCreateInfo) -> Result<GraphicsPipeline, Error> {
+    pub fn create_graphics_pipeline(
+        self: &Rc<Self>,
+        create_info: GraphicsPipelineCreateInfo,
+    ) -> Result<GraphicsPipeline, Error> {
         let pipeline_layout = self.create_pipeline_layout(
             vk::PipelineBindPoint::GRAPHICS,
             create_info.set_layouts,
@@ -1809,8 +1756,7 @@ impl Device {
 
         let pipeline = unsafe {
             match self
-                .inner
-                .device
+                .raw
                 .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_create_info], None)
             {
                 Ok(pipelines) => pipelines[0],
