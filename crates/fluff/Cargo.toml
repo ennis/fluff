@@ -34,7 +34,7 @@ uniform-cubic-splines = { version = "0.1.8", default-features = false, features 
 num-traits = "0.2.19"
 shader-bridge = { workspace = true, optional = true }
 alembic-ogawa = { workspace = true }
-kyute = { workspace = true }
+kyute = { workspace = true, features = ["d3d", "vulkan-interop"] }
 fluff-gui = { workspace = true }
 
 [target.'cfg(target_os="windows")'.dependencies]

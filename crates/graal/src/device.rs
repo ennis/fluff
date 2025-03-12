@@ -10,7 +10,7 @@ use std::{fmt, ptr};
 
 use crate::instance::{vk_ext_debug_utils, vk_khr_surface};
 use crate::{
-    get_vulkan_entry, get_vulkan_instance, is_depth_and_stencil_format, platform_impl, BufferInner, BufferUntyped,
+    get_vulkan_entry, get_vulkan_instance, is_depth_and_stencil_format, BufferInner, BufferUntyped,
     BufferUsage, CommandPool, CommandStream, ComputePipeline, ComputePipelineCreateInfo, DescriptorSetLayout, Error,
     GraphicsPipeline, GraphicsPipelineCreateInfo, Image, ImageCreateInfo, ImageInner, ImageType, ImageUsage, ImageView,
     ImageViewInfo, ImageViewInner, MemoryAccess, MemoryLocation, PreRasterizationShaders, Sampler, SamplerCreateInfo,
@@ -25,7 +25,7 @@ use std::ffi::CStr;
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use tracing::{debug, error};
-
+use crate::platform::PlatformExtensions;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub type RcDevice = Rc<Device>;
@@ -79,7 +79,7 @@ pub struct Device {
     pub(crate) raw: ash::Device,
 
     /// Platform-specific extension functions
-    pub(crate) platform_extensions: platform_impl::PlatformExtensions,
+    pub(crate) platform_extensions: PlatformExtensions,
     physical_device: vk::PhysicalDevice,
     queues: Vec<Arc<QueueShared>>,
     allocator: Mutex<gpu_allocator::vulkan::Allocator>,
@@ -463,7 +463,7 @@ impl Device {
         let vk_ext_mesh_shader = ash::extensions::ext::MeshShader::new(instance, &device);
         //let vk_ext_descriptor_buffer = ash::extensions::ext::DescriptorBuffer::new(instance, &device);
         let physical_device_memory_properties = instance.get_physical_device_memory_properties(physical_device);
-        let platform_extensions = platform_impl::PlatformExtensions::load(entry, instance, &device);
+        let platform_extensions = PlatformExtensions::load(entry, instance, &device);
 
         let mut physical_device_descriptor_buffer_properties =
             vk::PhysicalDeviceDescriptorBufferPropertiesEXT::default();
@@ -660,7 +660,7 @@ impl Device {
         // Convert extension strings into C-strings
         let c_device_extensions: Vec<_> = DEVICE_EXTENSIONS
             .iter()
-            .chain(platform_impl::PlatformExtensions::names().iter())
+            .chain(PlatformExtensions::names().iter())
             .map(|&s| CString::new(s).unwrap())
             .collect();
 

@@ -965,7 +965,7 @@ impl Window {
         // Get the physical size from the window
         let phy_size = window.inner_size();
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
-        let layer = app_backend().create_surface_layer(phy_size, ColorType::RGBAF16);
+        let layer = app_backend().create_layer(phy_size, ColorType::RGBAF16);
 
         let raw_window_handle = window
             .window_handle()

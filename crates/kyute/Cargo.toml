@@ -30,7 +30,7 @@ scopeguard = "1.2.0"
 kyute-common = { workspace = true }
 color-print = "0.3.7"
 typed-arena = "2"
-
+graal = { workspace = true, optional = true }
 
 # Windows dependencies
 [target.'cfg(target_os="windows")'.dependencies]
@@ -74,6 +74,6 @@ tracing-tree = "0.4"
 
 [features]
 default = ["d3d"]
-#vulkan = ["dep:graal", "skia-safe/vulkan"]
+vulkan-interop = ["dep:graal"]
 d3d = ["skia-safe/d3d"]
 #svg = ["dep:roxmltree", "dep:usvg", "dep:svgtypes"]

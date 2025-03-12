@@ -5,6 +5,7 @@ use kyute::compositor::ColorType;
 use kyute::element::{HitTestCtx, TreeCtx};
 use kyute::layout::{LayoutInput, LayoutOutput};
 use crate::data::viewport::ViewportModel;
+use crate::gpu;
 
 const DEFAULT_SIZE: Size = Size::new(500., 500.);
 
@@ -26,7 +27,8 @@ impl Viewport {
     pub fn new(data: ViewportModel) -> Self {
         Self {
             // dummy size until we get the actual size from the layout
-            layer: app_backend().create_surface_layer(DEFAULT_SIZE, ColorType::SRGBA8888),
+            // TODO: API legibility: avoid using `clone` here
+            layer: app_backend().create_vulkan_interop_layer(gpu::device().clone(), DEFAULT_SIZE, ColorType::SRGBA8888),
             data,
         }
     }

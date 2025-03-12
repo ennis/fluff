@@ -1,8 +1,7 @@
 mod command;
 mod device;
 mod instance;
-mod platform;
-mod platform_impl;
+pub mod platform;
 mod surface;
 mod types;
 pub mod util;

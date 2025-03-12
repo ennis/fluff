@@ -72,6 +72,8 @@ macro_rules! send_com_ptr_wrapper {
     };
 }*/
 
+// TODO: the wrappers are not necessary anymore since ApplicationBackend is not accessible from
+//       threads other than the main thread. We can just use the raw interfaces directly.
 sync_com_ptr_wrapper! { D3D12Device(ID3D12Device) }
 sync_com_ptr_wrapper! { DXGIFactory3(IDXGIFactory3) }
 sync_com_ptr_wrapper! { D3D12CommandQueue(ID3D12CommandQueue) }
@@ -96,9 +98,9 @@ struct GpuFenceData {
 pub struct ApplicationBackend {
     //pub(crate) dispatcher_queue_controller: DispatcherQueueController,
     adapter: IDXGIAdapter1,
-    d3d12_device: D3D12Device,        // thread safe
-    command_queue: D3D12CommandQueue, // thread safe
-    command_allocator: ThreadBound<ID3D12CommandAllocator>,
+    pub(crate) d3d12_device: D3D12Device,        // thread safe
+    pub(crate) command_queue: D3D12CommandQueue, // thread safe
+    pub(crate) command_allocator: ThreadBound<ID3D12CommandAllocator>,
     dxgi_factory: DXGIFactory3,
     //dwrite_factory: DWriteFactory,
     /// Fence data used to synchronize GPU and CPU (see `wait_for_gpu`).

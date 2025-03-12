@@ -172,7 +172,7 @@ pub enum ResourceUse<'a> {
 #[derive(Debug)]
 pub struct UnsignaledSemaphore(pub(crate) vk::Semaphore);
 
-/// Describes the kind of semaphore wait operation.
+/// Describes the type of semaphore in a semaphore wait operation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SemaphoreWaitKind {
     /// Binary semaphore wait.
@@ -192,7 +192,16 @@ pub enum SemaphoreWaitKind {
     },
 }
 
-/// Describe the kind of semaphore signal operation.
+/// Describes a semaphore wait operation.
+#[derive(Clone, Debug)]
+pub struct SemaphoreWait {
+    /// The kind of wait operation.
+    pub kind: SemaphoreWaitKind,
+    /// Destination stage
+    pub dst_stage: vk::PipelineStageFlags,
+}
+
+/// Describes the kind of semaphore signal operation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SemaphoreSignal {
     /// Binary semaphore signal.
@@ -216,15 +225,6 @@ pub enum SemaphoreSignal {
         /// The value to signal.
         value: u64,
     },
-}
-
-/// Represents a semaphore wait operation.
-#[derive(Clone, Debug)]
-pub struct SemaphoreWait {
-    /// The kind of wait operation.
-    pub kind: SemaphoreWaitKind,
-    /// Destination stage
-    pub dst_stage: vk::PipelineStageFlags,
 }
 
 impl CommandStream {

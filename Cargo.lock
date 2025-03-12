@@ -1598,6 +1598,7 @@ dependencies = [
  "color-print",
  "copypasta",
  "futures",
+ "graal",
  "keyboard-types",
  "kurbo",
  "kyute-common",
