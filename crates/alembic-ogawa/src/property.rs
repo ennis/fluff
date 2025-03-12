@@ -117,7 +117,6 @@ impl CompoundPropertyReader {
     pub fn compound_property(&self, name: &str) -> Result<CompoundPropertyReader> {
         let index = self.find_property(name)?;
         let header = &self.property_headers[index];
-
         if header.ty != PropertyType::Compound {
             return Err(Error::UnexpectedPropertyType);
         }
@@ -128,41 +127,31 @@ impl CompoundPropertyReader {
     pub fn scalar_property(&self, name: &str) -> Result<ScalarPropertyReader> {
         let index = self.find_property(name)?;
         let header = &self.property_headers[index];
-
         if header.ty != PropertyType::Scalar {
             return Err(Error::UnexpectedPropertyType);
         }
-
-        let group = Group::read(&self.archive.data, header.offset)?;
-        Ok(ScalarPropertyReader {
-            archive: self.archive.clone(),
-            header: header.clone(),
-            group,
-        })
+        ScalarPropertyReader::new_inner(self.archive.clone(), header.clone())
     }
 
     /// Reads an array property.
     pub fn array_property(&self, name: &str) -> Result<ArrayPropertyReader> {
         let index = self.find_property(name)?;
         let header = &self.property_headers[index];
-
         if header.ty != PropertyType::Array {
             return Err(Error::UnexpectedPropertyType);
         }
-        Ok(ArrayPropertyReader {
-            archive: self.archive.clone(),
-            group: Group::read(&self.archive.data, header.offset)?,
-            header: header.clone(),
-        })
+        ArrayPropertyReader::new_inner(self.archive.clone(), header.clone())
     }
 
     /// Reads a sub-property by name.
     pub fn property(&self, name: &str) -> Result<PropertyReader> {
         let index = self.find_property(name)?;
         let header = &self.property_headers[index];
-        // FIXME: double lookup into property_by_name
         match header.ty {
-            PropertyType::Compound => Ok(PropertyReader::Compound(self.compound_property(name)?)),
+            PropertyType::Compound => Ok(PropertyReader::Compound(CompoundPropertyReader::new_inner(
+                self.archive.clone(),
+                self.property_headers[index].clone(),
+            )?)),
             PropertyType::Scalar => Ok(PropertyReader::Scalar(self.scalar_property(name)?)),
             PropertyType::Array => Ok(PropertyReader::Array(self.array_property(name)?)),
         }
@@ -189,6 +178,11 @@ pub struct ScalarPropertyReader {
 }
 
 impl ScalarPropertyReader {
+    pub(crate) fn new_inner(archive: Arc<ArchiveInner>, header: Arc<PropertyHeader>) -> Result<Self> {
+        let group = Group::read(&archive.data, header.offset)?;
+        Ok(Self { archive, header, group })
+    }
+
     /// Returns the number of samples.
     pub fn sample_count(&self) -> usize {
         self.header.next_sample_index
@@ -321,11 +315,16 @@ pub struct ArrayPropertyReader {
 }
 
 impl ArrayPropertyReader {
+    pub(crate) fn new_inner(archive: Arc<ArchiveInner>, header: Arc<PropertyHeader>) -> Result<Self> {
+        let group = Group::read(&archive.data, header.offset)?;
+        Ok(Self { archive, header, group })
+    }
+
     /// Returns the time sampling of this property.
     pub fn time_sampling(&self) -> &TimeSampling {
         &self.archive.time_samplings[self.header.time_sampling_index]
     }
-    
+
     /// Returns the metadata of this property.
     pub fn metadata(&self) -> &Metadata {
         &self.header.metadata
@@ -342,7 +341,7 @@ impl ArrayPropertyReader {
 
         let dim_data = self.group.read_data(&self.archive.data, 2 * index + 1).unwrap();
         let data = self.group.read_data(&self.archive.data, 2 * index).unwrap();
-        
+
         if data.len() < 16 {
             // no data (empty array)
             return Dimensions::from_iter([0]);

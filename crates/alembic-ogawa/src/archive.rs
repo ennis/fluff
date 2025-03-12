@@ -14,7 +14,7 @@ pub(crate) type ArchiveData = [u8];
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const ACYCLIC_NUM_SAMPLES: u32 = u32::MAX;
+//const ACYCLIC_NUM_SAMPLES: u32 = u32::MAX;
 const ACYCLIC_TIME_PER_SAMPLE: f64 = f64::MAX / 32.;
 
 #[derive(Clone, Debug)]
@@ -115,7 +115,7 @@ fn read_time_samples(data: &[u8]) -> Result<Vec<TimeSampling>> {
     let mut reader = io::Cursor::new(data);
     let mut samplings = Vec::new();
     while reader.position() < data.len() as u64 {
-        let max_sample = reader.read_u32::<LE>()?;
+        let _max_sample = reader.read_u32::<LE>()?;
         let time_per_cycle = reader.read_f64::<LE>()?;
         let sample_count = reader.read_u32::<LE>()?;
         let mut sample_times = vec![0.0; sample_count as usize];
@@ -149,7 +149,6 @@ pub(crate) struct ArchiveInner {
     pub(crate) time_samplings: Vec<TimeSampling>,
     file_metadata: Metadata,
     pub(crate) indexed_metadata: Vec<Metadata>,
-    object_root_offset: usize,
     root_object_header: Arc<ObjectHeader>,
 }
 
@@ -158,6 +157,18 @@ pub struct Archive(pub(crate) Arc<ArchiveInner>);
 impl Archive {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_inner(path.as_ref())
+    }
+
+    pub fn archive_version(&self) -> u32 {
+        self.0.archive_version
+    }
+
+    pub fn file_version(&self) -> u32 {
+        self.0.file_version
+    }
+
+    pub fn file_metadata(&self) -> &Metadata {
+        &self.0.file_metadata
     }
 
     fn open_inner(path: &Path) -> Result<Self> {
@@ -199,7 +210,6 @@ impl Archive {
             file_version,
             time_samplings,
             indexed_metadata,
-            object_root_offset,
             file_metadata,
             root_object_header,
         })))

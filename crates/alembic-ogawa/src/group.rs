@@ -39,9 +39,9 @@ impl Group {
         Ok(Self { children })
     }
 
-    pub(crate) fn is_group(&self, index: usize) -> bool {
+    /*pub(crate) fn is_group(&self, index: usize) -> bool {
         is_group(self.children[index])
-    }
+    }*/
 
     pub(crate) fn stream_offset(&self, index: usize) -> usize {
         (self.children[index] & OFFSET_MASK).try_into().unwrap()

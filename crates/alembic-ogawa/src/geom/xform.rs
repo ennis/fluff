@@ -1,13 +1,13 @@
 use crate::error::Error;
 use crate::property::{PropertyReader, TypedScalarPropertyReader};
-use crate::{CompoundPropertyReader, Result, TimeSample, TimeSampling};
+use crate::{CompoundPropertyReader, Result, TimeSampling};
 use glam::dvec3;
 use std::mem::MaybeUninit;
 use std::{iter, mem};
 
 pub struct XForm {
     //this: CompoundPropertyReader,
-    child_bounds: Option<TypedScalarPropertyReader<[f32; 6]>>,
+    pub child_bounds: Option<TypedScalarPropertyReader<[f32; 6]>>,
     inherits: Option<TypedScalarPropertyReader<bool>>,
     ops: Vec<XFormOp>,
     vals: PropertyReader,
@@ -40,11 +40,11 @@ impl XForm {
             vec![]
         };
 
-        let anim_chans = if properties.has_property(".animChans") {
+        /*let anim_chans = if properties.has_property(".animChans") {
             TypedScalarPropertyReader::<[u32]>::new_array(&properties, ".animChans")?.get(0)?
         } else {
             vec![]
-        };
+        };*/
 
         let vals = properties.property(".vals")?;
         let sample_count = vals.sample_count();
@@ -159,7 +159,7 @@ impl XFormOp {
 /// * `op` - the transform operation
 /// * `ch` - data for the transform operation; it must contain enough elements for the operation (i.e. `op.channel_count()`).
 fn xform_op_to_matrix(op: XFormOp, ch: &[f64]) -> glam::DMat4 {
-    let mut m = glam::DMat4::IDENTITY;
+    let m;
     match op {
         XFormOp::Scale => {
             m = glam::DMat4::from_scale(dvec3(ch[0], ch[1], ch[2]));
@@ -185,8 +185,4 @@ fn xform_op_to_matrix(op: XFormOp, ch: &[f64]) -> glam::DMat4 {
         }
     }
     m
-}
-
-pub struct XFormSample {
-    pub ops: Vec<XFormOp>,
 }

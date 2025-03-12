@@ -80,11 +80,12 @@ pub unsafe trait DataType {
         Self: Sized;
 }
 
+/*
 #[repr(C)]
 pub struct Box3D {
     pub min: [f64; 3],
     pub max: [f64; 3],
-}
+}*/
 
 macro_rules! impl_data_type {
     ($ty:ty, $variant:ident) => {
