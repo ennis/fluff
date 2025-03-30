@@ -649,12 +649,12 @@ impl TextEditBase {
             self.relayout = false;
         }
 
-        ctx.save();
-        ctx.canvas()
-            .translate(-self.scroll_offset.to_skia() + self.offset.to_skia() + bounds.origin().to_vec2().to_skia());
+        let canvas = ctx.canvas();
+        canvas.save();
+        canvas.translate(-self.scroll_offset.to_skia() + self.offset.to_skia() + bounds.origin().to_vec2().to_skia());
 
         // paint the paragraph
-        self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
+        self.paragraph.paint(canvas, Point::ZERO.to_skia());
 
         // paint the selection rectangles
         let selection_rects = self.paragraph.get_rects_for_range(
@@ -664,7 +664,7 @@ impl TextEditBase {
         );
         let selection_paint = Paint::from(self.selection_color).to_sk_paint(PaintStyle::Fill);
         for text_box in selection_rects {
-            ctx.canvas().draw_rect(text_box.rect, &selection_paint);
+            canvas.draw_rect(text_box.rect, &selection_paint);
         }
 
         if self.blink_phase || self.blink_pending_reset {
@@ -675,11 +675,11 @@ impl TextEditBase {
                 );
                 //eprintln!("caret_rect: {:?}", caret_rect);
                 let caret_paint = Paint::from(self.caret_color).to_sk_paint(PaintStyle::Fill);
-                ctx.canvas().draw_rect(caret_rect.to_skia(), &caret_paint);
+                canvas.draw_rect(caret_rect.to_skia(), &caret_paint);
             }
         }
 
-        ctx.restore();
+        canvas.restore();
     }
 
     //pub fn event(&mut self, event: &mut Event) -> TextEditEventResult {

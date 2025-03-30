@@ -1,47 +1,26 @@
 use crate::gpu;
 use crate::gpu::with_pipeline_manager;
 use graal::{
-    vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, RcDevice, FragmentState,
+    vk, ColorTargetState, ComputePipeline, ComputePipelineCreateInfo, DepthStencilState, FragmentState,
     GraphicsPipeline, GraphicsPipelineCreateInfo, MultisampleState, PreRasterizationShaders, RasterizationState,
-    ShaderDescriptor,
+    RcDevice, ShaderDescriptor,
 };
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::rc::Rc;
 
-/// Error type for the rendering engine.
+/// Error type for the pipeline manager.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Failed to load configuration file")]
-    ConfigLoadError,
-    #[error("Unsupported image format: {0}")]
-    UnsupportedImageFormat(String),
-    #[error("Missing required property: {0}")]
-    MissingProperty(&'static str),
-    #[error("Resource not found: {0}")]
-    ResourceNotFound(String),
-    #[error("File I/O error: {0}")]
-    IO(#[from] Rc<std::io::Error>),
-    #[error("could not read shader file `{}`: {}", .path.display(), .error)]
-    ShaderReadError { path: PathBuf, error: Rc<std::io::Error> },
-    #[error("Unsupported feature: {0}")]
-    UnsupportedFeature(String),
-    #[error("Vulkan error: {0}")]
-    Vulkan(#[from] vk::Result),
-    #[error("Unknown field: {0}")]
-    UnknownField(String),
-    #[error("Invalid field type: {0}")]
-    InvalidFieldType(String),
     #[error("graphics layer error: {0}")]
     GraalError(#[from] graal::Error),
-    #[error("Compilation error: {0}")]
+    #[error("compilation error: {0}")]
     CompilationError(String),
     #[error("the shader had previous compilation errors")]
     PreviousCompilationErrors,
 }
 
-pub struct MeshRenderPipelineDesc2<'a> {
+pub struct MeshRenderPipelineDesc<'a> {
     pub task_shader: ShaderDescriptor<'a>,
     pub mesh_shader: ShaderDescriptor<'a>,
     pub fragment_shader: ShaderDescriptor<'a>,
@@ -51,7 +30,7 @@ pub struct MeshRenderPipelineDesc2<'a> {
     pub multisample_state: MultisampleState,
 }
 
-pub struct PrimitiveRenderPipelineDesc2<'a> {
+pub struct PrimitiveRenderPipelineDesc<'a> {
     pub vertex_shader: ShaderDescriptor<'a>,
     pub fragment_shader: ShaderDescriptor<'a>,
     pub color_targets: Vec<ColorTargetState>,
@@ -159,13 +138,13 @@ impl PipelineManager {
 
     fn create_primitive_pipeline_internal(
         &mut self,
-        desc: &PrimitiveRenderPipelineDesc2,
+        desc: &PrimitiveRenderPipelineDesc,
     ) -> Result<GraphicsPipeline, Error> {
         let vertex = self.reload_shader(&desc.vertex_shader)?;
         let fragment = self.reload_shader(&desc.fragment_shader)?;
         let gpci = GraphicsPipelineCreateInfo {
             set_layouts: &[],
-            push_constants_size: desc.vertex_shader.push_constants_size, // FIXME
+            push_constants_size: desc.vertex_shader.push_constants_size, // FIXME this should be the max of all shaders?
             vertex_input: Default::default(),
             pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
                 vertex: ShaderDescriptor {
@@ -191,7 +170,7 @@ impl PipelineManager {
     pub fn create_primitive_pipeline(
         &mut self,
         name: &str,
-        desc: &PrimitiveRenderPipelineDesc2,
+        desc: &PrimitiveRenderPipelineDesc,
     ) -> Result<GraphicsPipeline, Error> {
         if let Some(pipeline) = self.graphics_pipelines.get(name) {
             match pipeline {
@@ -228,7 +207,7 @@ pub fn create_compute_pipeline(name: &str, compute_shader: &ShaderDescriptor) ->
 
 pub fn create_primitive_pipeline(
     name: &str,
-    desc: &PrimitiveRenderPipelineDesc2,
+    desc: &PrimitiveRenderPipelineDesc,
 ) -> Result<graal::GraphicsPipeline, Error> {
     with_pipeline_manager(|manager| manager.create_primitive_pipeline(name, desc))
 }

@@ -1,50 +1,123 @@
-use crate::compositor::DrawableSurface;
-use crate::drawing::{ round_to_device_pixel, round_to_device_pixel_center, BorderPosition, Image, Paint,  ToSkia};
+use crate::compositor::{ColorType, Composition, CompositionBuilder};
+use crate::drawing::{round_to_device_pixel, round_to_device_pixel_center, vec2, BorderPosition, Image, Paint, ToSkia};
+use crate::element::{with_tree_ctx, ChangeFlags, ElementAny, ElementRc, TreeCtx};
 use crate::text::{TextLayout, TextRun, TextStyle};
-use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Vec2};
+use crate::{platform, Color};
+use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Size, Vec2};
 use skia_safe::PaintStyle;
-use tracing::warn;
+
+struct Layer {
+    transform: Affine,
+    size: Size,
+    has_surface: bool,
+}
 
 /// Paint context.
 pub struct PaintCtx<'a> {
+    pub tree: &'a TreeCtx<'a>,
     pub scale_factor: f64,
-    /// Drawable surface.
-    surface: &'a DrawableSurface,
-    skia: skia_safe::Surface,
     /// Bounds of the element being painted, relative to the current drawing surface.
     pub bounds: Rect,
+
+    /// Transform from local coordinates to window coordinates.
+    window_transform: Affine,
+
+    /// Transform from local coordinates to parent layer coordinates.
+    layer_transform: Affine,
+
+    comp_builder: &'a mut CompositionBuilder,
+    //surface: Option<DrawableSurface>,
+}
+
+pub fn paint_root_element(
+    element: &ElementAny,
+    composition_builder: &mut CompositionBuilder,
+) {
+    with_tree_ctx(element, |element, tree| {
+        let mut ctx = PaintCtx::new(tree, composition_builder);
+        element.borrow_mut().paint(tree, &mut ctx);
+    })
 }
 
 impl<'a> PaintCtx<'a> {
-    pub(crate) fn new(surface: &'a DrawableSurface, scale_factor: f64) -> PaintCtx<'a> {
-        let mut skia = surface.skia();
-        skia.canvas().scale((scale_factor as f32, scale_factor as f32));
-
+    /// Creates a new paint context.
+    pub(crate) fn new(
+        ctx: &'a TreeCtx<'a>,
+        comp_builder: &'a mut CompositionBuilder,
+    ) -> PaintCtx<'a> {
         PaintCtx {
-            scale_factor,
-            surface,
-            skia,
-            bounds: Rect::ZERO,
+            tree: ctx,
+            scale_factor: comp_builder.scale_factor(),
+            bounds: ctx.this.size().to_rect(),
+            window_transform: Default::default(),
+            layer_transform: Default::default(),
+            comp_builder,
         }
     }
 
-    /*/// Returns the horizontal midline (from the center of the left edge to the center of the right edge) of the current paint bounds.
-    pub fn h_midline(&self) -> Line {
-        let rect = self.bounds();
-        Line::new(
-            (rect.x0, rect.y0 + 0.5 * rect.height()),
-            (rect.x1, rect.y0 + 0.5 * rect.height()),
-        )
+    /// Paints a child element.
+    pub fn paint_child(&mut self, offset: Vec2, element: &ElementAny) {
+        // create the child painting context
+        let tree = self.tree.with_child(element);
+
+        // update window-relative position
+        tree.this.window_position.set(self.bounds.origin() + tree.this.offset());
+        
+        // update current bounds on the composition builder
+        self.comp_builder.set_bounds(element.0.ctx.bounds());
+
+        let mut child_ctx = PaintCtx {
+            tree: &tree,
+            scale_factor: self.scale_factor,
+            bounds: element.0.ctx.bounds(),
+            window_transform: self.window_transform * Affine::translate(offset),
+            layer_transform: self.layer_transform * Affine::translate(offset),
+            comp_builder: self.comp_builder,
+        };
+
+        // remove dirty flags before painting, in case the child element (or a descendant) sets
+        // them again to request a repaint immediately after this one
+        let mut f = tree.this.change_flags.get();
+        f.remove(ChangeFlags::PAINT);
+        tree.this.change_flags.set(f);
+        
+
+        // paint the child element
+        element.borrow_mut().paint(&tree, &mut child_ctx);
+        
+        // restore the previous bounds
+        self.comp_builder.set_bounds(self.bounds);
     }
 
-    /// Returns the vertical midline (from the center of the top edge to the center of the bottom edge) of the current paint bounds.
-    pub fn v_midline(&self) -> Line {
-        let rect = self.bounds();
-        Line::new(
-            (rect.x0 + 0.5 * rect.width(), rect.y0),
-            (rect.x0 + 0.5 * rect.width(), rect.y1),
-        )
+    /*
+    /// Creates a color filter layer and invokes the drawing callback with the new context.
+    pub fn with_color_filter_layer(&mut self, _color: Color, _callback: impl FnOnce(&mut Self)) {
+        // ISSUE: naively, we could allocate a texture, perform further rendering in the texture,
+        // and then apply the color filter when rendering the texture.
+        // However, we don't know in advance the size of the texture to allocate.
+        // Furthermore, child elements may push native layers, which would ignore the color filter.
+
+        self.finish_layer();
+        self.scene_builder.push_filter_layer(color);
+
+        self.scene_builder.pop();
+        let layer = compositor::FilterLayer::new(color);
+        warn!("with_color_filter_layer not implemented");
     }*/
+
+    // push_filter ->
+    //    close current drawing
+    //    start a new composition layer
+    //    draw into the new layer
+    //
+    // pop ->
+    //    apply the filter
+    //    draw the filtered image into the previous layer
+    //
+    // add_native_layer ->
+    //    close current drawing
+    //    add native layer to parent layer
+    //        ** ISSUE: parent layer may be a skia surface without a native layer, with a filter that's not supported by the native layer
 
     // === PIXEL SNAPPING ===
     // issue: correct pixel rounding is complicated:
@@ -87,15 +160,15 @@ impl<'a> PaintCtx<'a> {
     /// This function _does not_ take the current transformation into account. If the current
     /// transformation is not aligned with the pixel grid (e.g. rotation, scaling, or translation
     /// by a subpixel amount), the result may not be pixel-aligned.
-    pub fn round_to_device_pixel(&self, logical_coord:f64) -> f64 {
+    pub fn round_to_device_pixel(&self, logical_coord: f64) -> f64 {
         round_to_device_pixel(logical_coord, self.scale_factor)
     }
-    
-    pub fn floor_to_device_pixel(&self, logical_coord:f64) -> f64 {
+
+    pub fn floor_to_device_pixel(&self, logical_coord: f64) -> f64 {
         (logical_coord * self.scale_factor).floor() / self.scale_factor
     }
-    
-    pub fn ceil_to_device_pixel(&self, logical_coord:f64) -> f64 {
+
+    pub fn ceil_to_device_pixel(&self, logical_coord: f64) -> f64 {
         (logical_coord * self.scale_factor).ceil() / self.scale_factor
     }
 
@@ -104,7 +177,7 @@ impl<'a> PaintCtx<'a> {
     /// This function _does not_ take the current transformation into account. If the current
     /// transformation is not aligned with the pixel grid (e.g. rotation, scaling, or translation
     /// by a subpixel amount), the result may not be pixel-aligned.
-    pub fn round_to_device_pixel_center(&self, logical_coord:f64) -> f64 {
+    pub fn round_to_device_pixel_center(&self, logical_coord: f64) -> f64 {
         round_to_device_pixel_center(logical_coord, self.scale_factor)
     }
 
@@ -116,9 +189,8 @@ impl<'a> PaintCtx<'a> {
         )
     }
 
-    /// Rounds a logical rectangle to the device pixel grid.
+    /// Returns the smallest rectangle aligned to the device pixel grid that contains the input rectangle.
     pub fn snap_rect_to_device_pixel(&self, rect: Rect) -> Rect {
-        // FIXME: either floor everything or floor/ceil
         Rect {
             x0: self.floor_to_device_pixel(rect.x0),
             y0: self.floor_to_device_pixel(rect.y0),
@@ -131,7 +203,7 @@ impl<'a> PaintCtx<'a> {
     ///
     /// The canvas already has the transform & clip applied.
     pub fn canvas(&mut self) -> &skia_safe::Canvas {
-        self.skia.canvas()
+        self.comp_builder.picture_recorder().recording_canvas().unwrap()
     }
 
     // Returns the current transform.
@@ -139,31 +211,14 @@ impl<'a> PaintCtx<'a> {
     //    *self.transforms.last().unwrap()
     //}
 
-    /// Saves the current clip region, transform and paint bounds.
-    pub fn save(&mut self) {
-        //self.transforms.push(self.current_transform());
-        self.skia.canvas().save();
-    }
-
-    /// Restores the current clip region, transform and paint bounds.
-    pub fn restore(&mut self) {
-        self.skia.canvas().restore();
-    }
-
-    /// Appends to the current transform.
-    pub fn transform(&mut self, transform: &Affine) {
-        self.skia.canvas().concat(&transform.to_skia());
-    }
-
-    /// Appends to the current transform and sets new paint bounds.
-    pub fn translate(&mut self, offset: Vec2) {
-        self.transform(&Affine::translate(offset));
-    }
-
     /// Clips the subsequent drawing operations by the specified rectangle.
+    ///
+    /// FIXME: if anything down the line needs compositing layers, the clip won't be taken into account
+    /// FIXME: if the picture recorder is reset (because a new layer started), the clip will be lost
+    ///        i.e. clips don't transfer to new layers
     pub fn clip_rect(&mut self, rect: Rect) {
-        self.skia
-            .canvas()
+        /// TODO:  if child elements need compositing, use a clip layer instead
+        self.canvas()
             .clip_rect(rect.to_skia(), skia_safe::ClipOp::Intersect, false);
     }
 
@@ -171,10 +226,12 @@ impl<'a> PaintCtx<'a> {
     // Drawing methods
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
+    pub fn clear(&mut self, color: Color) {
+        self.canvas().clear(color.to_skia());
+    }
 
     /// Draws a line.
-    pub fn draw_line(&mut self, line: Line,
-                     stroke_width: f64,  stroke_paint: impl Into<Paint>) {
+    pub fn draw_line(&mut self, line: Line, stroke_width: f64, stroke_paint: impl Into<Paint>) {
         let mut paint = stroke_paint.into().to_sk_paint(PaintStyle::Stroke);
         paint.set_stroke_width(stroke_width as f32);
         self.canvas().draw_line(line.p0.to_skia(), line.p1.to_skia(), &paint);
@@ -236,19 +293,13 @@ impl<'a> PaintCtx<'a> {
         // TODO: build skia path directly
         let path: BezPath = BezPath::from_iter(path);
         let path = path.to_skia();
-        let mut paint = stroke_paint
-            .into()
-            .to_sk_paint(PaintStyle::Stroke);
+        let mut paint = stroke_paint.into().to_sk_paint(PaintStyle::Stroke);
         paint.set_stroke_width(stroke_width as f32);
         self.canvas().draw_path(&path, &paint);
     }
 
     /// Fills a path.
-    pub fn fill_path(
-        &mut self,
-        path: impl IntoIterator<Item = PathEl>,
-        fill_paint: impl Into<Paint>,
-    ) {
+    pub fn fill_path(&mut self, path: impl IntoIterator<Item = PathEl>, fill_paint: impl Into<Paint>) {
         // TODO: build skia path directly
         let path = BezPath::from_iter(path).to_skia();
         let paint = fill_paint.into().to_sk_paint(PaintStyle::Fill);

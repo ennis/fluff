@@ -4,7 +4,7 @@
 
 mod app_globals;
 pub mod application;
-mod backend;
+mod platform;
 pub mod compositor;
 pub mod drawing;
 pub mod element;

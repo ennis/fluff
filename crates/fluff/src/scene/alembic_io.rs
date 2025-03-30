@@ -70,10 +70,10 @@ fn read_geom_param<T: DataType + Copy>(
 
     // number of unique samples
     let unique_sample_count = if let Some(ref indices) = gp.indices {
-        debug!("indexed geom param: {} unique samples", indices.dimensions(0)[0]);
+        //debug!("indexed geom param: {} unique samples", indices.dimensions(0)[0]);
         indices.dimensions(0)[0]
     } else {
-        debug!("non-indexed geom param: {} samples", gp.values.sample_count());
+        //debug!("non-indexed geom param: {} samples", gp.values.sample_count());
         gp.values.sample_count()
     };
 

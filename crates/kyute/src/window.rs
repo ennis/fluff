@@ -8,7 +8,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
-use std::thread::sleep;
 use std::time::Instant;
 
 use keyboard_types::{Key, KeyboardEvent};
@@ -20,18 +19,19 @@ use tracing::warn;
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::KeyLocation;
 use winit::monitor::MonitorHandle;
-use winit::platform::windows::WindowBuilderExtWindows;
 
-use crate::app_globals::AppGlobals;
-use crate::application::{with_event_loop_window_target, WindowHandler};
-use crate::compositor::{ColorType, Layer};
+use crate::application::WindowHandler;
+use crate::compositor::{ColorType, Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
-use crate::element::{dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, TreeCtx, WeakElementAny};
+use crate::element::{
+    dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
+};
 use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
-use crate::{app_backend, application, double_click_time, Color, EventSource};
+use crate::paint_ctx::{paint_root_element};
+use crate::{app_backend, application, double_click_time, platform, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -171,30 +171,30 @@ fn place_popup_bottom_or_top(monitor: Size, rect: Rect, menu: Size) -> Point {
 /// * `popup_size` - The size of the popup window.
 /// * `anchor_rect` - The rectangle that the popup should be placed relative to, in monitor coordinates.
 /// * `popup_placement` - How to place the popup window.
-pub fn place_popup(monitor: Option<Monitor>, popup_size: Size, anchor_rect: Rect, popup_placement: PopupPlacement) -> Point {
+pub fn place_popup(
+    monitor: Option<Monitor>,
+    popup_size: Size,
+    anchor_rect: Rect,
+    popup_placement: PopupPlacement,
+) -> Point {
     let monitor_size = if let Some(ref monitor) = monitor {
         monitor.logical_size()
     } else {
         Size::new(f64::INFINITY, f64::INFINITY)
     };
     match popup_placement {
-        PopupPlacement::RightThenLeft => {
-            place_popup_right_or_left(monitor_size, anchor_rect, popup_size, false)
-        }
-        PopupPlacement::RightOrOverlap => {
-            place_popup_right_or_left(monitor_size, anchor_rect, popup_size, true)
-        }
-        PopupPlacement::BottomThenUp => {
-            place_popup_bottom_or_top(monitor_size, anchor_rect, popup_size)
-        }
+        PopupPlacement::RightThenLeft => place_popup_right_or_left(monitor_size, anchor_rect, popup_size, false),
+        PopupPlacement::RightOrOverlap => place_popup_right_or_left(monitor_size, anchor_rect, popup_size, true),
+        PopupPlacement::BottomThenUp => place_popup_bottom_or_top(monitor_size, anchor_rect, popup_size),
     }
 }
 
 pub(crate) struct WindowInner {
     weak_this: Weak<WindowInner>,
     root: ElementAny,
-    layer: Layer,
-    window: winit::window::Window,
+    /// Previous compositor layers.
+    composition: RefCell<Option<Composition>>,
+    window: platform::Window,
     hidden_before_first_draw: Cell<bool>,
     cursor_pos: Cell<Point>,
     last_physical_size: Cell<Size>,
@@ -210,40 +210,6 @@ pub(crate) struct WindowInner {
 }
 
 impl WindowInner {
-    /*fn is_focused(&self, element: WeakElementAny) -> bool {
-        self.focus == element
-    }*/
-
-    /*fn check_belongs_to_window(&self, element: &ElementAny) {
-        assert!(
-            Weak::ptr_eq(&element.window.borrow().shared, &self.weak_this),
-            "element must belong to this window"
-        );
-    }*/
-
-    /*fn set_focus(&self, element: WeakElementAny) {
-        //let weak = element.map(|e| e.weak()).unwrap_or_default();
-
-        if let Some(ref element) = element.upgrade() {
-            self.check_belongs_to_window(element);
-            //eprintln!("set_focus {}", element.name());
-
-            if self.focus == *element {
-                return;
-            }
-        }
-
-        let prev = self.focus.replace(element);
-
-        // send focus gained/lost events
-        if let Some(prev) = prev.upgrade() {
-            self.dispatch_event(&*prev, &mut Event::FocusLost, false);
-        }
-        if let Some(new) = self.focus.upgrade() {
-            self.dispatch_event(&*new, &mut Event::FocusGained, false);
-        }
-    }*/
-
     fn set_pointer_capture(&self, element: WeakElementAny) {
         //if let Some(element) = element.upgrade() {
         //    self.check_belongs_to_window(element.node());
@@ -320,12 +286,7 @@ impl WindowInner {
     /// # Return value
     ///
     /// Returns true if the app logic should re-run in response of the event.
-    fn dispatch_pointer_event(
-        &self,
-        mut event: Event,
-        hit_position: Point,
-        //time: Duration,
-    ) {
+    fn dispatch_pointer_event(&self, mut event: Event, hit_position: Point) {
         debug_assert!(event.pointer_event().is_some(), "event must be a pointer event");
 
         let mut input_state = self.input_state.borrow_mut();
@@ -575,10 +536,9 @@ impl WindowInner {
         self.window.request_redraw();
     }
 
-    fn monitor(&self) -> Monitor {
+    /*fn monitor(&self) -> Monitor {
         Monitor(self.window.current_monitor().expect("could not retrieve monitor for window"))
-    }
-
+    }*/
 
     fn mark_needs_paint(&self) {
         self.window.request_redraw();
@@ -643,7 +603,7 @@ impl WindowInner {
                 //self.weak_this.emit(PopupCancelled);
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(FocusedElement {  element }) = get_keyboard_focus() {
+                if let Some(FocusedElement { element }) = get_keyboard_focus() {
                     if let Some(element) = element.upgrade() {
                         dispatch_event(
                             element,
@@ -669,7 +629,8 @@ impl WindowInner {
                 self.weak_this.emit(Resized(sizef));
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
-                    self.layer.resize(sizef);
+                    //self.
+                    //self.layer.resize(sizef);
                 }
                 self.needs_layout.set(true);
             }
@@ -712,31 +673,36 @@ impl WindowInner {
             let _geom = self.root.layout_root(size);
         }
 
-        let surface = self.layer.acquire_drawing_surface();
-
-        // FIXME: only clear and flip invalid regions
         {
-            let mut skia_surface = surface.skia();
-            skia_surface.canvas().clear(self.background.get().to_skia());
+            let mut composition_builder =
+                CompositionBuilder::new(scale_factor, size.to_rect(), self.composition.take());
+            composition_builder.canvas().clear(self.background.get().to_skia());
 
-            self.root.paint_on_surface(None, &surface, scale_factor);
+            paint_root_element(&self.root, &mut composition_builder);
 
             // **** DEBUGGING ****
-            //draw_crosshair(skia_surface.canvas(), self.cursor_pos.get());
+            draw_crosshair(
+                composition_builder.picture_recorder().recording_canvas().unwrap(),
+                self.cursor_pos.get(),
+            );
 
             if let Some(event) = &*self.last_kb_event.borrow() {
-                draw_text_blob(
-                    skia_surface.canvas(),
-                    &format!("{:?} ({:?}) +{:?}", event.key, event.code, event.modifiers),
-                    size,
-                );
+                //draw_text_blob(
+                //    skia_surface.canvas(),
+                //    &format!("{:?} ({:?}) +{:?}", event.key, event.code, event.modifiers),
+                //    size,
+                //);
             }
+
+            let composition = composition_builder.finish();
+            composition.render_to_window(&self.window);
+            self.composition.replace(Some(composition));
         }
 
         // Nothing more to paint, release the surface.
         //
         // This flushes the skia command buffers, and presents the surface to the compositor.
-        drop(surface);
+        //drop(surface);
 
         // Windows are initially created hidden, and are only shown after the first frame is painted.
         // Now that we've rendered the first frame, we can reveal it.
@@ -749,9 +715,10 @@ impl WindowInner {
 
         // Wait for the compositor to be ready to render another frame (this is to reduce latency)
         // FIXME: this assumes that there aren't any other windows waiting to be painted!
-        self.layer.wait_for_presentation();
+        //self.layer.wait_for_presentation();
 
-        sleep(std::time::Duration::from_millis(5));
+        // latency test
+        //sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -799,7 +766,6 @@ impl Default for WindowHandle {
 }
 
 impl WindowHandle {
-
     pub fn scale_factor(&self) -> f64 {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.scale_factor()
@@ -892,17 +858,27 @@ impl Monitor {
     }
 }
 
+/// Describes the options for creating a new window.
 pub struct WindowOptions<'a> {
+    /// Initial title of the window.
     pub title: &'a str,
+    /// Initial size of the window, in device-independent pixels (logical size).
     pub size: Size,
+    /// Owner window handle (Windows only).
     // FIXME that's not really the parent but rather the "owner"
     pub parent: Option<RawWindowHandle>,
+    /// Whether the window should have decorations (title bar, close button, etc).
     pub decorations: bool,
+    /// Whether the window should be initially visible.
     pub visible: bool,
+    /// Background color of the window.
     pub background: Color,
+    /// Initial position of the window, in device-independent pixels.
     pub position: Option<Point>,
+    /// If true, the window will not take focus when shown and when the user clicks on it.
+    ///
+    /// This is typically used for context menus.
     pub no_focus: bool,
-    pub undecorated_shadow: bool,
 }
 
 impl<'a> Default for WindowOptions<'a> {
@@ -916,79 +892,34 @@ impl<'a> Default for WindowOptions<'a> {
             background: Color::from_hex("#151515"),
             position: None,
             no_focus: false,
-            undecorated_shadow: false,
         }
     }
 }
 
 impl Window {
-    /// TODO builder
     pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
-        //let root = root.into_element_any(WeakElementAny::default());
-        let window = with_event_loop_window_target(|event_loop| {
-            // the window is initially invisible, we show it after the first frame is painted.
-            let mut builder = winit::window::WindowBuilder::new()
-                .with_title(options.title)
-                .with_no_redirection_bitmap(true)
-                .with_decorations(options.decorations)
-                .with_visible(options.visible)
-                .with_inner_size(winit::dpi::LogicalSize::new(options.size.width, options.size.height));
-            if options.no_focus {
-                builder = builder.with_no_focus();
-                builder = builder.with_active(false);
-            }
-            if let Some(p) = options.position {
-                builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
-            }
-            #[cfg(windows)]
-            if let Some(parent) = options.parent {
-                match parent {
-                    RawWindowHandle::Win32(w) => {
-                        builder = builder.with_owner_window(w.hwnd.get());
-                    },
-                    _ => panic!("expected a Win32 window handle"),
-                }
-            }
-
-            builder.build(&event_loop).unwrap()
-        });
-
-        #[cfg(windows)]
-        {
-            use winit::platform::windows::WindowExtWindows;
-            if options.undecorated_shadow {
-                window.set_undecorated_shadow(true);
-            }
-        }
+        let platform_window = platform::Window::new(options);
 
         // Setup compositor layer
         // Get the physical size from the window
-        let phy_size = window.inner_size();
+        let phy_size = platform_window.inner_size();
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
-        let layer = app_backend().create_layer(phy_size, ColorType::RGBAF16);
 
-        let raw_window_handle = window
-            .window_handle()
-            .expect("failed to get raw window handle")
-            .as_raw();
-        unsafe {
-            // Bind the layer to the window
-            // SAFETY: idk? the window handle is valid?
-            layer.bind_to_window(raw_window_handle);
-        }
+        //let layer = app_backend().create_layer(phy_size, ColorType::RGBAF16);
+        //platform_window.set_layer(&layer);
 
         // On windows, the initial wait is important:
         // see https://learn.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains#step-4-wait-before-rendering-each-frame
-        layer.wait_for_presentation();
 
-        let window_id = window.id();
+        //layer.wait_for_presentation();
+
+        let window_id = platform_window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
             root: root.into_root_element_any(WindowHandle {
                 shared: weak_this.clone(),
             }),
-            layer,
-            window,
+            window: platform_window,
             hidden_before_first_draw: Cell::new(true),
             cursor_pos: Cell::new(Default::default()),
             last_physical_size: Cell::new(phy_size),
@@ -998,6 +929,7 @@ impl Window {
             active_popup: RefCell::new(None),
             last_kb_event: RefCell::new(None),
             needs_layout: Cell::new(true),
+            composition: RefCell::new(None),
         });
 
         application::register_window(window_id, shared.clone());
@@ -1014,7 +946,6 @@ impl Window {
             shared: Rc::downgrade(&self.shared),
         }
     }
-
 
     pub fn map_to_screen(&self, pos: Point) -> Point {
         self.shared.map_to_screen(pos)

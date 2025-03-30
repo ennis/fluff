@@ -26,7 +26,7 @@ use winit::event::{MouseButton, TouchPhase};
 use winit::keyboard::NamedKey;
 
 use crate::camera_control::{Camera, CameraControl};
-use crate::gpu::{AppendBuffer, Error, PrimitiveRenderPipelineDesc2};
+use crate::gpu::{AppendBuffer, Error, PrimitiveRenderPipelineDesc};
 use crate::overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer};
 use crate::scene::{DebugRenderVisitor, Scene3D};
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex, TileData, SUBGROUP_SIZE};
@@ -1077,7 +1077,7 @@ impl App {
 
             let geometry_pipeline = gpu::create_primitive_pipeline(
                 "geometry",
-                &PrimitiveRenderPipelineDesc2 {
+                &PrimitiveRenderPipelineDesc {
                     vertex_shader: shaders::GEOMETRY_VERTEX_SHADER,
                     fragment_shader: shaders::GEOMETRY_FRAGMENT_SHADER,
                     color_targets: vec![ColorTargetState {

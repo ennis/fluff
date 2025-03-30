@@ -265,23 +265,6 @@ impl CameraControl {
     }
 
     pub fn mouse_wheel(&mut self, delta: f64) {
-        /*
-        if (_projType == CameraProjectionType::Perspective) {
-                // move camera forwards/backwards, but keep center
-                // FIXME this sort of assumes that delta is always 120 or -120
-                double deltaF = -0.1 * ((double) delta / 120.0);
-                _currentFrame.eye = _currentFrame.center + (1.0 + deltaF) * (_currentFrame.eye - _currentFrame.center);
-                updateCamera();
-            } else if (_projType == CameraProjectionType::Orthographic) {
-                double deltaF = (1.0 - 0.25 * ((double) delta / 120.0));
-                const auto height = _camera.GetVerticalAperture();
-                const auto aspectRatio = _camera.GetAspectRatio();
-                _camera.SetHorizontalAperture(height * deltaF *  aspectRatio);
-                _camera.SetVerticalAperture(height * deltaF);
-                updateCamera();
-            }
-        */
-
         // TODO orthographic projection
         let delta = -0.1 * delta / 120.0;
         self.frame.eye = self.frame.center + (1.0 + delta) * (self.frame.eye - self.frame.center);

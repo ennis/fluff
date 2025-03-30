@@ -1,5 +1,4 @@
 use crate::application::run_queued;
-use crate::compositor::DrawableSurface;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventSource};
@@ -136,9 +135,7 @@ pub struct TreeCtx<'a> {
     pub this: &'a ElementCtx,
 }
 
-
 impl<'a> TreeCtx<'a> {
-
     /// Returns the parent window of this element.
     ///
     /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
@@ -185,13 +182,29 @@ impl<'a> TreeCtx<'a> {
     }
 
     pub fn mark_needs_layout(&self) {
-        self.this.change_flags.set(self.this.change_flags.get() | ChangeFlags::LAYOUT);
+        self.this
+            .change_flags
+            .set(self.this.change_flags.get() | ChangeFlags::LAYOUT);
         self.propagate_dirty_flags();
     }
 
     pub fn mark_needs_paint(&self) {
-        self.this.change_flags.set(self.this.change_flags.get() | ChangeFlags::PAINT);
+        self.this
+            .change_flags
+            .set(self.this.change_flags.get() | ChangeFlags::PAINT);
         self.propagate_dirty_flags();
+    }
+
+    /// Creates a `TreeCtx` for a child element of the current element.
+    pub(crate) fn with_child<'b>(&'b self, child: &'b ElementAny) -> TreeCtx<'b> {
+        assert!(
+            child.0.ctx.parent == self.this.weak_this,
+            "element is not a child of the current element"
+        );
+        TreeCtx {
+            parent: Some(self),
+            this: &child.0.ctx,
+        }
     }
 }
 
@@ -330,7 +343,7 @@ impl<T: ?Sized> WeakElement<T> {
     }
 }
 
-impl<T: ?Sized + 'static> WeakElement<T> {
+impl<T: ?Sized + Element + 'static> WeakElement<T> {
     pub fn run_later(&self, f: impl FnOnce(&mut T, &TreeCtx) + 'static) {
         let this = self.clone();
         run_queued(move || {
@@ -418,8 +431,8 @@ impl PartialOrd for WeakElementAny {
     }
 }
 
-struct ElemCell<T: ?Sized> {
-    ctx: ElementCtx,
+pub(crate) struct ElemCell<T: ?Sized> {
+    pub(crate) ctx: ElementCtx,
     element: RefCell<T>,
 }
 
@@ -428,7 +441,7 @@ struct ElemCell<T: ?Sized> {
 // FIXME: consider eliminating the wrapper and use a typedef instead (move methods to ElemCell)
 //        ISSUE: the wrapper is here for a reason: it implements by-reference Eq/Ord/Hash.
 //        We can't do that with a typedef.
-pub struct ElementRc<T: ?Sized>(Rc<ElemCell<T>>);
+pub struct ElementRc<T: ?Sized>(pub(crate) Rc<ElemCell<T>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
     fn clone(&self) -> Self {
@@ -436,7 +449,7 @@ impl<T: ?Sized> Clone for ElementRc<T> {
     }
 }
 
-impl<T: ?Sized> ElementRc<T> {
+impl<T: ?Sized + Element> ElementRc<T> {
     /// Returns a weak reference to this element.
     pub fn downgrade(&self) -> WeakElement<T> {
         WeakElement(Rc::downgrade(&self.0))
@@ -459,31 +472,7 @@ impl<T: ?Sized> ElementRc<T> {
 
     /// Invokes a method on this widget.
     pub fn invoke<R>(&self, f: impl FnOnce(&mut T, &TreeCtx) -> R) -> R {
-        // TODO: dedup from dispatch_event
-        let mut ancestors = vec![];
-        let mut current = self.parent();
-        while let Some(parent) = current {
-            ancestors.push(parent.clone());
-            current = Some(parent);
-        }
-        ancestors.reverse();
-
-        // Build ctx chain
-        let mut arena = Arena::new();
-        let mut tree = None;
-        for e in ancestors.iter() {
-            tree = Some(&*arena.alloc(TreeCtx {
-                parent: tree,
-                this: &e.0.ctx,
-            }));
-        }
-        let tree = TreeCtx {
-            parent: tree,
-            this: &self.0.ctx,
-        };
-
-        let r = f(&mut *self.0.element.borrow_mut(), &tree);
-        r
+        with_tree_ctx(self, |element, tree| f(&mut *self.0.element.borrow_mut(), tree))
     }
 }
 
@@ -574,20 +563,6 @@ impl ElementAny {
         current.0.ctx.window.clone()
     }
 
-    /// Returns the parent compositor layer of this element (disregarding the element's own layer if it has one).
-    ///
-    // Issue: I want to return a borrow, but I need to upgrade the parent, and the borrow can't outlive
-    // the upgrade.
-    pub fn get_parent_layer(&self) -> Option<compositor::Layer> {
-        //if let Some(parent) = self.parent.upgrade() {
-        //    parent.get_parent_layer()
-        //} else {
-        //    // no parent, this is the root element
-        //    None
-        //}
-        todo!()
-    }
-
     /// Returns the transform of this element.
     pub fn offset(&self) -> Vec2 {
         self.0.ctx.offset.get()
@@ -672,7 +647,7 @@ impl ElementAny {
         //inner.ctx.propagate_dirty_flags();
     }
 
-    fn paint_inner(&self, parent: Option<&TreeCtx>, parent_ctx: &mut PaintCtx) {
+    pub(crate) fn paint_inner(&self, parent: Option<&TreeCtx>, parent_ctx: &mut PaintCtx) {
         let ref mut inner = *self.borrow_mut();
         let ctx = &self.0.ctx;
         let child_tree = TreeCtx { parent, this: ctx };
@@ -696,10 +671,10 @@ impl ElementAny {
         self.paint_inner(Some(tree), parent_ctx);
     }
 
-    pub(crate) fn paint_on_surface(&self, parent: Option<&TreeCtx>, surface: &DrawableSurface, scale_factor: f64) {
-        let mut ctx = PaintCtx::new(surface, scale_factor);
+    /*pub(crate) fn paint_on_surface(&self, parent: Option<&TreeCtx>, surface: &DrawableSurface, scale_factor: f64) {
+        let mut ctx = PaintCtx::old_new(surface, scale_factor);
         self.paint_inner(parent, &mut ctx);
-    }
+    }*/
 
     pub fn add_offset(&self, offset: Vec2) {
         self.0.ctx.add_offset(offset);
@@ -770,13 +745,13 @@ pub struct ElementCtx {
     // we can't use `weak_this` because it can't coerce dyn Any, even with trait upcasting.
     // TODO: remove this, it's not used
     //weak_this_any: Weak<dyn Any>,
-    change_flags: Cell<ChangeFlags>,
+    pub(crate) change_flags: Cell<ChangeFlags>,
     /// Pointer to the parent owner window. Valid only for the root element the window.
     pub(crate) window: WindowHandle,
     /// Layout: offset from local to parent coordinates.
-    offset: Cell<Vec2>,
+    pub(crate) offset: Cell<Vec2>,
     /// Transform from local to window coordinates.
-    window_position: Cell<Point>,
+    pub(crate) window_position: Cell<Point>,
     /// Layout: geometry (size and baseline) of this element.
     geometry: Cell<LayoutOutput>,
     /// Name of the element.
@@ -785,8 +760,6 @@ pub struct ElementCtx {
     focusable: bool,
     /// Whether this element currently has focus.
     focused: Cell<bool>,
-    /// The compositor layer associated with this element, if the element uses a separate layer.
-    layer: Option<compositor::Layer>,
 }
 
 impl ElementCtx {
@@ -803,7 +776,6 @@ impl ElementCtx {
             name: String::new(),
             focusable: false,
             focused: Cell::new(false),
-            layer: None,
         }
     }
 
@@ -837,7 +809,6 @@ impl ElementCtx {
         self.offset.get()
     }
 
-
     /*pub fn mark_structure_changed(&mut self) {
         self.change_flags |= ChangeFlags::STRUCTURE;
     }*/
@@ -846,7 +817,6 @@ impl ElementCtx {
     //pub fn map_to_window(&self, local_point: Point) -> Point {
     //    local_point + self.window_position.get()
     //}
-
 
     /// Sets the keyboard focus on this widget on the next run of the event loop.
     ///
@@ -876,18 +846,6 @@ impl ElementCtx {
 
     pub fn has_focus(&self) -> bool {
         self.focused.get()
-    }
-
-
-
-    /// Returns the parent compositor layer of this element (disregarding the element's own layer if it has one).
-    pub fn get_parent_layer(&self) -> Option<compositor::Layer> {
-        if let Some(parent) = self.parent.upgrade() {
-            parent.get_parent_layer()
-        } else {
-            // no parent, this is the root element
-            None
-        }
     }
 }
 
@@ -1084,17 +1042,19 @@ impl<T: Element> IntoElementAny for ElementBuilder<T> {
     }
 }
 
-/// Dispatches an event to a target element, bubbling up if requested.
+/// Builds a linked list of `TreeCtx` for a sequence of ancestor elements.
 ///
-/// It will first invoke the event handler of the target element.
-/// If the event is "bubbling", it will invoke the event handler of the parent element,
-/// and so on until the root element is reached.
-pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bool) {
-    // get dispatch chain
-    let chain = target.ancestors_and_self();
-
-    // Build ctx chain
-    let mut arena = Arena::new();
+/// # Arguments
+/// * `chain` - a list of elements forming a path from the root of the element tree to a target element.
+///             Usually this is obtained by calling `ancestors_and_self` on a target element.
+/// * `arena` - the arena to allocate the `TreeCtx` nodes.
+///
+/// # Return value
+///
+/// Returns the `TreeCtx` corresponding to the tail of the linked list (the `TreeCtx` associated
+/// to the last element in the chain).
+fn build_tree_ctx_chain<'a>(chain: &'a [ElementAny], arena: &'a typed_arena::Arena<TreeCtx<'a>>) -> &'a TreeCtx<'a> {
+    assert!(!chain.is_empty());
     let mut tree = None;
     for e in chain.iter() {
         tree = Some(&*arena.alloc(TreeCtx {
@@ -1102,15 +1062,71 @@ pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bo
             this: &e.0.ctx,
         }));
     }
-    let tree = tree.unwrap();
-
-    if bubbling {
-        // dispatch the event, bubbling from the target up the root
-        for element in chain.iter() {
-            element.send_event(tree, event);
-        }
-    } else {
-        // dispatch the event to the target only
-        target.send_event(tree, event);
-    }
+    tree.unwrap()
 }
+
+/// Dispatches an event to a target element, bubbling up if requested.
+///
+/// It will first invoke the event handler of the target element.
+/// If the event is "bubbling", it will invoke the event handler of the parent element,
+/// and so on until the root element is reached.
+pub(crate) fn dispatch_event(target: ElementAny, event: &mut Event, bubbling: bool) {
+    with_tree_ctx(&target, |target, tree| {
+        if bubbling {
+            // dispatch the event, bubbling from the target up the root
+            let mut current_ctx = Some(tree);
+            let mut current_elem = Some(target.clone());
+            while let Some(ctx) = current_ctx {
+                current_elem.as_ref().unwrap().send_event(ctx, event);
+                current_elem = current_elem.as_ref().unwrap().parent();
+                current_ctx = ctx.parent;
+            }
+        } else {
+            // dispatch the event to the target only
+            target.send_event(tree, event);
+        }
+    });
+}
+
+/// Invokes a closure on an element with its corresponding `TreeCtx`.
+pub(crate) fn with_tree_ctx<T: Element + ?Sized, R>(
+    target: &ElementRc<T>,
+    f: impl FnOnce(&ElementRc<T>, &TreeCtx) -> R,
+) -> R {
+    // get list of ancestors
+    let mut ancestors = Vec::new(); // Vec<ElementAny>
+    let mut current = target.parent();
+    while let Some(parent) = current {
+        ancestors.push(parent.clone());
+        current = parent.parent();
+    }
+    ancestors.reverse();
+
+    // build chain of TreeCtx for ancestors
+    let arena = Arena::new();
+    let mut tree = None;
+    for e in ancestors.iter() {
+        tree = Some(&*arena.alloc(TreeCtx {
+            parent: tree,
+            this: &e.0.ctx,
+        }));
+    }
+
+    // TreeCtx for target
+    //
+    // It would be shorter if we could just push `target` in `ancestors`, but the vector contains
+    // `ElementAny` whereas target is `ElementRc<T: Element+?Sized>`, which cannot coerce
+    // to `ElementAny`. This is incredibly annoying.
+    // (see https://stackoverflow.com/questions/57398118/why-cant-sized-trait-be-cast-to-dyn-trait)
+    let tree = TreeCtx {
+        parent: tree,
+        this: &target.0.ctx,
+    };
+
+    f(target, &tree)
+}
+
+// New repaint system:
+// - mark_paint_dirty may not propagate up to the root: stops at compositor layers (aka "repaint barrier" elements)
+// - repaint barrier elements added to the list of dirty elements
+// - when repaint requested, on repaint, repaint everything in the list of dirty elements

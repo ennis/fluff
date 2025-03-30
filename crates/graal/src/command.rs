@@ -888,7 +888,7 @@ impl CommandStream {
 
             // If we need a pipeline barrier before submitting the command buffers, we insert a "fixup" command buffer
             // containing the pipeline barrier, before the others.
-            //if !buffer_barriers.is_empty() || !image_barriers.is_empty() {
+
             if global_memory_barrier.is_some() || !image_barriers.is_empty() {
                 let fixup_command_buffer = self.command_pool.alloc(&self.device.raw());
                 unsafe {
@@ -943,9 +943,14 @@ impl CommandStream {
 
         signal_semaphores.push(self.queue.timeline);
 
-        // FIXME (!!!) if there are concurrent command streams, there is no guarantee that
-        // they will be submitted in the order they were created. This means that`submission_index`
-        // below is not necessarily increasing.
+        // FIXME: (!!!) if there are concurrent command streams, there is no guarantee that
+        //        they will be submitted in the order they were created.
+        //        This means that the semaphore value is not necessarily increasing, which is
+        //        invalid usage.
+        //        We rely on the submission index being valid as we are building the submission
+        //        so we can't assign a number to the submission *after* we've built it (we'd
+        //        need to retroactively update the submission index in the tracker, which
+        //        is not convenient).
         //
         // TODO: probably disallow concurrent command streams entirely
         signal_semaphore_values.push(self.submission_index);

@@ -17,49 +17,49 @@ const DEFAULT_SIZE: Size = Size::new(500., 500.);
 /// # Lifecycle
 ///
 /// - The Viewport is created with a ViewportModel.
-/// - When the layout of the window changes, the layer is resized
+/// - During painting, create a new layer with the correct size, or resize the existing layer if necessary
+///    - Paint the scene into the layer
+///    - Add the layer to the compositing tree in `PaintCtx`
 pub struct Viewport {
-    layer: kyute::compositor::Layer,
+    /// Swap chain for the 3D rendering
+    swap_chain: kyute::SwapChain,
     data: ViewportModel,
 }
 
+// Layer::set_parent()
+//   - if self.parent == parent { return }
+//   - parent.backend.add_child(
+
 impl Viewport {
     pub fn new(data: ViewportModel) -> Self {
+        // dummy size until we get the actual size from the layout
+        let swap_chain = kyute::SwapChain::new(DEFAULT_SIZE, ColorType::SRGBA8888);
         Self {
-            // dummy size until we get the actual size from the layout
-            // TODO: API legibility: avoid using `clone` here
-            layer: app_backend().create_vulkan_interop_layer(gpu::device().clone(), DEFAULT_SIZE, ColorType::SRGBA8888),
+            swap_chain,
             data,
         }
     }
 }
 
 impl Element for Viewport {
-    fn added(&mut self, ctx: &TreeCtx) {
-        // insert the layer into the compositor tree
-        if let Some(layer) = ctx.get_parent_layer() {
-            layer.add_child(&self.layer);
-        }
-    }
-
     fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
         // take all the available space
         Size::new(layout_input.width.available().unwrap_or(DEFAULT_SIZE.width), layout_input.height.available().unwrap_or(DEFAULT_SIZE.height))
     }
-    
-    
 
     fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
         self.layer.resize(size);
         LayoutOutput::from(size)
     }
 
-
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
         true
     }
 
     fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx) {
+        
+        
+        
         // Nothing to paint in the parent layer.
         // All rendering is done in `self.layer`.
     }

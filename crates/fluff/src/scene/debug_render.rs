@@ -1,5 +1,5 @@
 use crate::camera_control::Camera;
-use crate::gpu::PrimitiveRenderPipelineDesc2;
+use crate::gpu::PrimitiveRenderPipelineDesc;
 use crate::scene::{Scene3D, SceneRenderItem, SceneRenderVisitor};
 use crate::shaders::SceneParams;
 use crate::{gpu, shaders};
@@ -62,7 +62,7 @@ pub fn debug_render_scene(
 
     let geometry_pipeline = gpu::create_primitive_pipeline(
         "geometry",
-        &PrimitiveRenderPipelineDesc2 {
+        &PrimitiveRenderPipelineDesc {
             vertex_shader: shaders::GEOMETRY_VERTEX_SHADER,
             fragment_shader: shaders::GEOMETRY_FRAGMENT_SHADER,
             color_targets: vec![ColorTargetState {

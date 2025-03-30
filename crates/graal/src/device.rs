@@ -26,63 +26,20 @@ use std::mem;
 use std::sync::atomic::AtomicU64;
 use tracing::{debug, error};
 use crate::platform::PlatformExtensions;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub type RcDevice = Rc<Device>;
-pub type WeakDevice = Weak<Device>;
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-pub(crate) struct ActiveSubmission {
-    pub index: u64,
-    //pub queue: u32,
-    pub command_pools: Vec<CommandPool>,
-}
-
-pub(crate) struct DeviceTracker {
-    pub active_submissions: VecDeque<ActiveSubmission>,
-    pub writes: MemoryAccess,
-    pub images: SecondaryMap<ImageId, MemoryAccess>,
-}
-
-impl DeviceTracker {
-    fn new() -> DeviceTracker {
-        DeviceTracker {
-            active_submissions: VecDeque::new(),
-            writes: MemoryAccess::empty(),
-            images: SecondaryMap::new(),
-        }
-    }
-}
-
-/// Dummy trait for `Device::delete_later`
-trait DeleteLater {}
-impl<T> DeleteLater for T {}
-
-/// Helper struct for deleting vulkan objects.
-///
-/// TODO doc
-pub struct Defer<F: FnMut()>(F);
-
-impl<F> Drop for Defer<F>
-where
-    F: FnMut(),
-{
-    fn drop(&mut self) {
-        self.0()
-    }
-}
-
 // FIXME: Mutexes are useless here since this is wrapped in Rc and can't be sent across threads.
-// Just use RefCells
+//        Just use RefCells
 pub struct Device {
     /// Underlying vulkan device
-    pub(crate) raw: ash::Device,
+    pub(crate) raw: ash::Device,  
 
     /// Platform-specific extension functions
     pub(crate) platform_extensions: PlatformExtensions,
     physical_device: vk::PhysicalDevice,
     queues: Vec<Arc<QueueShared>>,
-    allocator: Mutex<gpu_allocator::vulkan::Allocator>,
+    allocator: Mutex<gpu_allocator::vulkan::Allocator>, 
 
     // --- Extensions ---
     vk_khr_swapchain: ash::extensions::khr::Swapchain,
@@ -122,6 +79,49 @@ pub struct Device {
 impl fmt::Debug for Device {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("DeviceInner").finish_non_exhaustive()
+    }
+}
+
+pub type RcDevice = Rc<Device>;
+pub type WeakDevice = Weak<Device>;
+
+
+pub(crate) struct ActiveSubmission {
+    pub(crate) index: u64,
+    pub(crate) command_pools: Vec<CommandPool>,
+}
+
+pub(crate) struct DeviceTracker {
+    pub(crate) active_submissions: VecDeque<ActiveSubmission>,
+    pub(crate) writes: MemoryAccess,
+    pub(crate) images: SecondaryMap<ImageId, MemoryAccess>,
+}
+
+impl DeviceTracker {
+    fn new() -> DeviceTracker {
+        DeviceTracker {
+            active_submissions: VecDeque::new(),
+            writes: MemoryAccess::empty(),
+            images: SecondaryMap::new(),
+        }
+    }
+}
+
+/// Dummy trait for `Device::delete_later`
+trait DeleteLater {}
+impl<T> DeleteLater for T {}
+
+/// Helper struct for deleting vulkan objects.
+///
+/// TODO doc
+pub struct Defer<F: FnMut()>(F);
+
+impl<F> Drop for Defer<F>
+where
+    F: FnMut(),
+{
+    fn drop(&mut self) {
+        self.0()
     }
 }
 

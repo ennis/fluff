@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use graal::vk;
 use winit::event::{Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::raw_window_handle::HasRawWindowHandle;
+use winit::raw_window_handle::{HasRawWindowHandle, HasWindowHandle};
 
 use crate::app::App;
 
@@ -64,7 +64,7 @@ fn main() {
     let device = gpu::device();
     let mut command_stream = gpu::device().create_command_stream(0);
 
-    let surface = graal::get_vulkan_surface(window.raw_window_handle().unwrap());
+    let surface = graal::get_vulkan_surface(window.window_handle().unwrap().as_raw());
     let surface_format = vk::SurfaceFormatKHR {
         format: vk::Format::R16G16B16A16_SFLOAT,
         color_space: Default::default(),

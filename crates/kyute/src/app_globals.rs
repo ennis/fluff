@@ -1,4 +1,4 @@
-use crate::backend::ApplicationBackend;
+use crate::platform::ApplicationBackend;
 use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;

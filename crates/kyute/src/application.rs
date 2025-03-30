@@ -1,6 +1,5 @@
-//use crate::app_globals::AppGlobals;
-use crate::app_globals::AppGlobals;
 use crate::model::maintain_subscription_map;
+use crate::{init_application, teardown_application};
 use anyhow::Context;
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
@@ -18,7 +17,6 @@ use tracy_client::set_thread_name;
 use winit::event::{Event, StartCause};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use winit::window::WindowId;
-use crate::{init_application, teardown_application};
 
 /// Event loop user event.
 #[derive(Clone, Debug)]

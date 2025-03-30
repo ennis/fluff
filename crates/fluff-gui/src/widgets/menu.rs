@@ -88,7 +88,6 @@ fn open_anchored_popup<T: Element>(
             background: STATIC_BACKGROUND,
             position: Some(position),
             no_focus: true,
-            undecorated_shadow: false,
         },
         content,
     );

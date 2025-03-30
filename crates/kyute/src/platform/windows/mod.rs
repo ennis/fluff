@@ -1,27 +1,36 @@
 //! Windows implementation details
-use std::cell::{Cell, RefCell};
-use std::ffi::OsString;
-use std::rc::Rc;
-use std::time::Duration;
-
-pub use compositor::{DrawableSurface, Layer};
+use crate::application::with_event_loop_window_target;
+use crate::{app_backend, WindowOptions};
+use raw_window_handle::{HasRawWindowHandle, HasWindowHandle, RawWindowHandle};
 use skia_safe::gpu::Protected;
+use std::cell::{Cell, RefCell};
+use std::ffi::{c_void, OsString};
+use std::time::Duration;
 use threadbound::ThreadBound;
 use windows::core::{IUnknown, Interface, Owned};
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
 use windows::Win32::Graphics::Direct3D12::{
     D3D12CreateDevice, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Device, ID3D12Fence,
     D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_FENCE_FLAG_NONE,
 };
 use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, IDCompositionDesktopDevice};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, IDXGIAdapter1, IDXGIFactory3, DXGI_CREATE_FACTORY_FLAGS};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
 
+pub use draw_surface::{DrawSurface, DrawSurfaceContext};
+pub use window::{CompositionContext, Window};
+
+use crate::compositor::ColorType;
+
 mod compositor;
+mod draw_surface;
+mod swap_chain;
+mod window;
 
 /////////////////////////////////////////////////////////////////////////////
 // COM wrappers
@@ -300,5 +309,19 @@ impl ApplicationBackend {
 
     pub(crate) fn teardown(&self) {
         self.wait_for_gpu();
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+//-------------------------------------------------------------------------------------------------
+
+pub(crate) fn format_to_dxgi_format(format: ColorType) -> DXGI_FORMAT {
+    match format {
+        ColorType::RGBA8888 => DXGI_FORMAT_R8G8B8A8_UNORM,
+        ColorType::BGRA8888 => DXGI_FORMAT_B8G8R8A8_UNORM,
+        ColorType::SRGBA8888 => DXGI_FORMAT_R8G8B8A8_UNORM,
+        ColorType::RGBAF16 => DXGI_FORMAT_R16G16B16A16_FLOAT,
+        _ => unimplemented!("unsupported color type: {:?}", format),
     }
 }
