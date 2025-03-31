@@ -74,6 +74,7 @@ struct PictureLayer {
     /// Bounds of the picture, in window coordinates.
     bounds: Rect,
     /// Physical bounds of the layer, in physical window coordinates (actual pixels).
+    // FIXME: there should be a SizeI for this stuff
     x0: u32,
     y0: u32,
     x1: u32,
@@ -217,7 +218,7 @@ impl CompositionBuilder {
         ctx.comp.rev += 1;
         ctx
     }
-    
+
     /// Returns the scale factor of the composition.
     pub fn scale_factor(&self) -> f64 {
         self.comp.scale_factor
@@ -314,7 +315,7 @@ impl CompositionBuilder {
             rec
         })
     }
-    
+
     /// Returns the current canvas.
     pub fn canvas(&mut self) -> &sk::Canvas {
         self.picture_recorder().recording_canvas().unwrap()
@@ -404,6 +405,7 @@ impl CompositionBuilder {
         if let Some(mut rec) = self.picture_recorder.take() {
             let mut drawable = rec.finish_recording_as_drawable().unwrap();
             let bounds = Rect::from_skia(drawable.bounds());
+            let rounded_bounds = enclosing_integer_rect(bounds);
 
             // Cannibalize the picture layer from the last frame if there's one at the current stack position.
             if let Some(StackOp::Layer(layer)) = self.comp.stack.get(self.sp) {
@@ -411,12 +413,15 @@ impl CompositionBuilder {
                     self.comp.infos[*layer].rev = self.comp.rev;
                     pic.picture = drawable;
                     pic.bounds = bounds;
+                    pic.x0 = rounded_bounds.x0 as u32;
+                    pic.y0 = rounded_bounds.y0 as u32;
+                    pic.x1 = rounded_bounds.x1 as u32;
+                    pic.y1 = rounded_bounds.y1 as u32;
                     self.sp += 1;
                     return;
                 }
             }
 
-            let rounded_bounds = enclosing_integer_rect(bounds);
 
             // Otherwise, insert a new picture layer.
             let layer = PictureLayer {

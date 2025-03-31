@@ -579,12 +579,12 @@ impl WindowInner {
                     pos,
                 );
                 // force a redraw for the debug crosshair
-                self.window.request_redraw();
+                //self.window.request_redraw();
             }
             WindowEvent::Touch(touch) => {
                 self.cursor_pos.set(Point::new(touch.location.x, touch.location.y));
                 // force a redraw for the debug crosshair
-                self.window.request_redraw();
+                //self.window.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let converted_event = self.convert_keyboard_input(event);

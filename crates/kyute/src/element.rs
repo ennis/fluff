@@ -287,6 +287,7 @@ pub trait Element: Any {
     ///        Unfortunately, rust memory semantics don't make it easy.
     ///        Storing the context in `ElemBox` wouldn't work because we want it to be shareable,
     ///        but `&mut ElemBox<Self>` would give exclusive access to it (barring stuff like UnsafePinned).
+    /// TODO: remove tctx, it's integrated in PaintCtx now
     #[allow(unused_variables)]
     fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx);
 
@@ -667,9 +668,9 @@ impl ElementAny {
         parent_ctx.bounds = prev_bounds;
     }
 
-    pub fn paint(&self, tree: &TreeCtx, parent_ctx: &mut PaintCtx) {
-        self.paint_inner(Some(tree), parent_ctx);
-    }
+    //pub fn paint(&self, tree: &TreeCtx, parent_ctx: &mut PaintCtx) {
+    //    self.paint_inner(Some(tree), parent_ctx);
+    //}
 
     /*pub(crate) fn paint_on_surface(&self, parent: Option<&TreeCtx>, surface: &DrawableSurface, scale_factor: f64) {
         let mut ctx = PaintCtx::old_new(surface, scale_factor);

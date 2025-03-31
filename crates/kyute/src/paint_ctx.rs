@@ -34,6 +34,10 @@ pub fn paint_root_element(
     composition_builder: &mut CompositionBuilder,
 ) {
     with_tree_ctx(element, |element, tree| {
+        let mut f = tree.change_flags.get();
+        f.remove(ChangeFlags::PAINT);
+        tree.change_flags.set(f);
+
         let mut ctx = PaintCtx::new(tree, composition_builder);
         element.borrow_mut().paint(tree, &mut ctx);
     })
@@ -55,14 +59,18 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
+    pub fn paint_child(&mut self, element: &ElementAny) {
+        self.paint_child_with_offset(element.offset(), element);
+    }
+
     /// Paints a child element.
-    pub fn paint_child(&mut self, offset: Vec2, element: &ElementAny) {
+    pub fn paint_child_with_offset(&mut self, offset: Vec2, element: &ElementAny) {
         // create the child painting context
         let tree = self.tree.with_child(element);
 
         // update window-relative position
         tree.this.window_position.set(self.bounds.origin() + tree.this.offset());
-        
+
         // update current bounds on the composition builder
         self.comp_builder.set_bounds(element.0.ctx.bounds());
 
@@ -80,11 +88,10 @@ impl<'a> PaintCtx<'a> {
         let mut f = tree.this.change_flags.get();
         f.remove(ChangeFlags::PAINT);
         tree.this.change_flags.set(f);
-        
 
         // paint the child element
         element.borrow_mut().paint(&tree, &mut child_ctx);
-        
+
         // restore the previous bounds
         self.comp_builder.set_bounds(self.bounds);
     }

@@ -22,8 +22,8 @@ use windows::Win32::System::Threading::WaitForSingleObject;
 /// # Performance notes
 ///
 /// Creating and destroying `DrawSurface` objects is relatively expensive, as it involves creating
-/// swap chains and waiting for the GPU to finish before destroying them. 
-/// You should avoid creating and destroying `DrawSurface` objects on every frame: try to 
+/// swap chains and waiting for the GPU to finish before destroying them.
+/// You should avoid creating and destroying `DrawSurface` objects on every frame: try to
 /// reuse them as much as possible.
 ///
 pub struct DrawSurface {
@@ -63,7 +63,7 @@ impl DrawSurface {
             assert!(!handle.is_invalid());
             Owned::new(handle)
         };
-        let mut surface = DrawSurface {
+        let surface = DrawSurface {
             swap_chain,
             dxgi_format,
             frame_latency_waitable,
@@ -161,7 +161,7 @@ impl DrawSurface {
             // the next blanking interval.
 
             let t = std::time::Instant::now();
-            self.swap_chain.Present(1, DXGI_PRESENT::default()).unwrap();
+            self.swap_chain.Present(0, DXGI_PRESENT::default()).unwrap();
             eprintln!("Present took {:?}", t.elapsed());
         }
 

@@ -31,6 +31,11 @@ mod compositor;
 mod draw_surface;
 mod swap_chain;
 mod window;
+#[cfg(feature = "vulkan-interop")]
+mod vulkan_interop;
+
+#[cfg(feature = "vulkan-interop")]
+pub use vulkan_interop::DxgiVulkanInteropSwapChain;
 
 /////////////////////////////////////////////////////////////////////////////
 // COM wrappers

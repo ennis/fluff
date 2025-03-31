@@ -468,7 +468,8 @@ impl Element for Frame {
 
         // paint children
         if let Some(content) = &self.content {
-            content.paint(ecx, ctx);
+            ctx.paint_child(content);
+            //content.paint(ecx, ctx);
         }
     }
 

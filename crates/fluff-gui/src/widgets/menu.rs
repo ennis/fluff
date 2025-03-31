@@ -226,7 +226,7 @@ impl MenuBase {
     }
 
     /// Opens a menu at the specified position.
-    fn open(mut self: ElementBuilder<Self>, at: Point, popup_placement: PopupPlacement) -> Window {
+    fn open(self: ElementBuilder<Self>, at: Point, popup_placement: PopupPlacement) -> Window {
         self.open_around(Rect::from_origin_size(at, Size::ZERO), popup_placement)
     }
 

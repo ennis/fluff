@@ -361,6 +361,7 @@ impl From<ImageType> for vk::ImageType {
     }
 }
 
+// TODO see if we can't get rid of some of those flags, if the underlying driver doesn't care about them
 bitflags! {
     #[repr(transparent)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

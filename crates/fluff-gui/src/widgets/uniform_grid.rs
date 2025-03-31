@@ -91,7 +91,8 @@ impl Element for UniformGrid {
 
     fn paint(&mut self, cx: &TreeCtx, painter: &mut PaintCtx) {
         for element in &mut self.elements {
-            element.paint(cx, painter);
+            painter.paint_child(element);
+            //element.paint(cx, painter);
         }
     }
 }

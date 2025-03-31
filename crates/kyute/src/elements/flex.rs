@@ -248,7 +248,7 @@ impl Element for Flex {
 
     fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
-            child.element.paint(cx, ctx);
+            ctx.paint_child(&mut child.element);
         }
     }
 }
