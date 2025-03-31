@@ -12,7 +12,6 @@ pub enum MeshTopologyVariance {
     Heterogeneous,
 }
 
-
 pub struct PolyMesh {
     pub geom_base: GeomBase,
     pub positions: TypedArrayPropertyReader<[f32; 3]>,
@@ -47,8 +46,7 @@ impl PolyMesh {
             velocities,
         })
     }
-    
-    
+
     pub fn sample_count(&self) -> usize {
         self.positions.sample_count()
     }

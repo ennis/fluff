@@ -1,13 +1,13 @@
 //! Illustrates how to embed a custom DXGI swap chain in the element tree.
 use kurbo::{Point, Size};
+use kyute::compositor::ColorType;
+use kyute::element::{HitTestCtx, TreeCtx};
 use kyute::elements::Frame;
+use kyute::layout::{LayoutInput, LayoutOutput};
+use kyute::platform::DxgiVulkanInteropSwapChain;
 use kyute::{application, Element, PaintCtx, Window, WindowOptions};
 use kyute_common::Color;
 use tokio::select;
-use kyute::compositor::ColorType;
-use kyute::element::{HitTestCtx, TreeCtx};
-use kyute::layout::{LayoutInput, LayoutOutput};
-use kyute::platform::DxgiVulkanInteropSwapChain;
 
 struct CustomSwapChainElement {
     device: graal::RcDevice,
@@ -17,14 +17,20 @@ struct CustomSwapChainElement {
 
 impl CustomSwapChainElement {
     fn new(device: graal::RcDevice) -> Self {
-        Self { device, swap_chain: None }
+        Self {
+            device,
+            swap_chain: None,
+        }
     }
 }
 
 impl Element for CustomSwapChainElement {
     fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
         // use the available space
-        Size::new(layout_input.width.available().unwrap_or_default(), layout_input.height.available().unwrap_or_default())
+        Size::new(
+            layout_input.width.available().unwrap_or_default(),
+            layout_input.height.available().unwrap_or_default(),
+        )
     }
 
     fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
@@ -35,7 +41,13 @@ impl Element for CustomSwapChainElement {
 
         if width != 0 && height != 0 {
             // create the swap chain
-            let swap_chain = DxgiVulkanInteropSwapChain::new(self.device.clone(), ColorType::SRGBA8888, width, height, graal::ImageUsage::TRANSFER_DST | graal::ImageUsage::TRANSFER_SRC);
+            let swap_chain = DxgiVulkanInteropSwapChain::new(
+                self.device.clone(),
+                ColorType::SRGBA8888,
+                width,
+                height,
+                graal::ImageUsage::TRANSFER_DST | graal::ImageUsage::TRANSFER_SRC,
+            );
             self.swap_chain = Some(swap_chain);
         }
 
@@ -68,7 +80,6 @@ impl Element for CustomSwapChainElement {
 }
 
 fn main() {
-
     // create the vulkan device and command stream
     let (device, cmd) = graal::create_device_and_command_stream().unwrap();
 

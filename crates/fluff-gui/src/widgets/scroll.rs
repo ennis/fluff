@@ -1,10 +1,10 @@
 //! Scroll views.
 
 use crate::colors::{SCROLL_BAR, SCROLL_BAR_BACKGROUND};
+use kyute::element::TreeCtx;
 use kyute::element::prelude::*;
 use kyute::layout::{Axis, AxisSizeHelper};
 use kyute::{Point, Rect, Size};
-use kyute::element::TreeCtx;
 //const SCROLL_BAR_WIDTH: f64 = 18.0;
 //const SCROLL_BAR_BUTTON_SIZE: f64 = 18.0;
 
@@ -195,7 +195,8 @@ impl Element for ScrollBarBase {
         //ctx.fill_rect(end_button, SCROLL_BAR);
 
         // knob
-        let mut thumb_rect = rect_from_inline_cross(self.direction, self.thumb_pos, 0.0, self.thumb_size, self.cross_size);
+        let mut thumb_rect =
+            rect_from_inline_cross(self.direction, self.thumb_pos, 0.0, self.thumb_size, self.cross_size);
         thumb_rect.x0 += bounds.x0;
         thumb_rect.y0 += bounds.y0;
         thumb_rect.x1 += bounds.x0;

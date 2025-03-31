@@ -87,7 +87,6 @@ pub fn run_after(after: Duration, f: impl FnOnce() + 'static) -> AbortHandle {
     })
 }
 
-
 /// Handler for window events.
 pub trait WindowHandler {
     /// Called by the event loop when a window event is received that targets this window.

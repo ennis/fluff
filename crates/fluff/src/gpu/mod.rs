@@ -4,8 +4,8 @@ mod pipelines;
 
 pub use append_buffer::AppendBuffer;
 pub use pipelines::{
-    create_compute_pipeline, create_primitive_pipeline, set_global_pipeline_macro_definitions, invalidate_pipelines, MeshRenderPipelineDesc,
-    PrimitiveRenderPipelineDesc, Error
+    create_compute_pipeline, create_primitive_pipeline, invalidate_pipelines, set_global_pipeline_macro_definitions,
+    Error, MeshRenderPipelineDesc, PrimitiveRenderPipelineDesc,
 };
 
 use std::cell::{OnceCell, RefCell};

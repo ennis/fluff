@@ -203,7 +203,6 @@ pub struct CompositionBuilder {
 }
 
 impl CompositionBuilder {
-
     /// Creates a new CompositionBuilder, optionally reusing parts of a previous composition.
     ///
     /// TODO: add a way to only recompose a subtree of the previous composition
@@ -233,7 +232,6 @@ impl CompositionBuilder {
         //       It's up to the caller to avoid calling set_bounds in a way that would cause
         //       the picture recorder to be recreated too often.
     }
-
 
     fn insert_layer(&mut self, layer: Layer) -> LayerID {
         let id = self.comp.layers.insert(layer);
@@ -421,7 +419,6 @@ impl CompositionBuilder {
                     return;
                 }
             }
-
 
             // Otherwise, insert a new picture layer.
             let layer = PictureLayer {

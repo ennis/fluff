@@ -16,12 +16,9 @@ thread_local! {
     static APP_BACKEND: OnceCell<&'static ApplicationBackend> = OnceCell::new();
 }
 
-
 pub fn init_application() {
     APP_BACKEND.with(|g| {
-        g.get_or_init(|| {
-            Box::leak(Box::new(ApplicationBackend::new()))
-        });
+        g.get_or_init(|| Box::leak(Box::new(ApplicationBackend::new())));
     });
 }
 
@@ -42,7 +39,6 @@ pub fn double_click_time() -> Duration {
 pub fn caret_blink_time() -> Duration {
     app_backend().get_caret_blink_time()
 }
-
 
 /*
 impl AppGlobals {

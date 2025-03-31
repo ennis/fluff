@@ -1,13 +1,13 @@
-mod xform;
-mod polymesh;
 mod param;
+mod polymesh;
+mod xform;
 
 use crate::CompoundPropertyReader;
 use crate::property::TypedScalarPropertyReader;
 
-pub use xform::{XForm};
-pub use polymesh::{PolyMesh, MeshTopologyVariance};
 pub use param::{GeomParam, GeometryScope};
+pub use polymesh::{MeshTopologyVariance, PolyMesh};
+pub use xform::XForm;
 
 pub struct GeomBase {
     pub self_bounds: TypedScalarPropertyReader<[f64; 6]>,

@@ -7,8 +7,8 @@ mod render;
 
 use graal::Buffer;
 
-pub use render::{SceneRenderItem, SceneRenderVisitor};
 pub use debug_render::DebugRenderVisitor;
+pub use render::{SceneRenderItem, SceneRenderVisitor};
 
 /// Vertex attribute of a 3D mesh.
 ///
@@ -74,8 +74,8 @@ impl Scene3D {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use crate::gpu;
+    use std::path::Path;
 
     #[test]
     fn load_alembic() {

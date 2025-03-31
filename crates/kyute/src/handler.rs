@@ -1,10 +1,8 @@
-use std::{
-    cell::{Cell, RefCell},
-    future::poll_fn,
-    task::{Poll, Waker},
-};
-use scopeguard::{guard};
+use scopeguard::guard;
 use slab::Slab;
+use std::cell::{Cell, RefCell};
+use std::future::poll_fn;
+use std::task::{Poll, Waker};
 
 struct Listener {
     notified: bool,
@@ -17,7 +15,6 @@ struct HandlerInner<T: Clone + ?Sized> {
     value: Option<T>,
 }
 
-
 /// Event handlers.
 pub struct Handler<T: Clone + ?Sized> {
     /// The number of listeners that have been notified, but have not yet processed the value.
@@ -25,8 +22,7 @@ pub struct Handler<T: Clone + ?Sized> {
     inner: RefCell<HandlerInner<T>>,
 }
 
-impl<T: Clone> Default for Handler<T>
-{
+impl<T: Clone> Default for Handler<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -94,9 +90,8 @@ impl<T: Clone> Handler<T> {
                 Poll::Ready(())
             }
         })
-            .await;
+        .await;
     }
-
 
     fn ack(&self, inner: &mut HandlerInner<T>) {
         self.ack_remaining.set(self.ack_remaining.get() - 1);
@@ -133,10 +128,10 @@ impl<T: Clone> Handler<T> {
                 Poll::Pending
             }
         })
-            .await.unwrap()
+        .await
+        .unwrap()
     }
 }
-
 
 //inner.listeners.remove(slot);
 // Acknowledge one listener

@@ -1,11 +1,11 @@
-use glam::{vec2, DVec4, Vec3};
-use graal::{BufferUsage, RcDevice, MemoryLocation};
-use houdinio::Geo;
 use crate::gpu;
 use crate::gpu::AppendBuffer;
 use crate::overlay::CubicBezierSegment;
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex};
-use crate::util::{lagrange_interpolate_4};
+use crate::util::lagrange_interpolate_4;
+use glam::{vec2, DVec4, Vec3};
+use graal::{BufferUsage, MemoryLocation, RcDevice};
+use houdinio::Geo;
 
 /// Represents a range of curves in the curve buffer.
 #[derive(Copy, Clone, Debug)]
@@ -80,17 +80,11 @@ pub fn load_stroke_animation_data(geo_files: &[Geo]) -> Scene {
 
     // Curve buffer: contains (start, end) pairs of curves in the point buffer
 
-    let mut position_buffer = AppendBuffer::with_capacity(
-        BufferUsage::STORAGE_BUFFER,
-        MemoryLocation::CpuToGpu,
-        point_count,
-    );
+    let mut position_buffer =
+        AppendBuffer::with_capacity(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, point_count);
     position_buffer.set_name("control point buffer");
-    let mut curve_buffer = AppendBuffer::with_capacity(
-        BufferUsage::STORAGE_BUFFER,
-        MemoryLocation::CpuToGpu,
-        curve_count,
-    );
+    let mut curve_buffer =
+        AppendBuffer::with_capacity(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu, curve_count);
     curve_buffer.set_name("curve buffer");
 
     let mut stroke_vertex_buffer = AppendBuffer::new(BufferUsage::STORAGE_BUFFER, MemoryLocation::CpuToGpu);

@@ -100,24 +100,30 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
             .element
-            .measure(ctx, &LayoutInput::from_logical(
-                main_axis,
-                main_size_constraint,
-                cross_size_constraint,
-                parent_main,
-                parent_cross,
-            ))
+            .measure(
+                ctx,
+                &LayoutInput::from_logical(
+                    main_axis,
+                    main_size_constraint,
+                    cross_size_constraint,
+                    parent_main,
+                    parent_cross,
+                ),
+            )
             .main_cross(main_axis);
         // also measure the max width so that we know how much it can grow
         let max_item_main = child
             .element
-            .measure(ctx, &LayoutInput::from_logical(
-                main_axis,
-                SizeConstraint::MAX,
-                cross_size_constraint,
-                parent_main,
-                parent_cross,
-            ))
+            .measure(
+                ctx,
+                &LayoutInput::from_logical(
+                    main_axis,
+                    SizeConstraint::MAX,
+                    cross_size_constraint,
+                    parent_main,
+                    parent_cross,
+                ),
+            )
             .axis(main_axis);
 
         item_main_total += item_main;
@@ -149,9 +155,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     margin_main_total += margins[child_count].size;
     flex_sum += margins[child_count].flex;
 
-    trace!(
-        "After first flex pass: margin_main_total: {margin_main_total}, flex_sum: {flex_sum}",
-    );
+    trace!("After first flex pass: margin_main_total: {margin_main_total}, flex_sum: {flex_sum}",);
 
     // ======
     // ====== Try to shrink children if it overflows ======
@@ -159,7 +163,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
 
     // If it overflows, we need to shrink by taking space from children
     if item_main_total + margin_main_total > main_max {
-
         // how much space we still need to reclaim
         let mut still_to_reclaim = (item_main_total + margin_main_total) - main_max;
         let mut new_main_total = 0.;
@@ -169,13 +172,16 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             let shrink = still_to_reclaim / (child_count - i) as f64;
             let (item_main, item_cross) = children[i]
                 .element
-                .measure(ctx, &LayoutInput::from_logical(
-                    main_axis,
-                    SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
-                    cross_size_constraint,
-                    parent_main,
-                    parent_cross,
-                ))
+                .measure(
+                    ctx,
+                    &LayoutInput::from_logical(
+                        main_axis,
+                        SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
+                        cross_size_constraint,
+                        parent_main,
+                        parent_cross,
+                    ),
+                )
                 .main_cross(main_axis);
             let actual_shrink = measures[i].main - item_main;
             measures[i].main = item_main;
@@ -188,10 +194,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             warn!("flex container overflow");
         }
 
-
-        trace!(
-            "After flex shrinkage: item_main_total: {item_main_total}, flex_sum: {flex_sum}",
-        );
+        trace!("After flex shrinkage: item_main_total: {item_main_total}, flex_sum: {flex_sum}",);
 
         item_main_total = new_main_total;
     }
@@ -272,13 +275,16 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             // Concrete example: text elements
             measures[i].cross = child
                 .element
-                .measure(ctx, &LayoutInput::from_logical(
-                    main_axis,
-                    measures[i].main.into(),
-                    cross_size_constraint,
-                    parent_main,
-                    parent_cross,
-                ))
+                .measure(
+                    ctx,
+                    &LayoutInput::from_logical(
+                        main_axis,
+                        measures[i].main.into(),
+                        cross_size_constraint,
+                        parent_main,
+                        parent_cross,
+                    ),
+                )
                 .axis(cross_axis);
         }
 
@@ -293,9 +299,10 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
 
         if child.cross_axis_alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
-            let layout = child
-                .element
-                .layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+            let layout = child.element.layout(
+                ctx,
+                Size::from_main_cross(main_axis, measures[i].main, measures[i].cross),
+            );
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
@@ -321,9 +328,10 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     for (i, child) in children.iter().enumerate() {
         // TODO don't layout again if we already have the layout (the child may be already laid out
         // due to baseline alignment)
-        child_layouts[i] = child
-            .element
-            .layout(ctx, Size::from_main_cross(main_axis, measures[i].main, measures[i].cross));
+        child_layouts[i] = child.element.layout(
+            ctx,
+            Size::from_main_cross(main_axis, measures[i].main, measures[i].cross),
+        );
     }
 
     trace!(

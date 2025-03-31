@@ -46,10 +46,13 @@ pub type SampleIndex = usize;
 
 // Reexports
 pub use archive::{Archive, TimeSampling};
+pub use data_type::DataType;
 pub use metadata::Metadata;
 pub use object::ObjectReader;
-pub use data_type::DataType;
-pub use property::{ArrayPropertyReader, CompoundPropertyReader, NDArraySample, PropertyType, ScalarPropertyReader, TypedArrayPropertyReader, TypedScalarPropertyReader};
+pub use property::{
+    ArrayPropertyReader, CompoundPropertyReader, NDArraySample, PropertyType, ScalarPropertyReader,
+    TypedArrayPropertyReader, TypedScalarPropertyReader,
+};
 
 // Q: should reader objects keep a reference to the archive?
 // Options:
@@ -137,8 +140,11 @@ mod tests {
         let root = archive.root().unwrap();
         // "/GEO-ellie_fannypack_strap_end_001/Data_GEO-ellie_fannypack_strap_end"
         let mesh = PolyMesh::new(
-            root.get("GEO-ellie_fannypack_strap_end_001").unwrap()
-                .get("Data_GEO-ellie_fannypack_strap_end").unwrap().properties(),
+            root.get("GEO-ellie_fannypack_strap_end_001")
+                .unwrap()
+                .get("Data_GEO-ellie_fannypack_strap_end")
+                .unwrap()
+                .properties(),
             ".geom",
         )
         .unwrap();
@@ -151,8 +157,8 @@ mod tests {
             //let indices = mesh.face_indices.get(s).unwrap();
             //assert_eq!(indices.dimensions.len(), 1);
             //let counts = mesh.face_counts.get(s).unwrap();
-           // assert_eq!(counts.dimensions.len(), 1);
-            
+            // assert_eq!(counts.dimensions.len(), 1);
+
             let face_counts = mesh.face_counts.get(0);
 
             eprintln!("counts={:?}", face_counts);

@@ -1,2 +1,1 @@
 //! F-curve widget base
-

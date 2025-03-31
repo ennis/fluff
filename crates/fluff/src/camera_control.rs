@@ -1,7 +1,8 @@
-use std::{f32::consts::PI, f64::consts::TAU};
 use std::cell::Cell;
+use std::f32::consts::PI;
+use std::f64::consts::TAU;
 
-use glam::{dvec2, DVec2, DVec3, dvec3, Mat4, vec3, Vec3, Vec3Swizzles, Vec4Swizzles};
+use glam::{dvec2, dvec3, vec3, DVec2, DVec3, Mat4, Vec3, Vec3Swizzles, Vec4Swizzles};
 use tracing::debug;
 use winit::event::MouseButton;
 
@@ -134,8 +135,14 @@ struct CameraFrame {
 #[derive(Copy, Clone, Debug)]
 enum CameraInputMode {
     None,
-    Pan { anchor_screen: DVec2, orig_frame: CameraFrame },
-    Tumble { anchor_screen: DVec2, orig_frame: CameraFrame },
+    Pan {
+        anchor_screen: DVec2,
+        orig_frame: CameraFrame,
+    },
+    Tumble {
+        anchor_screen: DVec2,
+        orig_frame: CameraFrame,
+    },
 }
 
 /// A camera controller that generates `Camera` instances.
@@ -233,7 +240,10 @@ impl CameraControl {
                                 orig_frame: self.frame,
                             };
                         }
-                        CameraInputMode::Pan { orig_frame, anchor_screen } if !pressed => {
+                        CameraInputMode::Pan {
+                            orig_frame,
+                            anchor_screen,
+                        } if !pressed => {
                             self.handle_pan(&orig_frame, pos - anchor_screen);
                             self.input_mode = CameraInputMode::None;
                         }
@@ -250,7 +260,10 @@ impl CameraControl {
                                 orig_frame: self.frame,
                             };
                         }
-                        CameraInputMode::Tumble { orig_frame, anchor_screen } if !pressed => {
+                        CameraInputMode::Tumble {
+                            orig_frame,
+                            anchor_screen,
+                        } if !pressed => {
                             self.handle_tumble(&orig_frame, anchor_screen, pos);
                             self.input_mode = CameraInputMode::None;
                         }
@@ -275,10 +288,16 @@ impl CameraControl {
     pub fn cursor_moved(&mut self, position: DVec2) {
         self.cursor_pos = Some(position);
         match self.input_mode {
-            CameraInputMode::Tumble { orig_frame, anchor_screen } => {
+            CameraInputMode::Tumble {
+                orig_frame,
+                anchor_screen,
+            } => {
                 self.handle_tumble(&orig_frame, anchor_screen, position);
             }
-            CameraInputMode::Pan { orig_frame, anchor_screen } => {
+            CameraInputMode::Pan {
+                orig_frame,
+                anchor_screen,
+            } => {
                 self.handle_pan(&orig_frame, position - anchor_screen);
             }
             _ => {}
@@ -315,7 +334,11 @@ impl CameraControl {
 
     /// Returns the look-at matrix
     fn get_look_at(&self) -> Mat4 {
-        Mat4::look_at_rh(self.frame.eye.as_vec3(), self.frame.center.as_vec3(), self.frame.up.as_vec3())
+        Mat4::look_at_rh(
+            self.frame.eye.as_vec3(),
+            self.frame.center.as_vec3(),
+            self.frame.up.as_vec3(),
+        )
     }
 
     /// Returns a `Camera` for the current viewpoint.

@@ -1,16 +1,16 @@
+use crate::colors;
 use crate::colors::{DISPLAY_TEXT, STATIC_TEXT};
 use kyute::text::{FontStretch, FontStyle, FontWeight, TextStyle};
-use std::borrow::Cow;
 use kyute::{PaintCtx, Rect};
-use crate::colors;
+use std::borrow::Cow;
 
 pub mod button;
-pub mod spinner;
-pub mod slider;
 mod fcurve;
 mod gradient;
 pub mod menu;
 pub mod scroll;
+pub mod slider;
+pub mod spinner;
 pub mod uniform_grid;
 
 /// Standard line height for widgets

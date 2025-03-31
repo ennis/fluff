@@ -16,7 +16,6 @@ fn main() {
             },
             root,
         );
-        
 
         loop {
             select! {

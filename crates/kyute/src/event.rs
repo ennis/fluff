@@ -140,13 +140,13 @@ impl PointerEvent {
 
     // Local position
     //pub fn local_position(&self) -> Point {
-     //   self.transform.inverse() * self.position
+    //   self.transform.inverse() * self.position
     //}
 
     //pub fn local_position_with_offset(&self, offset: Vec2) -> Point {
     //    self.transform.inverse() * (self.position - offset)
     //}
-//
+    //
     //pub fn transformed(self, transform: Affine) -> PointerEvent {
     //    let transform = self.transform * transform;
     //    PointerEvent { transform, ..self }
@@ -170,14 +170,8 @@ pub struct KeyboardEvent {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ScrollDelta {
-    Lines {
-        x: f64,
-        y: f64,
-    },
-    Pixels {
-        x: f64,
-        y: f64,
-    }
+    Lines { x: f64, y: f64 },
+    Pixels { x: f64, y: f64 },
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -221,19 +215,19 @@ impl Event {
     //        p.transform = *transform;
     //    }
     //}
-//
-   //pub fn with_offset<R>(&mut self, offset: Vec2, f: impl FnOnce(&mut Event) -> R) -> R {
-   //    self.with_transform(&Affine::translate(offset), f)
-   //}
+    //
+    //pub fn with_offset<R>(&mut self, offset: Vec2, f: impl FnOnce(&mut Event) -> R) -> R {
+    //    self.with_transform(&Affine::translate(offset), f)
+    //}
 
-   //pub fn with_transform<R>(&mut self, transform: &Affine, f: impl FnOnce(&mut Event) -> R) -> R {
-   //    let prev_transform = self.append_transform(transform);
-   //    let r = f(self);
-   //    if let Some(prev_transform) = prev_transform {
-   //        self.set_transform(&prev_transform);
-   //    }
-   //    r
-   //}
+    //pub fn with_transform<R>(&mut self, transform: &Affine, f: impl FnOnce(&mut Event) -> R) -> R {
+    //    let prev_transform = self.append_transform(transform);
+    //    let r = f(self);
+    //    if let Some(prev_transform) = prev_transform {
+    //        self.set_transform(&prev_transform);
+    //    }
+    //    r
+    //}
 
     /// Returns the pointer event if this is a pointer event.
     pub fn pointer_event(&self) -> Option<&PointerEvent> {

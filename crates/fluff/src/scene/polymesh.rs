@@ -166,7 +166,7 @@ impl HalfEdgeMesh {
             half_edges,
         }
     }
-    
+
     fn dump(&self) {
         for (i, v) in self.vertices.iter().enumerate() {
             println!("v[{}]: {:?}", i, v.coordinates);
@@ -194,11 +194,13 @@ mod tests {
         let obj_data = obj::ObjData::load_buf(&obj_data[..]).unwrap();
         for object in obj_data.objects.iter() {
             for group in object.groups.iter() {
-                let indices = group.polys.iter().map(|p| p.0.iter().map(|obj::IndexTuple(i,_,_)| *i as u32)).flatten().collect::<Vec<_>>();
-                let mesh = HalfEdgeMesh::from_indexed_triangle_mesh(
-                    &obj_data.position,
-                    &indices,
-                );
+                let indices = group
+                    .polys
+                    .iter()
+                    .map(|p| p.0.iter().map(|obj::IndexTuple(i, _, _)| *i as u32))
+                    .flatten()
+                    .collect::<Vec<_>>();
+                let mesh = HalfEdgeMesh::from_indexed_triangle_mesh(&obj_data.position, &indices);
                 mesh.dump();
             }
         }

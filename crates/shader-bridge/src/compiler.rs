@@ -1,10 +1,10 @@
 //! Shader compilation utilities.
 
+use slang::Downcast;
 use std::cell::OnceCell;
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt;
-use slang::Downcast;
 use std::path::Path;
 
 /// The profile with which to compile the shaders.
@@ -25,7 +25,11 @@ fn get_slang_global_session() -> slang::GlobalSession {
     })
 }
 
-pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path], macro_definitions: &[(&str, &str)]) -> slang::Session {
+pub(crate) fn create_session(
+    profile_id: &str,
+    search_paths: &[&Path],
+    macro_definitions: &[(&str, &str)],
+) -> slang::Session {
     let global_session = get_slang_global_session();
 
     let mut search_paths_cstr = vec![];
@@ -33,7 +37,6 @@ pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path], macro_def
         search_paths_cstr.push(CString::new(path.to_str().unwrap()).unwrap());
     }
     let search_path_ptrs = search_paths_cstr.iter().map(|p| p.as_ptr()).collect::<Vec<_>>();
-
 
     let profile = global_session.find_profile(profile_id);
     let mut compiler_options = slang::CompilerOptions::default()
@@ -43,23 +46,25 @@ pub(crate) fn create_session(profile_id: &str, search_paths: &[&Path], macro_def
         .vulkan_use_entry_point_name(true)
         .profile(profile);
 
-    for (k,v) in macro_definitions {
-        compiler_options = compiler_options.macro_define(k,v);
+    for (k, v) in macro_definitions {
+        compiler_options = compiler_options.macro_define(k, v);
     }
 
-    let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Spirv).options(&compiler_options);
+    let target_desc = slang::TargetDesc::default()
+        .format(slang::CompileTarget::Spirv)
+        .options(&compiler_options);
     let targets = [target_desc];
 
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
-        .search_paths(&search_path_ptrs).options(&compiler_options);
+        .search_paths(&search_path_ptrs)
+        .options(&compiler_options);
 
     let session = global_session
         .create_session(&session_desc)
         .expect("failed to create session");
     session
 }
-
 
 /// Compilation error.
 #[derive(Debug)]
@@ -103,13 +108,15 @@ impl From<std::io::Error> for CompilationError {
     }
 }
 
-
 pub(crate) fn convert_spirv_u8_to_u32(bytes: &[u8]) -> Vec<u32> {
     assert!(bytes.len() % 4 == 0, "invalid SPIR-V code length");
-    bytes.chunks_exact(4).map(|chunk| {
-        let bytes: [u8;4] = chunk.try_into().unwrap();
-        u32::from_ne_bytes(bytes)
-    }).collect::<Vec<u32>>()
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| {
+            let bytes: [u8; 4] = chunk.try_into().unwrap();
+            u32::from_ne_bytes(bytes)
+        })
+        .collect::<Vec<u32>>()
 }
 
 /// Compiles a shader module to SPIR-V.
@@ -124,12 +131,11 @@ pub fn compile_shader_module(
     path: &Path,
     search_paths: &[&Path],
     macro_definitions: &[(&str, &str)],
-    entry_point_name: &str) -> Result<Vec<u32>, CompilationError>
-{
+    entry_point_name: &str,
+) -> Result<Vec<u32>, CompilationError> {
     let path = path.canonicalize()?;
     let session = create_session(SHADER_PROFILE, search_paths, macro_definitions);
-    let module = session
-        .load_module(path.to_str().unwrap())?;
+    let module = session.load_module(path.to_str().unwrap())?;
     let entry_point = module
         .find_entry_point_by_name(entry_point_name)
         .ok_or_else(|| CompilationError::EntryPointNotFound(entry_point_name.to_string()))?;

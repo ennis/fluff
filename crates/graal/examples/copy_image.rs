@@ -1,16 +1,16 @@
 use image::DynamicImage;
-use std::{path::Path, ptr, time::Duration};
+use std::path::Path;
+use std::ptr;
+use std::time::Duration;
 
 use raw_window_handle::HasWindowHandle;
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::EventLoop,
-    window::WindowBuilder,
-};
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::EventLoop;
+use winit::window::WindowBuilder;
 
 use graal::{
     vk, BufferUsage, CommandStream, Image, ImageCopyBuffer, ImageCopyView, ImageCreateInfo, ImageDataLayout,
-    ImageSubresourceLayers, ImageType, ImageUsage, MemoryLocation, Point3D, Rect3D,
+    ImageSubresourceLayers, ImageType, ImageUsage, MemoryLocation, Point3D, Rect3D, SemaphoreWait,
 };
 
 fn load_image(cmd: &mut CommandStream, path: impl AsRef<Path>, usage: ImageUsage) -> Image {
@@ -97,8 +97,7 @@ fn main() {
 
     let surface = graal::get_vulkan_surface(window.window_handle().unwrap().as_raw());
 
-    let (device, mut cmd) =
-        unsafe { graal::create_device_and_command_stream_with_surface(Some(surface)).expect("failed to create device") };
+    let device = unsafe { graal::create_device_with_surface(Some(surface)).expect("failed to create device") };
     let surface_format = unsafe { device.get_preferred_surface_format(surface) };
     let window_size = window.inner_size();
     let mut swapchain =
@@ -119,19 +118,14 @@ fn main() {
                     },
                     WindowEvent::RedrawRequested => unsafe {
                         // SAFETY: swapchain is valid
-                        let swapchain_image = cmd.acquire_next_swapchain_image(&swapchain, Duration::from_millis(100));
+                        let (swapchain_image, swapchain_ready) = device
+                            .acquire_next_swapchain_image(&swapchain, Duration::from_millis(100))
+                            .unwrap();
 
-                        let swapchain_image = match swapchain_image {
-                            Ok(image) => image,
-                            Err(err) => {
-                                eprintln!("vkAcquireNextImage failed: {}", err);
-                                return;
-                            }
-                        };
-
+                        let mut cmd = device.create_command_stream();
                         let image = load_image(
                             &mut cmd,
-                            "data/yukari.png",
+                            "crates/graal/examples/yukari.png",
                             ImageUsage::TRANSFER_SRC | ImageUsage::SAMPLED,
                         );
 
@@ -172,7 +166,7 @@ fn main() {
                             vk::Filter::NEAREST,
                         );
 
-                        cmd.present(&swapchain_image).unwrap();
+                        cmd.present(&[swapchain_ready.wait()], &swapchain_image).unwrap();
                         device.cleanup();
                     },
                     _ => {}

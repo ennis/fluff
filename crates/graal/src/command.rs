@@ -1,8 +1,6 @@
 use std::ffi::{c_char, c_void, CString};
-use std::mem::MaybeUninit;
+use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ops::Deref;
-use std::sync::Arc;
-use std::time::Duration;
 use std::{mem, ptr};
 
 use ash::prelude::VkResult;
@@ -11,10 +9,10 @@ use fxhash::FxHashMap;
 pub use compute::ComputeEncoder;
 pub use render::{RenderEncoder, RenderPassInfo};
 
-use crate::device::{ActiveSubmission, QueueShared};
+use crate::device::ActiveSubmission;
 use crate::{
     aspects_for_format, vk, vk_ext_debug_utils, BufferAccess, BufferUntyped, CommandPool, Descriptor, GpuResource,
-    Image, ImageAccess, ImageId, MemoryAccess, RcDevice, Swapchain, SwapchainImage,
+    Image, ImageAccess, ImageId, MemoryAccess, RcDevice, SwapchainImage,
 };
 
 mod blit;
@@ -126,15 +124,8 @@ impl Barrier {
 pub struct CommandStream {
     pub(crate) device: RcDevice,
     /// The queue on which we're submitting work.
-    ///
-    /// NOTE: for now, and most likely for the foreseeable future, we assume that
-    /// there's only one command stream, so we can assume that we have exclusive access to
-    /// the queue.
-    queue: Arc<QueueShared>,
-    command_pool: CommandPool,
+    command_pool: ManuallyDrop<CommandPool>,
     submission_index: u64,
-    /// Binary semaphores for which we've submitted a wait operation.
-    semaphores: Vec<UnsignaledSemaphore>,
     /// Command buffers waiting to be submitted.
     command_buffers_to_submit: Vec<vk::CommandBuffer>,
     /// Current command buffer.
@@ -147,6 +138,7 @@ pub struct CommandStream {
     seen_initial_barrier: bool,
     //initial_writes: MemoryAccess,
     initial_access: MemoryAccess,
+    submitted: bool,
 }
 
 pub(crate) struct CommandBufferImageState {
@@ -155,18 +147,27 @@ pub(crate) struct CommandBufferImageState {
     pub last_access: MemoryAccess,
 }
 
-/// Describes how a resource will be used during a render or compute pass.
+/// A wrapper around a signaled binary semaphore.
 ///
-/// For now this library deals only with whole resources.
-#[derive(Clone)]
-pub enum ResourceUse<'a> {
-    Image(&'a Image, ImageAccess),
-    Buffer(&'a BufferUntyped, BufferAccess),
-}
+/// This should be used in a wait operation, otherwise the semaphore will be leaked.
+#[derive(Debug)]
+pub struct SignaledSemaphore(pub(crate) vk::Semaphore);
 
-// A wrapper around a signaled binary semaphore.
-//#[derive(Debug)]
-//pub struct SignaledSemaphore(pub(crate) vk::Semaphore);
+impl SignaledSemaphore {
+    pub fn wait(self) -> SemaphoreWait {
+        self.wait_dst_stage(vk::PipelineStageFlags::ALL_COMMANDS)
+    }
+
+    pub fn wait_dst_stage(self, dst_stage: vk::PipelineStageFlags) -> SemaphoreWait {
+        SemaphoreWait {
+            kind: SemaphoreWaitKind::Binary {
+                semaphore: self.0,
+                transfer_ownership: true,
+            },
+            dst_stage,
+        }
+    }
+}
 
 /// A wrapper around an unsignaled binary semaphore.
 #[derive(Debug)]
@@ -228,20 +229,23 @@ pub enum SemaphoreSignal {
 }
 
 impl CommandStream {
-    pub(super) fn new(device: RcDevice, command_pool: CommandPool, queue: Arc<QueueShared>) -> CommandStream {
-        //let submission_index = device.inner.tracker.lock().
+    pub(super) fn new(device: RcDevice) -> CommandStream {
+        let submission_index = device
+            .next_submission_index
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let command_pool = device.get_or_create_command_pool(device.queue_family);
+
         CommandStream {
             device,
-            queue,
-            command_pool,
-            submission_index: 1,
-            semaphores: vec![],
+            command_pool: ManuallyDrop::new(command_pool),
+            submission_index,
             command_buffers_to_submit: vec![],
             command_buffer: None,
             tracked_images: Default::default(),
             seen_initial_barrier: false,
             initial_access: MemoryAccess::empty(),
             tracked_writes: MemoryAccess::empty(),
+            submitted: false,
         }
     }
 
@@ -557,80 +561,6 @@ impl CommandStream {
         resource.set_last_submission_index(self.submission_index);
     }
 
-    /// Creates a new, or returns an existing, binary semaphore that is in the unsignaled state,
-    /// or for which we've submitted a wait operation on this queue and that will eventually be unsignaled.
-    pub fn get_or_create_semaphore(&mut self) -> UnsignaledSemaphore {
-        // Try to recycle one
-        if let Some(semaphore) = self.semaphores.pop() {
-            return semaphore;
-        }
-
-        // Otherwise create a new one
-        unsafe {
-            let create_info = vk::SemaphoreCreateInfo { ..Default::default() };
-            UnsignaledSemaphore(
-                self.device
-                    .raw()
-                    .create_semaphore(&create_info, None)
-                    .expect("vkCreateSemaphore failed"),
-            )
-        }
-    }
-
-    /*pub fn use_image(&mut self, image: &Image, access: ImageAccess) {
-        self.reference_resource(image);
-        let id = image.id();
-        if let Some(entry) = self.tracked_images.get_mut(&id) {
-            if entry.last_state != access || !access.all_ordered() {
-                self.pending_image_barriers.push(make_image_barrier(
-                    entry.handle,
-                    entry.format,
-                    entry.last_state,
-                    access,
-                ));
-            }
-            entry.last_state = access;
-        } else {
-            self.tracked_images.insert(
-                id,
-                CommandBufferImageState {
-                    image: image.clone(),
-                    handle: image.handle,
-                    format: image.format,
-                    first_layout: access,
-                    last_state: access,
-                },
-            );
-        }
-    }
-
-    pub fn use_buffer(&mut self, buffer: &BufferUntyped, access: BufferAccess) {
-        self.reference_resource(buffer);
-        let id = buffer.id();
-        if let Some(entry) = self.tracked_buffers.get_mut(&id) {
-            if entry.last_state != access || !access.all_ordered() {
-                self.pending_buffer_barriers
-                    .push(make_buffer_barrier(entry.handle, entry.last_state, access));
-            }
-            entry.last_state = access;
-        } else {
-            self.tracked_buffers.insert(
-                id,
-                CommandBufferBufferState {
-                    buffer: buffer.clone(),
-                    handle: buffer.handle,
-                    first_state: access,
-                    last_state: access,
-                },
-            );
-        }
-    }*/
-
-    /*pub fn use_image_view(&mut self, image_view: &ImageView, state: ImageAccess) {
-        self.reference_resource(image_view);
-        //self.use_image(image_view.image(), state);
-    }*/
-
     pub(crate) fn create_command_buffer_raw(&mut self) -> vk::CommandBuffer {
         let raw_device = self.device.raw();
         let cb = self.command_pool.alloc(raw_device);
@@ -650,18 +580,6 @@ impl CommandStream {
         }
         cb
     }
-
-    /*
-    unsafe fn set_current_command_buffer(&mut self, command_buffer: vk::CommandBuffer) {
-        /*unsafe {
-            self.device.raw().end_command_buffer(command_buffer).unwrap();
-        }*/
-        assert!(
-            self.command_buffer.is_none(),
-            "there is already a current command buffer"
-        );
-        self.command_buffer = Some(command_buffer);
-    }*/
 
     /// Returns the current command buffer, creating a new one if necessary.
     ///
@@ -688,153 +606,50 @@ impl CommandStream {
         }
     }
 
-    /*/// Emits all pending pipeline barriers to the current command buffer,
-    /// and clears the list of pending barriers.
-    ///
-    /// This is typically called before a draw or dispatch command.
-    pub(crate) fn flush_barriers(&mut self) {
-
-        /*if self.pending_image_barriers.is_empty() && self.pending_buffer_barriers.is_empty() {
-            return;
-        }*/
-
-        if self.pending_image_barriers.is_empty() && self.pending_barrier.dst_stage_mask == vk::PipelineStageFlags::NONE && self.pending_barrier.dst_access_mask == vk::AccessFlags::empty() {
-            return;
-        }
-
-        let command_buffer = self.get_or_create_command_buffer();
-        // SAFETY: barriers are sound, the command buffer is valid, and the raw pointers are valid
-        unsafe {
-            self.device.cmd_pipeline_barrier2(
-                command_buffer,
-                &vk::DependencyInfo {
-                    dependency_flags: Default::default(),
-                    memory_barrier_count: 0,
-                    p_memory_barriers: ptr::null(),
-                    buffer_memory_barrier_count: self.pending_buffer_barriers.len() as u32,
-                    p_buffer_memory_barriers: self.pending_buffer_barriers.as_ptr(),
-                    image_memory_barrier_count: self.pending_image_barriers.len() as u32,
-                    p_image_memory_barriers: self.pending_image_barriers.as_ptr(),
-                    ..Default::default()
-                },
-            );
-        }
-        self.pending_buffer_barriers.clear();
-        self.pending_image_barriers.clear();
-    }*/
-
-    /// Acquires the next image in a swapchain.
-    pub unsafe fn acquire_next_swapchain_image(
-        &mut self,
-        swapchain: &Swapchain,
-        timeout: Duration,
-    ) -> Result<SwapchainImage, vk::Result> {
-        // We can't use `get_or_create_semaphore` because according to the spec the semaphore
-        // passed to `vkAcquireNextImage` must not have any pending operations, whereas
-        // `get_or_create_semaphore` only guarantees that a wait operation has been submitted
-        // on the semaphore (not that the wait has completed).
-        let semaphore = {
-            self.device
-                .raw
-                .create_semaphore(&vk::SemaphoreCreateInfo { ..Default::default() }, None)
-                .expect("vkCreateSemaphore failed")
-        };
-        let (image_index, _suboptimal) = match self.device.khr_swapchain().acquire_next_image(
-            swapchain.handle,
-            timeout.as_nanos() as u64,
-            semaphore,
-            vk::Fence::null(),
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                // delete the semaphore before returning
-                unsafe {
-                    self.device.raw.destroy_semaphore(semaphore, None);
-                }
-                return Err(err);
-            }
-        };
-
-        // Schedule deletion of the semaphore after the wait is over
-        self.device.call_later(self.submission_index, {
-            let device = self.device.clone();
-            move || {
-                // SAFETY: the semaphore is not used after this point
-                unsafe {
-                    device.raw.destroy_semaphore(semaphore, None);
-                }
-            }
-        });
-
-        // Wait for the image to be available.
-        self.flush(
-            &[SemaphoreWait {
-                kind: SemaphoreWaitKind::Binary {
-                    semaphore,
-                    transfer_ownership: false,
-                },
-                // This is overly pessimistic, but we don't know what the user will do with the image at this point.
-                dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
-            }],
-            &[],
-        )?;
-
-        // FIXME: why not register swapchain images once when creating the swap chain?
-        let handle = swapchain.images[image_index as usize];
-        let image =
-            self.device
-                .register_swapchain_image(handle, swapchain.format.format, swapchain.width, swapchain.height);
-
-        Ok(SwapchainImage {
-            swapchain: swapchain.handle,
-            image,
-            index: image_index,
-        })
-    }
-
-    pub fn present(&mut self, swapchain_image: &SwapchainImage) -> VkResult<bool> {
+    /// Finishes recording the current command buffer and presents the swapchain image.
+    pub fn present(mut self, waits: &[SemaphoreWait], swapchain_image: &SwapchainImage) -> VkResult<bool> {
         self.barrier(Barrier::new().present(&swapchain_image.image));
 
-        // Signal a semaphore when rendering is finished
-        let render_finished = self.get_or_create_semaphore().0;
-        unsafe {
-            self.device
-                .set_object_name(render_finished, "render finished semaphore");
-        }
+        let device = self.device.clone();
+
         self.flush(
-            &[],
+            waits,
             &[SemaphoreSignal::Binary {
-                semaphore: render_finished,
+                semaphore: swapchain_image.render_finished,
             }],
         )?;
 
-        // present the swapchain image
-        let present_info = vk::PresentInfoKHR {
-            wait_semaphore_count: 1,
-            p_wait_semaphores: &render_finished,
-            swapchain_count: 1,
-            p_swapchains: &swapchain_image.swapchain,
-            p_image_indices: &swapchain_image.index,
-            p_results: ptr::null_mut(),
-            ..Default::default()
-        };
-
         // SAFETY: ???
-        let result = unsafe {
-            self.device
-                .khr_swapchain()
-                .queue_present(self.queue.queue, &present_info)
-        };
-
-        // we signalled and waited on the semaphore, consider it consumed
-        self.semaphores.push(UnsignaledSemaphore(render_finished));
-        result
+        unsafe {
+            device.khr_swapchain().queue_present(
+                device.queue,
+                &vk::PresentInfoKHR {
+                    wait_semaphore_count: 1,
+                    p_wait_semaphores: &swapchain_image.render_finished,
+                    swapchain_count: 1,
+                    p_swapchains: &swapchain_image.swapchain,
+                    p_image_indices: &swapchain_image.index,
+                    p_results: ptr::null_mut(),
+                    ..Default::default()
+                },
+            )
+        }
     }
 
-    pub fn flush(&mut self, waits: &[SemaphoreWait], signals: &[SemaphoreSignal]) -> VkResult<()> {
-        // Close the current command buffer if there is one
+    /// FIXME: this should acquire ownership of semaphores in `waits`
+    ///        but then we won't be able to pass a slice
+    pub fn flush(mut self, waits: &[SemaphoreWait], signals: &[SemaphoreSignal]) -> VkResult<()> {
+        assert!(!self.submitted);
+        assert_eq!(
+            self.device.expected_submission_index.get(),
+            self.submission_index,
+            "CommandStream submitted out of order"
+        );
+
+        // finish recording the current command buffer
         self.close_command_buffer();
 
+        // lock device tracker while we're submitting
         let mut tracker = self.device.tracker.lock().unwrap();
 
         // The complete list of command buffers to submit, including fixup command buffers between the ones passed to this function.
@@ -883,19 +698,17 @@ impl CommandStream {
             }
 
             tracker.writes = self.tracked_writes;
-            self.tracked_writes = MemoryAccess::empty();
-            self.seen_initial_barrier = false;
 
             // If we need a pipeline barrier before submitting the command buffers, we insert a "fixup" command buffer
             // containing the pipeline barrier, before the others.
 
             if global_memory_barrier.is_some() || !image_barriers.is_empty() {
-                let fixup_command_buffer = self.command_pool.alloc(&self.device.raw());
+                let fixup_cb = self.command_pool.alloc(&self.device.raw());
                 unsafe {
                     self.device
                         .raw
                         .begin_command_buffer(
-                            fixup_command_buffer,
+                            fixup_cb,
                             &vk::CommandBufferBeginInfo {
                                 flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
                                 ..Default::default()
@@ -903,7 +716,7 @@ impl CommandStream {
                         )
                         .unwrap();
                     vk_ext_debug_utils().cmd_begin_debug_utils_label(
-                        fixup_command_buffer,
+                        fixup_cb,
                         &vk::DebugUtilsLabelEXT {
                             p_label_name: b"barrier fixup\0".as_ptr() as *const c_char,
                             color: [0.0, 0.0, 0.0, 0.0],
@@ -911,7 +724,7 @@ impl CommandStream {
                         },
                     );
                     self.device.raw.cmd_pipeline_barrier2(
-                        fixup_command_buffer,
+                        fixup_cb,
                         &vk::DependencyInfo {
                             dependency_flags: Default::default(),
                             memory_barrier_count: global_memory_barrier.iter().len() as u32,
@@ -926,10 +739,10 @@ impl CommandStream {
                             ..Default::default()
                         },
                     );
-                    vk_ext_debug_utils().cmd_end_debug_utils_label(fixup_command_buffer);
-                    self.device.raw.end_command_buffer(fixup_command_buffer).unwrap();
+                    vk_ext_debug_utils().cmd_end_debug_utils_label(fixup_cb);
+                    self.device.raw.end_command_buffer(fixup_cb).unwrap();
                 }
-                command_buffers.insert(0, fixup_command_buffer);
+                command_buffers.insert(0, fixup_cb);
             }
         }
 
@@ -941,18 +754,8 @@ impl CommandStream {
         let mut wait_semaphore_dst_stages = Vec::new();
         let mut d3d12_fence_submit = false;
 
-        signal_semaphores.push(self.queue.timeline);
-
-        // FIXME: (!!!) if there are concurrent command streams, there is no guarantee that
-        //        they will be submitted in the order they were created.
-        //        This means that the semaphore value is not necessarily increasing, which is
-        //        invalid usage.
-        //        We rely on the submission index being valid as we are building the submission
-        //        so we can't assign a number to the submission *after* we've built it (we'd
-        //        need to retroactively update the submission index in the tracker, which
-        //        is not convenient).
-        //
-        // TODO: probably disallow concurrent command streams entirely
+        // update the timeline semaphore with the submission index
+        signal_semaphores.push(self.device.timeline);
         signal_semaphore_values.push(self.submission_index);
 
         // setup semaphore signal operations
@@ -989,7 +792,11 @@ impl CommandStream {
                     wait_semaphores.push(semaphore);
                     wait_semaphore_values.push(0);
                     if transfer_ownership {
-                        self.semaphores.push(UnsignaledSemaphore(semaphore));
+                        // we own the semaphore and need to delete it
+                        let device = self.device.clone();
+                        self.device.call_later(self.submission_index, move || unsafe {
+                            device.raw.destroy_semaphore(semaphore, None);
+                        });
                     }
                 }
                 SemaphoreWaitKind::Timeline { semaphore, value } => {
@@ -1046,26 +853,29 @@ impl CommandStream {
         let result = unsafe {
             self.device
                 .raw
-                .queue_submit(self.queue.queue, &[submit_info], vk::Fence::null())
+                .queue_submit(self.device.queue, &[submit_info], vk::Fence::null())
         };
 
-        // We use one command pool per submission, so we retire the current one and create a new one.
-        // The retired command pool will be reused once this submission has completed.
-        let retired_command_pool = mem::replace(
-            &mut self.command_pool,
-            self.device.get_or_create_command_pool(self.queue.family),
-        );
+        // Recycle the command pool to the device
+        unsafe {
+            tracker.active_submissions.push_back(ActiveSubmission {
+                index: self.submission_index,
+                // SAFETY: submitted = false so the command pool is valid
+                command_pools: vec![ManuallyDrop::take(&mut self.command_pool)],
+            });
+        }
 
-        tracker.active_submissions.push_back(ActiveSubmission {
-            index: self.submission_index,
-            //queue: self.queue.index,
-            command_pools: vec![retired_command_pool],
-        });
-
-        // get the index of the next submission
-        // TODO: just store the submission locally and assume that there's only one CommandStream
-        self.submission_index = self.device.next_submission_index();
+        self.submitted = true;
+        self.device.expected_submission_index.set(self.submission_index + 1);
 
         result
+    }
+}
+
+impl Drop for CommandStream {
+    fn drop(&mut self) {
+        if !self.submitted {
+            panic!("CommandStream was not submitted before being dropped");
+        }
     }
 }

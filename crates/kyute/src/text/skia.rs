@@ -1,7 +1,7 @@
-use skia_safe::textlayout::TextDecorationMode;
 use crate::drawing::ToSkia;
 use crate::text::style::{FontStretch, FontStyle, FontWeight};
 use crate::text::{TextAlign, TextStyle};
+use skia_safe::textlayout::TextDecorationMode;
 
 impl ToSkia for TextAlign {
     type Target = skia_safe::textlayout::TextAlign;

@@ -1,6 +1,6 @@
 use crate::gpu;
 use graal::util::DeviceExt;
-use graal::{Buffer, BufferUsage, CommandStream, RcDevice, DeviceAddress, MemoryLocation};
+use graal::{Buffer, BufferUsage, CommandStream, DeviceAddress, MemoryLocation, RcDevice};
 use std::ptr;
 use tracing::trace;
 

@@ -1,7 +1,7 @@
+use crate::Result;
+use crate::error::{Error, invalid_data};
 use std::io;
 use std::io::Read;
-use crate::error::{invalid_data, Error};
-use crate::Result;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

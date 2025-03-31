@@ -27,11 +27,11 @@ use winit::keyboard::NamedKey;
 
 use crate::camera_control::{Camera, CameraControl};
 use crate::gpu::{AppendBuffer, Error, PrimitiveRenderPipelineDesc};
+use crate::imgui::{curve_editor_button, icon_button};
 use crate::overlay::{CubicBezierSegment, OverlayRenderParams, OverlayRenderer};
 use crate::scene::{DebugRenderVisitor, Scene3D};
 use crate::shaders::{ControlPoint, CurveDesc, Stroke, StrokeVertex, TileData, SUBGROUP_SIZE};
-use crate::imgui::{curve_editor_button, icon_button};
-use crate::util::{resolve_file_sequence};
+use crate::util::resolve_file_sequence;
 use crate::{gpu, shaders};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -417,8 +417,7 @@ impl App {
             .iter()
             .map(|b| b.image_view.device_image_handle())
             .collect();
-        let brush_textures = gpu::device()
-            .upload_slice(BufferUsage::STORAGE_BUFFER, &brush_texture_handles);
+        let brush_textures = gpu::device().upload_slice(BufferUsage::STORAGE_BUFFER, &brush_texture_handles);
 
         // TODO: consider allocating top-level image views alongside the image itself
         let color_target_view = color_target.create_top_level_view();

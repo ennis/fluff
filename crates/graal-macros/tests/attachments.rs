@@ -1,4 +1,5 @@
-use graal::{vk::Format, Attachments, Image, StaticAttachments};
+use graal::vk::Format;
+use graal::{Attachments, Image, StaticAttachments};
 
 #[derive(Attachments)]
 struct GBuffers<'a> {

@@ -10,10 +10,9 @@ pub use image::{Image, StaticImage};
 pub use linear_gradient::{ColorStop, InterpolationColorSpace, LinearGradient};
 pub use paint::Paint;
 pub use placement::{
-    PlacementExt,
-    RectWithBaseline,
-    align, place, place_rect_into, Anchor, Placement, BASELINE_CENTER, BASELINE_LEFT, BASELINE_RIGHT, BOTTOM_CENTER,
-    BOTTOM_LEFT, BOTTOM_RIGHT, CENTER, LEFT_CENTER, RIGHT_CENTER, TOP_CENTER, TOP_LEFT, TOP_RIGHT, Anchor2D, Alignment
+    align, place, place_rect_into, Alignment, Anchor, Anchor2D, Placement, PlacementExt, RectWithBaseline,
+    BASELINE_CENTER, BASELINE_LEFT, BASELINE_RIGHT, BOTTOM_CENTER, BOTTOM_LEFT, BOTTOM_RIGHT, CENTER, LEFT_CENTER,
+    RIGHT_CENTER, TOP_CENTER, TOP_LEFT, TOP_RIGHT,
 };
 
 mod box_shadow;
@@ -307,7 +306,7 @@ fn round_towards_infinity(x: f64) -> f64 {
     if x == y {
         y
     } else {
-        f64::floor(2.*x-y)
+        f64::floor(2. * x - y)
     }
 }
 

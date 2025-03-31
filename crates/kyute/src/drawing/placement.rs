@@ -117,7 +117,10 @@ pub struct RectWithBaseline {
 
 impl From<Rect> for RectWithBaseline {
     fn from(rect: Rect) -> Self {
-        RectWithBaseline { rect, baseline: rect.height() }
+        RectWithBaseline {
+            rect,
+            baseline: rect.height(),
+        }
     }
 }
 
@@ -129,13 +132,19 @@ impl From<(Rect, f64)> for RectWithBaseline {
 
 impl From<Size> for RectWithBaseline {
     fn from(size: Size) -> Self {
-        RectWithBaseline { rect: size.to_rect(), baseline: size.height }
+        RectWithBaseline {
+            rect: size.to_rect(),
+            baseline: size.height,
+        }
     }
 }
 
 impl From<(Size, f64)> for RectWithBaseline {
     fn from((size, baseline): (Size, f64)) -> Self {
-        RectWithBaseline { rect: size.to_rect(), baseline }
+        RectWithBaseline {
+            rect: size.to_rect(),
+            baseline,
+        }
     }
 }
 

@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use crate::application::with_event_loop_window_target;
 use crate::compositor::LayerID;
 use crate::platform::windows::draw_surface::DrawSurface;
@@ -6,6 +5,7 @@ use crate::{app_backend, WindowOptions};
 use kurbo::Affine;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slotmap::SecondaryMap;
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ops::Deref;
 use windows::core::Interface;
@@ -108,7 +108,7 @@ impl Window {
         let mut layer_map = self.layer_map.borrow_mut();
         if let Some(visual) = layer_map.get(layer_id) {
             eprintln!("Window::attach_draw_surface (layer_id: {:?}) -- update", layer_id);
-            unsafe {           
+            unsafe {
                 // update existing visual with new content
                 visual.SetContent(&surface.swap_chain).unwrap();
             }

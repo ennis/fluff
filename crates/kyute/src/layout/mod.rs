@@ -118,11 +118,7 @@ pub trait RectExt {
     fn inline_size(&self, inline_axis: Axis) -> f64;
     /// Returns the size of the rectangle along the cross axis, given the specified inline axis.
     fn cross_size(&self, inline_axis: Axis) -> f64;
-    
-
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Alignment
@@ -394,7 +390,6 @@ impl fmt::Debug for LayoutOutput {
 }
 
 impl LayoutOutput {
-    
     pub fn from_main_cross_sizes(axis: Axis, main: f64, cross: f64, baseline: Option<f64>) -> Self {
         match axis {
             Axis::Horizontal => LayoutOutput {

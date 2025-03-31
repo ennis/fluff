@@ -214,8 +214,7 @@ pub(crate) fn create_composition_swap_chain(dxgi_format: DXGI_FORMAT, width: u32
         // and a back buffer being rendered to. This means that once we've rendered a frame,
         // we can't render another until the next vflip.
         swap_chain.SetMaximumFrameLatency(1).unwrap();
-        
+
         swap_chain
     }
 }
-

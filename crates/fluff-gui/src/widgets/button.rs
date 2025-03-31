@@ -1,12 +1,12 @@
 use crate::colors;
 use crate::widgets::TEXT_STYLE;
-use kyute::drawing::{vec2, Image, PlacementExt, BASELINE_CENTER};
+use kyute::drawing::{BASELINE_CENTER, Image, PlacementExt, vec2};
 use kyute::element::prelude::*;
 use kyute::element::{TreeCtx, WeakElement};
 use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
-use kyute::{text, ElementState, Event, EventSource, PaintCtx, Point, Size};
+use kyute::{ElementState, Event, EventSource, PaintCtx, Point, Size, text};
 
 const BUTTON_RADIUS: f64 = 4.;
 const BUTTON_MIN_WIDTH: f64 = 80.;
@@ -27,12 +27,10 @@ impl Button {
     pub fn new(label: impl Into<String>) -> ElementBuilder<Button> {
         let label = label.into();
         let label = TextLayout::new(&TEXT_STYLE, text!["{label}"]);
-        ElementBuilder::new_cyclic(|weak| {
-            Button {
-                weak,
-                label,
-                state: ElementState::default(),
-            }
+        ElementBuilder::new_cyclic(|weak| Button {
+            weak,
+            label,
+            state: ElementState::default(),
         })
     }
 }
@@ -68,7 +66,7 @@ impl Element for Button {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &TreeCtx,  ctx: &mut PaintCtx) {
+    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
         let mut rect = cx.bounds();
         rect.y1 -= 1.;
         let rect = rect.to_rounded_rect(BUTTON_RADIUS);

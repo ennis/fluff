@@ -96,8 +96,8 @@ pub fn curve_fit_cubic_to_points_f64(
             &mut r_corner_index_len,
         );
 
-        let cubic_array =
-            buffer_into_vec(r_cubic_array, r_cubic_array_len as usize * dims * 3).expect("curve_fit_cubic_to_points_db returned null pointer");
+        let cubic_array = buffer_into_vec(r_cubic_array, r_cubic_array_len as usize * dims * 3)
+            .expect("curve_fit_cubic_to_points_db returned null pointer");
         let corner_index_array = buffer_into_vec(r_corner_index_array, r_corner_index_len as usize);
         let cubic_orig_index = buffer_into_vec(r_cubic_orig_index, r_cubic_array_len as usize);
 

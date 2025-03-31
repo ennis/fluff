@@ -17,7 +17,8 @@ struct TestLayout2 {
 
 #[test]
 fn test_structured_buffer_data() {
-    use graal::{layout::*, typedesc::*};
+    use graal::layout::*;
+    use graal::typedesc::*;
 
     assert_eq!(
         <TestLayout1 as StructuredBufferData>::TYPE,

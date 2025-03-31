@@ -1,9 +1,9 @@
 mod compiler;
 mod embed_shaders;
-mod syntax_bindgen;
 mod rustfmt;
+mod syntax_bindgen;
 
-pub use syntax_bindgen::translate_slang_shared_decls;
+pub use compiler::compile_shader_module;
 pub use embed_shaders::compile_and_embed_shaders;
 pub use rustfmt::rustfmt_file;
-pub use compiler::compile_shader_module;
+pub use syntax_bindgen::translate_slang_shared_decls;

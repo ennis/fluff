@@ -1,10 +1,8 @@
-use core::ptr;
-use std::{
-    ffi::{c_void, CStr, CString},
-    os::raw::c_char,
-};
-use std::sync::LazyLock;
 use ash::vk;
+use core::ptr;
+use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
+use std::sync::LazyLock;
 
 /// Returns the global `ash::Entry` object.
 pub fn get_vulkan_entry() -> &'static ash::Entry {

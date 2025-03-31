@@ -15,15 +15,15 @@ mod aabb;
 mod animation;
 mod app;
 mod camera_control;
+mod data;
 mod egui_backend;
 mod gpu;
+mod imgui;
 mod overlay;
 mod scene;
 mod shaders;
-mod imgui;
-mod util;
 mod ui;
-mod data;
+mod util;
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -62,7 +62,6 @@ fn main() {
 
     gpu::init();
     let device = gpu::device();
-    let mut command_stream = gpu::device().create_command_stream(0);
 
     let surface = graal::get_vulkan_surface(window.window_handle().unwrap().as_raw());
     let surface_format = vk::SurfaceFormatKHR {
@@ -76,7 +75,7 @@ fn main() {
 
     // egui stuff
     let mut egui_winit_state = egui_winit::State::new(egui_ctx, ViewportId::default(), &window, None, None);
-    let mut egui_renderer = egui_backend::Renderer::new(&mut command_stream);
+    let mut egui_renderer = egui_backend::Renderer::new(gpu::device());
 
     // load egui state
     egui_winit_state.egui_ctx().memory_mut(|mem| {
@@ -148,28 +147,26 @@ fn main() {
                             let output = egui_winit_state.egui_ctx().run(raw_input, |ctx| app.egui(ctx));
                             egui_winit_state.handle_platform_output(&window, output.platform_output);
 
-                            let swapchain_image = command_stream
+                            let (swapchain_image, swapchain_ready) = device
                                 .acquire_next_swapchain_image(&swapchain, Duration::from_secs(1))
                                 .unwrap();
+
                             // Render app
-                            app.render(&mut command_stream, &swapchain_image.image);
+                            let mut cmd = device.create_command_stream();
+                            app.render(&mut cmd, &swapchain_image.image);
                             // Update/render UI
-                            //let frame = imgui.new_frame();
-                            //let quit_requested = app.ui(frame);
-                            //platform.prepare_render(frame, &window);
-                            //let draw_data = imgui.render();
                             let view = swapchain_image.image.create_top_level_view();
-                            //imgui_renderer.render(&mut command_stream, &view, &draw_data);
                             egui_renderer.render(
-                                &mut command_stream,
+                                &mut cmd,
                                 &view,
                                 egui_winit_state.egui_ctx(),
                                 output.textures_delta,
                                 output.shapes,
                                 output.pixels_per_point,
                             );
-                            command_stream.present(&swapchain_image).expect("present failed");
+                            cmd.present(&[swapchain_ready.wait()], &swapchain_image).unwrap();
                             device.cleanup();
+
                             /*if quit_requested {
                                 event_loop.exit();
                             }*/
@@ -178,12 +175,9 @@ fn main() {
                     }
                 }
                 Event::AboutToWait => {
-                    //platform.prepare_frame(imgui.io_mut(), &window).expect("Failed to prepare frame");
                     window.request_redraw();
                 }
-                event => {
-                    //platform.handle_event(imgui.io_mut(), &window, &event);
-                }
+                _ => {}
             }
 
             if event_loop.exiting() {

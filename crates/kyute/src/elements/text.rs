@@ -28,9 +28,7 @@ impl Text {
     /// ```
     pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
         let paragraph = text.into().inner;
-        ElementBuilder::new(Text {
-            paragraph,
-        })
+        ElementBuilder::new(Text { paragraph })
     }
 
     pub fn set_text(&mut self, cx: &TreeCtx, text_style: &TextStyle, text: &[TextRun]) {
@@ -41,7 +39,7 @@ impl Text {
 }
 
 impl Element for Text {
-    fn measure(&mut self, _tree:&TreeCtx,layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
@@ -50,7 +48,7 @@ impl Element for Text {
         Size::new(p.longest_line() as f64, p.height() as f64)
     }
 
-    fn layout(&mut self, _tree:&TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _tree: &TreeCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
         let p = &mut self.paragraph;
         p.layout(size.width as f32);

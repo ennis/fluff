@@ -15,7 +15,10 @@ use windows::Win32::Graphics::Direct3D12::{
     D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_FENCE_FLAG_NONE,
 };
 use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, IDCompositionDesktopDevice};
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, IDXGIAdapter1, IDXGIFactory3, DXGI_CREATE_FACTORY_FLAGS};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
@@ -30,9 +33,9 @@ use crate::compositor::ColorType;
 mod compositor;
 mod draw_surface;
 mod swap_chain;
-mod window;
 #[cfg(feature = "vulkan-interop")]
 mod vulkan_interop;
+mod window;
 
 #[cfg(feature = "vulkan-interop")]
 pub use vulkan_interop::DxgiVulkanInteropSwapChain;

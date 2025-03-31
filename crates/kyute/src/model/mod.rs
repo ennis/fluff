@@ -150,7 +150,7 @@ impl<'a, T> Deref for ModelMut<'a, T> {
     }
 }
 
-impl<'a,T> DerefMut for ModelMut<'a, T> {
+impl<'a, T> DerefMut for ModelMut<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.rm
     }
@@ -183,7 +183,7 @@ impl<T: Any> EventSource for Model<T> {
     }
 }
 
-impl<T:Any> EventSource for WeakModel<T> {
+impl<T: Any> EventSource for WeakModel<T> {
     fn as_weak(&self) -> Weak<dyn Any> {
         self.inner.clone() as Weak<dyn Any>
     }
@@ -216,7 +216,7 @@ impl<T: Any> Model<T> {
         });
         Self { inner }
     }
-    
+
     pub fn new_cyclic<F>(f: F) -> Self
     where
         F: FnOnce(WeakModel<T>) -> T,
@@ -291,7 +291,6 @@ impl<T: Any> Model<T> {
         f(&mut *self.inner.data.borrow_mut());
         self.emit(DataChanged);
     }
-
 
     /// Updates the data.
     #[track_caller]

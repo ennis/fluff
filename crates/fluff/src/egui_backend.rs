@@ -38,10 +38,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(cmd: &mut CommandStream) -> Renderer {
-        let pipeline = create_pipeline(cmd.device());
+    pub fn new(device: &RcDevice) -> Renderer {
+        let pipeline = create_pipeline(device);
 
-        let sampler = cmd.device().create_sampler(&SamplerCreateInfo {
+        let sampler = device.create_sampler(&SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
             min_filter: vk::Filter::LINEAR,
             mipmap_mode: vk::SamplerMipmapMode::NEAREST,
@@ -181,12 +181,8 @@ impl Renderer {
         for (_, mesh) in meshes.iter() {
             let vertex_data: &[EguiVertex] =
                 unsafe { slice::from_raw_parts(mesh.vertices.as_ptr().cast(), mesh.vertices.len()) };
-            let vertex_buffer = cmd
-                .device()
-                .upload_slice(BufferUsage::VERTEX_BUFFER, vertex_data);
-            let index_buffer = cmd
-                .device()
-                .upload_slice(BufferUsage::INDEX_BUFFER, &mesh.indices);
+            let vertex_buffer = cmd.device().upload_slice(BufferUsage::VERTEX_BUFFER, vertex_data);
+            let index_buffer = cmd.device().upload_slice(BufferUsage::INDEX_BUFFER, &mesh.indices);
             vertex_buffer.set_name("egui vertex buffer");
             index_buffer.set_name("egui index buffer");
             mesh_vertex_buffers.push(vertex_buffer);

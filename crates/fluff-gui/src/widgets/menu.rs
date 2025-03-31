@@ -3,15 +3,15 @@
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
 use kyute::application::{run_after, spawn};
-use kyute::drawing::{point, vec2, BorderPosition, Image};
+use kyute::drawing::{BorderPosition, Image, point, vec2};
 use kyute::element::prelude::*;
 use kyute::element::{TreeCtx, WeakElement};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::model::{emit_global, wait_event_global};
 use kyute::text::TextLayout;
-use kyute::window::{place_popup, FocusChanged, PopupPlacement, WindowHandle};
-use kyute::{select, text, AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions};
+use kyute::window::{FocusChanged, PopupPlacement, WindowHandle, place_popup};
+use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions, select, text};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -68,7 +68,7 @@ fn open_anchored_popup<T: Element>(
     parent_window: WindowHandle,
     mut content: ElementBuilder<T>,
     anchor_rect: Rect,
-    popup_placement: PopupPlacement
+    popup_placement: PopupPlacement,
 ) -> Window {
     // create popup window
     let size = content.measure(&LayoutInput::default());
@@ -97,7 +97,6 @@ fn open_anchored_popup<T: Element>(
     //popup_parent.set_popup(&window);
     window
 }
-
 
 /// Menu item node within a `MenuItemNodeRange`.
 pub enum MenuItemNode {
@@ -627,7 +626,6 @@ fn open_context_menu_popup(parent_window: WindowHandle, around_rect_monitor: Rec
         .open_around(around_rect_monitor, PopupPlacement::RightOrOverlap);
     popup
 }
-
 
 /// Extension trait on `ElementCtx` to open a context menu.
 pub trait ContextMenuExt {

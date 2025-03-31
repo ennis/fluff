@@ -1,6 +1,16 @@
 //! Abstractions over a vulkan device & queues.
 mod bindless;
 
+use crate::instance::{vk_ext_debug_utils, vk_khr_surface};
+use crate::{
+    get_vulkan_entry, get_vulkan_instance, is_depth_and_stencil_format, BufferInner, BufferUntyped, BufferUsage,
+    CommandPool, CommandStream, ComputePipeline, ComputePipelineCreateInfo, DescriptorSetLayout, Error,
+    GraphicsPipeline, GraphicsPipelineCreateInfo, Image, ImageCreateInfo, ImageInner, ImageType, ImageUsage, ImageView,
+    ImageViewInfo, ImageViewInner, MemoryAccess, MemoryLocation, PreRasterizationShaders, Sampler, SamplerCreateInfo,
+    SemaphoreWait, SemaphoreWaitKind, SignaledSemaphore, Size3D, Swapchain, SwapchainImage, SwapchainImageInner,
+    UnsignaledSemaphore, SUBGROUP_SIZE,
+};
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_void, CString};
 use std::ops::Deref;
@@ -8,24 +18,16 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use std::{fmt, ptr};
 
-use crate::instance::{vk_ext_debug_utils, vk_khr_surface};
-use crate::{
-    get_vulkan_entry, get_vulkan_instance, is_depth_and_stencil_format, BufferInner, BufferUntyped,
-    BufferUsage, CommandPool, CommandStream, ComputePipeline, ComputePipelineCreateInfo, DescriptorSetLayout, Error,
-    GraphicsPipeline, GraphicsPipelineCreateInfo, Image, ImageCreateInfo, ImageInner, ImageType, ImageUsage, ImageView,
-    ImageViewInfo, ImageViewInner, MemoryAccess, MemoryLocation, PreRasterizationShaders, Sampler, SamplerCreateInfo,
-    Size3D, Swapchain, SUBGROUP_SIZE,
-};
-
 use crate::device::bindless::BindlessDescriptorTable;
+use crate::platform::PlatformExtensions;
 use ash::vk;
 use gpu_allocator::vulkan::{AllocationCreateDesc, AllocationScheme};
 use slotmap::{SecondaryMap, SlotMap};
 use std::ffi::CStr;
 use std::mem;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 use tracing::{debug, error};
-use crate::platform::PlatformExtensions;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -33,13 +35,20 @@ use crate::platform::PlatformExtensions;
 //        Just use RefCells
 pub struct Device {
     /// Underlying vulkan device
-    pub(crate) raw: ash::Device,  
+    pub(crate) raw: ash::Device,
 
     /// Platform-specific extension functions
     pub(crate) platform_extensions: PlatformExtensions,
     physical_device: vk::PhysicalDevice,
-    queues: Vec<Arc<QueueShared>>,
-    allocator: Mutex<gpu_allocator::vulkan::Allocator>, 
+    allocator: Mutex<gpu_allocator::vulkan::Allocator>,
+
+    // main graphics queue
+    pub(crate) queue_family: u32,
+    pub(crate) queue: vk::Queue,
+    pub(crate) timeline: vk::Semaphore,
+
+    // semaphores ready for reuse
+    semaphores: RefCell<Vec<vk::Semaphore>>,
 
     // --- Extensions ---
     vk_khr_swapchain: ash::extensions::khr::Swapchain,
@@ -62,7 +71,11 @@ pub struct Device {
 
     // Command pools per queue and thread.
     free_command_pools: Mutex<Vec<CommandPool>>,
-    next_submission_index: AtomicU64,
+
+    // Next submission index
+    pub(crate) next_submission_index: AtomicU64,
+    // Next expected submission index
+    pub(crate) expected_submission_index: Cell<u64>,
 
     /// Resources that have a zero user reference count and that should be ready for deletion soon,
     /// but we're waiting for the GPU to finish using them.
@@ -84,7 +97,6 @@ impl fmt::Debug for Device {
 
 pub type RcDevice = Rc<Device>;
 pub type WeakDevice = Weak<Device>;
-
 
 pub(crate) struct ActiveSubmission {
     pub(crate) index: u64,
@@ -138,7 +150,7 @@ pub struct QueueFamilyConfig {
     pub count: u32,
 }
 
-pub(crate) struct QueueShared {
+pub(crate) struct QueueInfo {
     /// Family index.
     pub family: u32,
     //pub index_in_family: u32,
@@ -219,22 +231,21 @@ fn get_preferred_swapchain_surface_format(surface_formats: &[vk::SurfaceFormatKH
         .expect("no suitable surface format available")
 }
 
-/// Creates a `Device` and a `CommandStream` compatible with the specified presentation surface.
+/// Creates a `Device` compatible with the specified presentation surface.
 ///
 /// # Safety
 ///
 /// `present_surface` must be a valid surface handle, or `None`
-pub unsafe fn create_device_and_command_stream_with_surface(
+pub unsafe fn create_device_with_surface(
     present_surface: Option<vk::SurfaceKHR>,
-) -> Result<(RcDevice, CommandStream), DeviceCreateError> {
+) -> Result<RcDevice, DeviceCreateError> {
     let device = Device::with_surface(present_surface)?;
-    let command_stream = device.create_command_stream(0);
-    Ok((device, command_stream))
+    Ok(device)
 }
 
-/// Creates a `Device` and a `CommandStream`. A physical device is chosen automatically.
-pub fn create_device_and_command_stream() -> Result<(RcDevice, CommandStream), DeviceCreateError> {
-    unsafe { create_device_and_command_stream_with_surface(None) }
+/// Creates a `Device`. A physical device is chosen automatically.
+pub fn create_device() -> Result<RcDevice, DeviceCreateError> {
+    unsafe { create_device_with_surface(None) }
 }
 
 struct PhysicalDeviceAndProperties {
@@ -401,46 +412,43 @@ impl Device {
     }*/
 
     // TODO: enabled features?
+
+    /// Creates a new `Device` from an existing vulkan device.
+    ///
+    /// The device should have been created with at least one graphics queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `physical_device` - the physical device that the device was created on
+    /// * `device` - the vulkan device handle
+    /// * `graphics_queue_family_index` - queue family index of the main graphics queue
     pub unsafe fn from_existing(
         physical_device: vk::PhysicalDevice,
         device: vk::Device,
-        queue_config: &[QueueFamilyConfig],
+        graphics_queue_family_index: u32,
     ) -> Result<RcDevice, DeviceCreateError> {
         let entry = get_vulkan_entry();
         let instance = get_vulkan_instance();
         let device = ash::Device::load(instance.fp_v1_0(), device);
 
-        let mut queues = vec![];
+        // fetch the graphics queue
+        let queue = device.get_device_queue(graphics_queue_family_index, 0);
 
-        // fetch queues and create the timeline semaphore for all of them
-        for cfg in queue_config.iter() {
-            for i in 0..cfg.count {
-                let queue = device.get_device_queue(cfg.family_index, i);
-
-                // create timeline semaphore
-                let timeline_create_info = vk::SemaphoreTypeCreateInfo {
-                    semaphore_type: vk::SemaphoreType::TIMELINE,
-                    initial_value: 0,
-                    ..Default::default()
-                };
-                let semaphore_create_info = vk::SemaphoreCreateInfo {
-                    p_next: &timeline_create_info as *const _ as *const c_void,
-                    ..Default::default()
-                };
-                let timeline = device
-                    .create_semaphore(&semaphore_create_info, None)
-                    .expect("failed to queue timeline semaphore");
-
-                //let global_index = queues.len() as u32;
-                queues.push(Arc::new(QueueShared {
-                    family: cfg.family_index,
-                    //index_in_family: i,
-                    //index: global_index,
-                    queue,
-                    timeline,
-                }));
-            }
-        }
+        // create timeline semaphore
+        let timeline = {
+            let timeline_create_info = vk::SemaphoreTypeCreateInfo {
+                semaphore_type: vk::SemaphoreType::TIMELINE,
+                initial_value: 0,
+                ..Default::default()
+            };
+            let semaphore_create_info = vk::SemaphoreCreateInfo {
+                p_next: &timeline_create_info as *const _ as *const c_void,
+                ..Default::default()
+            };
+            device
+                .create_semaphore(&semaphore_create_info, None)
+                .expect("failed to queue timeline semaphore")
+        };
 
         // Create the GPU memory allocator
         let allocator_create_desc = gpu_allocator::vulkan::AllocatorCreateDesc {
@@ -474,21 +482,10 @@ impl Device {
 
         instance.get_physical_device_properties2(physical_device, &mut physical_device_properties);
 
-        // Create the shader compiler instance
-        //let compiler = shaderc::Compiler::new().expect("failed to create the shader compiler");
-
         // Create global descriptor tables
-        let texture_descriptors = Mutex::new(BindlessDescriptorTable::new(
-            &device,
-            vk::DescriptorType::SAMPLED_IMAGE,
-            4096,
-        ));
-        let image_descriptors = Mutex::new(BindlessDescriptorTable::new(
-            &device,
-            vk::DescriptorType::STORAGE_IMAGE,
-            4096,
-        ));
-        let sampler_descriptors = Mutex::new(BindlessDescriptorTable::new(&device, vk::DescriptorType::SAMPLER, 4096));
+        let texture_descriptors = BindlessDescriptorTable::new(&device, vk::DescriptorType::SAMPLED_IMAGE, 4096);
+        let image_descriptors = BindlessDescriptorTable::new(&device, vk::DescriptorType::STORAGE_IMAGE, 4096);
+        let sampler_descriptors = BindlessDescriptorTable::new(&device, vk::DescriptorType::SAMPLER, 4096);
 
         Ok(Rc::new(Device {
             raw: device,
@@ -497,7 +494,9 @@ impl Device {
             physical_device_properties,
             _physical_device_descriptor_buffer_properties: physical_device_descriptor_buffer_properties,
             physical_device_memory_properties,
-            queues,
+            queue,
+            timeline,
+            queue_family: graphics_queue_family_index,
             allocator: Mutex::new(allocator),
             vk_khr_swapchain,
             vk_ext_shader_object,
@@ -515,9 +514,11 @@ impl Device {
             image_view_ids: Mutex::new(Default::default()),
             dropped_resources: Mutex::new(vec![]),
             next_submission_index: AtomicU64::new(1),
-            texture_descriptors,
-            image_descriptors,
-            sampler_descriptors,
+            expected_submission_index: Cell::new(1),
+            texture_descriptors: Mutex::new(texture_descriptors),
+            image_descriptors: Mutex::new(image_descriptors),
+            sampler_descriptors: Mutex::new(sampler_descriptors),
+            semaphores: Default::default(),
         }))
     }
 
@@ -682,12 +683,7 @@ impl Device {
             .create_device(phy.physical_device, &device_create_info, None)
             .expect("could not create vulkan device");
 
-        let queue_config = [QueueFamilyConfig {
-            family_index: graphics_queue_family,
-            count: 1,
-        }];
-
-        Self::from_existing(phy.physical_device, device.handle(), &queue_config)
+        Self::from_existing(phy.physical_device, device.handle(), graphics_queue_family)
     }
 
     /// Returns the physical device that this device was created on.
@@ -700,10 +696,9 @@ impl Device {
         &self.physical_device_properties
     }
 
-    pub fn create_command_stream(self: &Rc<Self>, queue_index: usize) -> CommandStream {
-        let command_pool = self.get_or_create_command_pool(self.queues[queue_index].family);
+    /*pub fn create_command_stream(self: &Rc<Self>, queue_index: usize) -> CommandStream {
         CommandStream::new(self.clone(), command_pool, self.queues[queue_index].clone())
-    }
+    }*/
 }
 
 struct ShaderModuleGuard<'a> {
@@ -800,10 +795,23 @@ impl Device {
             .unwrap();
     }
 
+    /// Increments the submission index.
     pub(crate) fn next_submission_index(&self) -> u64 {
         self.next_submission_index
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // COMMAND STREAMS
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+    /// Creates a command stream used to submit commands to the GPU.
+    ///
+    /// Once finished, the command stream should be submitted to the GPU using
+    /// `CommandStream::flush`.
+    pub fn create_command_stream(self: &Rc<Self>) -> CommandStream {
+        CommandStream::new(self.clone())
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1110,12 +1118,7 @@ impl Device {
     }*/
 
     pub fn delete_later<T: 'static>(&self, submission_index: u64, object: T) {
-        let queue_timeline = self.queues[0].timeline;
-        let last_completed_submission_index = unsafe {
-            self.raw
-                .get_semaphore_counter_value(queue_timeline)
-                .expect("get_semaphore_counter_value failed")
-        };
+        let last_completed_submission_index = unsafe { self.raw.get_semaphore_counter_value(self.timeline).unwrap() };
         if submission_index <= last_completed_submission_index {
             // drop the object immediately if the submission has completed
             return;
@@ -1151,11 +1154,9 @@ impl Device {
 
     // Cleanup expired resources.
     pub fn cleanup(&self) {
-        // TODO multiple queues
-        let queue_timeline = self.queues[0].timeline;
         let last_completed_submission_index = unsafe {
             self.raw
-                .get_semaphore_counter_value(queue_timeline)
+                .get_semaphore_counter_value(self.timeline)
                 .expect("get_semaphore_counter_value failed")
         };
 
@@ -1192,7 +1193,7 @@ impl Device {
 
     /// Creates a swapchain object.
     pub unsafe fn create_swapchain(
-        &self,
+        self: &Rc<Self>,
         surface: vk::SurfaceKHR,
         format: vk::SurfaceFormatKHR,
         width: u32,
@@ -1210,6 +1211,69 @@ impl Device {
         swapchain
     }
 
+    /// Creates a new, or returns an existing, binary semaphore that is in the unsignaled state,
+    /// or for which we've submitted a wait operation on this queue and that will eventually be unsignaled.
+    pub fn get_or_create_semaphore(&self) -> vk::Semaphore {
+        // Try to recycle one
+        if let Some(semaphore) = self.semaphores.borrow_mut().pop() {
+            return semaphore;
+        }
+
+        // Otherwise create a new one
+        unsafe {
+            let create_info = vk::SemaphoreCreateInfo { ..Default::default() };
+            self.raw.create_semaphore(&create_info, None).unwrap()
+        }
+    }
+
+    /// Recycles a binary semaphore.
+    ///
+    /// There must be a pending wait operation on the semaphore, or it must be in the unsignaled state.
+    pub(crate) unsafe fn recycle_binary_semaphore(&self, binary_semaphore: vk::Semaphore) {
+        self.semaphores.borrow_mut().push(binary_semaphore);
+    }
+
+    /// Acquires the next image in a swapchain.
+    ///
+    /// Returns the image and the semaphore that will be signaled when the image is available.
+    pub unsafe fn acquire_next_swapchain_image(
+        &self,
+        swapchain: &Swapchain,
+        timeout: Duration,
+    ) -> Result<(SwapchainImage, SignaledSemaphore), vk::Result> {
+        // We can't use `get_or_create_semaphore` because according to the spec the semaphore
+        // passed to `vkAcquireNextImage` must not have any pending operations, whereas
+        // `get_or_create_semaphore` only guarantees that a wait operation has been submitted
+        // on the semaphore (not that the wait has completed).
+        let ready = {
+            let create_info = vk::SemaphoreCreateInfo { ..Default::default() };
+            self.raw.create_semaphore(&create_info, None).unwrap()
+        };
+
+        let (index, _suboptimal) = match self.khr_swapchain().acquire_next_image(
+            swapchain.handle,
+            timeout.as_nanos() as u64,
+            ready,
+            vk::Fence::null(),
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                // delete the semaphore before returning
+                self.raw.destroy_semaphore(ready, None);
+                return Err(err);
+            }
+        };
+
+        let img = SwapchainImage {
+            swapchain: swapchain.handle,
+            image: swapchain.images[index as usize].image.clone(),
+            index,
+            render_finished: swapchain.images[index as usize].render_finished.clone(),
+        };
+
+        Ok((img, SignaledSemaphore(ready)))
+    }
+
     /// Returns the list of supported swapchain formats for the given surface.
     pub unsafe fn get_surface_formats(&self, surface: vk::SurfaceKHR) -> Vec<vk::SurfaceFormatKHR> {
         vk_khr_surface()
@@ -1224,7 +1288,7 @@ impl Device {
     }
 
     /// Resizes a swapchain.
-    pub unsafe fn resize_swapchain(&self, swapchain: &mut Swapchain, width: u32, height: u32) {
+    pub unsafe fn resize_swapchain(self: &Rc<Self>, swapchain: &mut Swapchain, width: u32, height: u32) {
         let phy = self.physical_device;
         let capabilities = vk_khr_surface()
             .get_physical_device_surface_capabilities(phy, swapchain.surface)
@@ -1254,11 +1318,13 @@ impl Device {
             image_color_space: swapchain.format.color_space,
             image_extent,
             image_array_layers: 1,
+            // TODO: this should be a parameter
             image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 0,
             p_queue_family_indices: ptr::null(),
             pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
+            // TODO: this should be a parameter
             composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
             present_mode,
             clipped: vk::TRUE,
@@ -1266,19 +1332,30 @@ impl Device {
             ..Default::default()
         };
 
-        let new_handle = self
-            .vk_khr_swapchain
-            .create_swapchain(&create_info, None)
-            .expect("failed to create swapchain");
+        let new_handle = self.vk_khr_swapchain.create_swapchain(&create_info, None).unwrap();
         if swapchain.handle != vk::SwapchainKHR::null() {
-            // FIXME what if the images are in use?
+            // FIXME the images may be in use, we should wait for the device to be idle
             self.vk_khr_swapchain.destroy_swapchain(swapchain.handle, None);
         }
 
         swapchain.handle = new_handle;
         swapchain.width = width;
         swapchain.height = height;
-        swapchain.images = self.vk_khr_swapchain.get_swapchain_images(swapchain.handle).unwrap();
+
+        // reset images & semaphores
+        for SwapchainImageInner { render_finished, .. } in swapchain.images.drain(..) {
+            self.recycle_binary_semaphore(render_finished);
+        }
+        swapchain.images = Vec::with_capacity(image_count as usize);
+
+        let images = self.vk_khr_swapchain.get_swapchain_images(swapchain.handle).unwrap();
+        for image in images {
+            let render_finished = self.get_or_create_semaphore();
+            swapchain.images.push(SwapchainImageInner {
+                image: self.register_swapchain_image(image, swapchain.format.format, width, height),
+                render_finished,
+            });
+        }
     }
 
     pub fn create_sampler(self: &Rc<Self>, info: &SamplerCreateInfo) -> Sampler {

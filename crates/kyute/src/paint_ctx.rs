@@ -29,10 +29,7 @@ pub struct PaintCtx<'a> {
     //surface: Option<DrawableSurface>,
 }
 
-pub fn paint_root_element(
-    element: &ElementAny,
-    composition_builder: &mut CompositionBuilder,
-) {
+pub fn paint_root_element(element: &ElementAny, composition_builder: &mut CompositionBuilder) {
     with_tree_ctx(element, |element, tree| {
         let mut f = tree.change_flags.get();
         f.remove(ChangeFlags::PAINT);
@@ -45,10 +42,7 @@ pub fn paint_root_element(
 
 impl<'a> PaintCtx<'a> {
     /// Creates a new paint context.
-    pub(crate) fn new(
-        ctx: &'a TreeCtx<'a>,
-        comp_builder: &'a mut CompositionBuilder,
-    ) -> PaintCtx<'a> {
+    pub(crate) fn new(ctx: &'a TreeCtx<'a>, comp_builder: &'a mut CompositionBuilder) -> PaintCtx<'a> {
         PaintCtx {
             tree: ctx,
             scale_factor: comp_builder.scale_factor(),

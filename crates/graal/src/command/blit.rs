@@ -14,7 +14,8 @@ impl CommandStream {
         let cb = self.get_or_create_command_buffer();
         unsafe {
             // SAFETY: FFI call and parameters are valid
-            self.device.raw
+            self.device
+                .raw
                 .cmd_fill_buffer(cb, buffer.buffer.handle, buffer.offset, buffer.size, data);
         }
     }
@@ -42,7 +43,7 @@ impl CommandStream {
             );
         }
     }
-    
+
     pub fn clear_depth_image(&mut self, image: &Image, depth: f32) {
         self.reference_resource(image);
         self.barrier(Barrier::new().transfer_write_image(image));
@@ -54,10 +55,7 @@ impl CommandStream {
                 cb,
                 image.handle,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &vk::ClearDepthStencilValue {
-                    depth,
-                    stencil: 0,
-                },
+                &vk::ClearDepthStencilValue { depth, stencil: 0 },
                 &[vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     base_mip_level: 0,

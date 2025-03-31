@@ -1,5 +1,5 @@
-use tracing::trace;
 use crate::layout::{LayoutInput, LayoutMode, LayoutOutput, SizeConstraint};
+use tracing::trace;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

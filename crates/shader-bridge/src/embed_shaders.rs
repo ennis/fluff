@@ -1,3 +1,4 @@
+use crate::compiler::{convert_spirv_u8_to_u32, create_session, SHADER_PROFILE};
 use heck::ToShoutySnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, TokenStreamExt};
@@ -5,7 +6,6 @@ use slang::Downcast;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use crate::compiler::{convert_spirv_u8_to_u32, create_session, SHADER_PROFILE};
 
 /// Loads all slang shader modules in a directory.
 fn load_shader_modules_in_directory(
@@ -79,7 +79,6 @@ pub fn compile_and_embed_shaders(
 ) {
     let session = create_session(SHADER_PROFILE, include_search_paths, &[]);
     let modules = load_shader_modules_in_directory(&session, shaders_directory).unwrap();
-    
 
     // now compile all entry points, and generate bindings
     let mut bindings = TokenStream::new();

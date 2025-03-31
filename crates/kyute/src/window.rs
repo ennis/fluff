@@ -30,7 +30,7 @@ use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
-use crate::paint_ctx::{paint_root_element};
+use crate::paint_ctx::paint_root_element;
 use crate::{app_backend, application, double_click_time, platform, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {

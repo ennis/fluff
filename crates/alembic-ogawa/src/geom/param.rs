@@ -1,14 +1,12 @@
-use std::mem::MaybeUninit;
 use crate::error::Error;
 use crate::property::PropertyReader;
 use crate::{CompoundPropertyReader, DataType, Metadata, Result, TimeSampling, TypedArrayPropertyReader};
-
+use std::mem::MaybeUninit;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum GeometryScope {
     // Like USD primvar interpolation
-
     /// Constant over the entire mesh (one value)
     Constant = 0,
     /// Same as constant for the primitives that we care about
@@ -19,9 +17,8 @@ pub enum GeometryScope {
     Vertex = 3,
     /// Same as varying for the primitives that we care about
     FaceVarying = 4,
-    Unknown = 127
+    Unknown = 127,
 }
-
 
 fn get_geometry_scope(metadata: &Metadata) -> GeometryScope {
     match metadata.get_str("geoScope") {
@@ -50,15 +47,9 @@ impl<T: DataType> GeomParam<T> {
                 let indices = Some(TypedArrayPropertyReader::new(&c, "indices")?);
                 let values = TypedArrayPropertyReader::new(&c, "vals")?;
                 let scope = get_geometry_scope(values.metadata());
-                Ok(Self {
-                    scope,
-                    indices,
-                    values,
-                })
+                Ok(Self { scope, indices, values })
             }
-            PropertyReader::Scalar(_) => {
-                Err(Error::MalformedData)
-            }
+            PropertyReader::Scalar(_) => Err(Error::MalformedData),
             PropertyReader::Array(a) => {
                 let scope = get_geometry_scope(a.metadata());
                 Ok(Self {
@@ -66,7 +57,7 @@ impl<T: DataType> GeomParam<T> {
                     indices: None,
                     values: TypedArrayPropertyReader::new(parent_prop, name)?,
                 })
-            },
+            }
         }
     }
 

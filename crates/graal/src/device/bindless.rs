@@ -1,13 +1,13 @@
-
 //! TODO: implement a single table for all descriptors, with VK_EXT_mutable_descriptor_type
 
 use crate::{Device, ImageViewId, SamplerId};
-use ash::{vk, vk::DescriptorType};
-use std::{ffi::c_void, ptr};
+use ash::vk;
+use ash::vk::DescriptorType;
+use std::ffi::c_void;
+use std::ptr;
 use tracing::trace;
 
 type DT = vk::DescriptorType;
-
 
 unsafe fn create_bindless_layout(
     device: &ash::Device,

@@ -4,7 +4,6 @@
 
 mod app_globals;
 pub mod application;
-pub mod platform;
 pub mod compositor;
 pub mod drawing;
 pub mod element;
@@ -16,6 +15,7 @@ pub mod layout;
 pub mod model;
 pub mod notifier;
 mod paint_ctx;
+pub mod platform;
 pub mod text;
 pub mod theme;
 mod util;

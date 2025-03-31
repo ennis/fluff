@@ -1,9 +1,9 @@
-use crate::{Result};
+use crate::Result;
+use crate::archive::ArchiveData;
+use crate::error::invalid_data;
 use byteorder::{LE, ReadBytesExt};
 use std::io::Read;
 use std::{io, slice};
-use crate::archive::ArchiveData;
-use crate::error::invalid_data;
 
 const DATA_BIT: u64 = 0x8000_0000_0000_0000;
 const OFFSET_MASK: u64 = 0x7FFF_FFFF_FFFF_FFFF;

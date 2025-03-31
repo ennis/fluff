@@ -186,7 +186,11 @@ impl DxgiVulkanInteropSwapChain {
     /// to be ready for rendering.
     ///
     /// You should call `present` to release the returned image, before calling this again.
-    pub(crate) fn acquire(&self, cmd: &mut graal::CommandStream) -> &graal::Image {
+    ///
+    /// FIXME: there should not be any active command stream when calling this! this is extremely
+    ///        error prone (simply create the command stream before acquiring the image,
+    ///        and you'll get an assert)
+    pub(crate) fn acquire(&self) -> &graal::Image {
         assert!(!self.surface_acquired.get(), "surface already acquired");
 
         let app = app_backend();
@@ -207,18 +211,20 @@ impl DxgiVulkanInteropSwapChain {
 
             // TODO improve API legibility in graal: the flush does nothing but waiting for the fence
             //      maybe add a shorthand for this?
-            cmd.flush(
-                &[graal::SemaphoreWait {
-                    kind: SemaphoreWaitKind::D3D12Fence {
-                        semaphore: self.fence_semaphore,
-                        fence: Default::default(),
-                        value: fence_value,
-                    },
-                    dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
-                }],
-                &[],
-            )
-            .unwrap();
+            self.device
+                .create_command_stream()
+                .flush(
+                    &[graal::SemaphoreWait {
+                        kind: SemaphoreWaitKind::D3D12Fence {
+                            semaphore: self.fence_semaphore,
+                            fence: Default::default(),
+                            value: fence_value,
+                        },
+                        dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
+                    }],
+                    &[],
+                )
+                .unwrap();
         }
 
         self.surface_acquired.set(true);
@@ -228,22 +234,24 @@ impl DxgiVulkanInteropSwapChain {
     /// Submits the last acquired swap chain image for presentation.
     ///
     /// TODO: incremental present
-    pub(crate) fn present(&self, cmd: &mut graal::CommandStream) {
+    pub(crate) fn present(&self) {
         let fence_value = self.fence_value.get();
         self.fence_value.set(fence_value + 1);
 
         // Synchronization: Vulkan -> D3D12
         unsafe {
             // signal the fence on the vulkan side ...
-            cmd.flush(
-                &[],
-                &[graal::SemaphoreSignal::D3D12Fence {
-                    semaphore: self.fence_semaphore,
-                    fence: Default::default(),
-                    value: fence_value,
-                }],
-            )
-            .unwrap();
+            self.device
+                .create_command_stream()
+                .flush(
+                    &[],
+                    &[graal::SemaphoreSignal::D3D12Fence {
+                        semaphore: self.fence_semaphore,
+                        fence: Default::default(),
+                        value: fence_value,
+                    }],
+                )
+                .unwrap();
             // ... and wait for it on the D3D12 side
             app_backend().command_queue.Wait(&self.fence, fence_value).unwrap();
             // present the image

@@ -26,8 +26,7 @@ fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     application::run(async {
-        let main_button =
-            button("Test");
+        let main_button = button("Test");
 
         let mut text_edit = TextEditBase::new();
         text_edit.set_text_style(TextStyle::default().font_family("Inter").font_size(12.0));
@@ -46,20 +45,23 @@ fn main() {
             .border_color(Color::from_hex("5f5637"))
             .border_radius(8.0)
             .background_color(Color::from_hex("211e13"))
-           
-            .content(Flex::new()
-                .vertical()
-                .gaps(4, 4, 4)
-                .child(main_button)
-                .child(increment_button)
+            .content(
+                Flex::new()
+                    .vertical()
+                    .gaps(4, 4, 4)
+                    .child(main_button)
+                    .child(increment_button),
             );
 
-        let main_window = Window::new(&WindowOptions {
-            title: "Hello, world!",
-            size: Size::new(800.0, 600.0),
-            background: Color::from_hex("211e13"),
-            ..Default::default()
-        }, frame);
+        let main_window = Window::new(
+            &WindowOptions {
+                title: "Hello, world!",
+                size: Size::new(800.0, 600.0),
+                background: Color::from_hex("211e13"),
+                ..Default::default()
+            },
+            frame,
+        );
 
         loop {
             select! {
@@ -76,5 +78,5 @@ fn main() {
 
         //application::quit();
     })
-        .unwrap()
+    .unwrap()
 }

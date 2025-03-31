@@ -1,4 +1,8 @@
-use crate::{aspects_for_format, util::DeviceExt, vk, BufferUsage, CommandStream, DeviceAddress, Image, ImageCopyBuffer, ImageCopyView, ImageCreateInfo, ImageDataLayout, ImageSubresourceLayers, ImageUsage, Point3D, Rect3D, Size3D};
+use crate::util::DeviceExt;
+use crate::{
+    aspects_for_format, vk, BufferUsage, CommandStream, DeviceAddress, Image, ImageCopyBuffer, ImageCopyView,
+    ImageCreateInfo, ImageDataLayout, ImageSubresourceLayers, ImageUsage, Point3D, Rect3D, Size3D,
+};
 
 pub trait CommandStreamExt {
     /// Copies the data to a region of an image.
@@ -17,7 +21,7 @@ pub trait CommandStreamExt {
     /// Uploads data to a read-only storage buffer and returns a device pointer to it, valid
     /// **only** for the current submission (i.e. until the next call to `present` or `flush`).
     fn upload_temporary<T: Copy>(&mut self, data: &T) -> DeviceAddress<T>;
-    
+
     /// Uploads a slice of data to a read-only storage buffer and returns a device pointer to it, valid
     /// **only** for the current submission (i.e. until the next call to `present` or `flush`).
     fn upload_temporary_slice<T: Copy>(&mut self, data: &[T]) -> DeviceAddress<[T]>;

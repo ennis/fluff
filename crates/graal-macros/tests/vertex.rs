@@ -1,7 +1,5 @@
-use mlr::{
-    vertex::{Norm, Vertex, VertexAttributeDescription},
-    vk,
-};
+use mlr::vertex::{Norm, Vertex, VertexAttributeDescription};
+use mlr::vk;
 
 #[repr(C)]
 #[derive(Vertex, Copy, Clone)]

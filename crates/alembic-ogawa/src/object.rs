@@ -1,5 +1,6 @@
 use crate::archive::ArchiveInner;
-use crate::error::{invalid_data, Error};
+use crate::error::{Error, invalid_data};
+use crate::group::is_group;
 use crate::metadata::Metadata;
 use crate::property::{CompoundPropertyReader, PropertyHeader};
 use crate::{Group, Result, read_string};
@@ -8,7 +9,6 @@ use std::collections::BTreeMap;
 use std::io;
 use std::io::Seek;
 use std::sync::Arc;
-use crate::group::is_group;
 
 /// Information about an object.
 #[derive(Clone)]
@@ -69,7 +69,7 @@ impl ObjectReader {
     pub fn name(&self) -> &str {
         &self.header.name
     }
-    
+
     pub fn path(&self) -> &str {
         &self.header.path
     }
@@ -81,10 +81,7 @@ impl ObjectReader {
 
     /// Loads a child object by name.
     pub fn get(&self, name: &str) -> Result<ObjectReader> {
-        let index = * self
-            .children_by_name
-            .get(name)
-            .ok_or(Error::ObjectNotFound)?;
+        let index = *self.children_by_name.get(name).ok_or(Error::ObjectNotFound)?;
         ObjectReader::new(self.archive.clone(), self.children[index].clone())
     }
 
@@ -101,7 +98,9 @@ impl ObjectReader {
     /// Returns an iterator over child objects.
     pub fn children(&self) -> impl Iterator<Item = ObjectReader> + '_ {
         // TODO: don't panic
-        self.children.iter().map(move |header| ObjectReader::new(self.archive.clone(), header.clone()).expect("failed to load child object"))
+        self.children.iter().map(move |header| {
+            ObjectReader::new(self.archive.clone(), header.clone()).expect("failed to load child object")
+        })
     }
 
     /// Finds a child object by name.

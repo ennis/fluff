@@ -1,5 +1,7 @@
-use egui::{Align, Align2, Area, Color32, Direction, FontId, Frame, InnerResponse, Key, Layout, Order, Pos2, Rect, Response, RichText, Sense, Stroke, TextEdit, TextFormat, TextStyle, Ui, Vec2, WidgetText};
-
+use egui::{
+    Align, Align2, Area, Color32, Direction, FontId, Frame, InnerResponse, Key, Layout, Order, Pos2, Rect, Response,
+    RichText, Sense, Stroke, TextEdit, TextFormat, TextStyle, Ui, Vec2, WidgetText,
+};
 
 pub fn popup_button(ui: &mut Ui, text: impl Into<WidgetText>, contents: impl FnOnce(&mut Ui) -> Response) -> Response {
     let popup_id = ui.auto_id_with("popup");
@@ -24,8 +26,7 @@ pub fn popup_button(ui: &mut Ui, text: impl Into<WidgetText>, contents: impl FnO
             })
             .response;
 
-        if !button_response.clicked()
-            && (ui.input(|i| i.key_pressed(Key::Escape)) || area_response.clicked_elsewhere())
+        if !button_response.clicked() && (ui.input(|i| i.key_pressed(Key::Escape)) || area_response.clicked_elsewhere())
         {
             ui.memory_mut(|mem| mem.close_popup());
         }

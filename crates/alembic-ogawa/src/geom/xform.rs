@@ -99,7 +99,6 @@ impl XForm {
         Ok(m.to_cols_array_2d())
     }
 
-
     pub fn time_sampling(&self) -> &TimeSampling {
         if let Some(inherits) = &self.inherits {
             inherits.time_sampling()
@@ -116,7 +115,9 @@ impl XForm {
         let mut i = 0;
         iter::from_fn(move || {
             if i < count {
-                let time = time_sampling.get_sample_time(i).expect("Failed to read transform sample time");
+                let time = time_sampling
+                    .get_sample_time(i)
+                    .expect("Failed to read transform sample time");
                 let value = self.get(i).expect("Failed to read transform sample");
                 i += 1;
                 Some((time, value))

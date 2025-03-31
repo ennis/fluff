@@ -81,13 +81,10 @@ impl TextLayout {
 
         Self { inner: builder.build() }
     }
-    
+
     /// Constructs a new text layout from a default text style and a string.
     pub fn from_str(style: &TextStyle, text: &str) -> TextLayout {
-        let run = TextRun {
-            str: text,
-            styles: &[],
-        };
+        let run = TextRun { str: text, styles: &[] };
         Self::new(style, &[run])
     }
 
@@ -120,7 +117,7 @@ impl TextLayout {
     pub fn baseline(&self) -> f64 {
         self.inner.alphabetic_baseline() as f64
     }
-    
+
     pub fn rect_with_baseline(&self) -> RectWithBaseline {
         RectWithBaseline {
             rect: self.size().to_rect(),

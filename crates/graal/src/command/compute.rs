@@ -1,8 +1,9 @@
-use std::{mem, mem::MaybeUninit, slice};
+use std::mem::MaybeUninit;
+use std::{mem, slice};
 
 use ash::vk;
 
-use crate::{Barrier, CommandStream, ComputePipeline, Descriptor, RcDevice, GpuResource};
+use crate::{Barrier, CommandStream, ComputePipeline, Descriptor, GpuResource, RcDevice};
 
 /// A context object to submit commands to a command buffer after a pipeline has been bound to it.
 ///
@@ -54,7 +55,9 @@ impl<'a> ComputeEncoder<'a> {
     pub fn bind_compute_pipeline(&mut self, pipeline: &ComputePipeline) {
         let device = self.stream.device();
         unsafe {
-            device.raw.cmd_bind_pipeline(self.command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline);
+            device
+                .raw
+                .cmd_bind_pipeline(self.command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline);
             if pipeline.bindless {
                 self.stream.bind_bindless_descriptor_sets(
                     self.command_buffer,
@@ -106,7 +109,8 @@ impl<'a> ComputeEncoder<'a> {
         unsafe {
             self.stream
                 .device
-                .raw.cmd_dispatch(self.command_buffer, group_count_x, group_count_y, group_count_z);
+                .raw
+                .cmd_dispatch(self.command_buffer, group_count_x, group_count_y, group_count_z);
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::colors;
-use crate::widgets::{PaintExt, INPUT_WIDTH, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
+use crate::widgets::{INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
 use kyute::element::{ElementBuilder, ElementCtx, HitTestCtx, TreeCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
@@ -18,16 +18,13 @@ pub struct SliderBase {
     width: f64,
 }
 
-
 #[derive(Default)]
 pub struct SliderBaseEventResult {
     pub value_changed: Option<f64>,
-   // pub flags: SliderBaseEventFlags,
+    // pub flags: SliderBaseEventFlags,
 }
 
-
 impl SliderBase {
-
     pub fn new(value: f64, range: Range<f64>) -> Self {
         SliderBase {
             value,
@@ -49,7 +46,7 @@ impl SliderBase {
     }
 
     fn set_value_from_pos(&mut self, x_pos: f64) -> Option<f64> {
-        let value_norm = ((x_pos - self.offset.x) / self.width).clamp(0.,1.);
+        let value_norm = ((x_pos - self.offset.x) / self.width).clamp(0., 1.);
         let value = self.range.start + value_norm * (self.range.end - self.range.start);
         if self.value != value {
             self.value = value;
@@ -64,7 +61,6 @@ impl SliderBase {
             ctx.draw_display_background(rect);
         }
 
-
         // Normalize value
         let value_norm = (self.value - self.range.start) / (self.range.end - self.range.start);
         let x_pos = rect.x0 + value_norm * rect.width();
@@ -72,17 +68,11 @@ impl SliderBase {
 
         // Draw the slider line background
         let mid_y = ctx.round_to_device_pixel_center(rect.y0 + 0.5 * rect.height());
-        let midline = Line::new(
-            (rect.x0, mid_y),
-            (rect.x1, mid_y),
-        );
+        let midline = Line::new((rect.x0, mid_y), (rect.x1, mid_y));
         ctx.draw_line(midline, 1.0, colors::SLIDER_LINE_BACKGROUND);
 
         // Draw the slider line
-        let slider_line = Line::new(
-            (rect.x0, mid_y),
-            (x_pos_snapped, mid_y),
-        );
+        let slider_line = Line::new((rect.x0, mid_y), (x_pos_snapped, mid_y));
         ctx.draw_line(slider_line, 1.0, colors::SLIDER_LINE);
 
         // Draw the knob
@@ -112,7 +102,7 @@ impl SliderBase {
     pub fn measure(&self, available: &LayoutInput) -> Size {
         let width = available.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
-        Size {width, height}
+        Size { width, height }
     }
 
     pub fn layout(&mut self, size: Size) -> LayoutOutput {
@@ -143,24 +133,18 @@ impl SliderBase {
                 let local_pos = p.position - bounds.origin();
                 value_changed = self.set_value_from_pos(local_pos.x);
             }
-            Event::Wheel(w) => {
-                match w.delta {
-                    ScrollDelta::Lines { x, y } => {
-                        self.value += y.max(x) * self.increment;
-                    }
-                    _=>{}
+            Event::Wheel(w) => match w.delta {
+                ScrollDelta::Lines { x, y } => {
+                    self.value += y.max(x) * self.increment;
                 }
-            }
-            _ => {
-            }
+                _ => {}
+            },
+            _ => {}
         }
 
-        SliderBaseEventResult {
-            value_changed,
-        }
+        SliderBaseEventResult { value_changed }
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -189,7 +173,7 @@ impl Element for Slider {
         self.base.measure(layout_input)
     }
 
-    fn layout(&mut self,_cx: &TreeCtx,  size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         self.base.layout(size)
     }
 
@@ -210,7 +194,7 @@ impl Element for Slider {
             _ => {}
         }
         let result = self.base.event(cx.bounds(), event);
-        
+
         if let Some(value) = result.value_changed {
             cx.mark_needs_paint();
             self.weak.emit(ValueChangedEvent(value));

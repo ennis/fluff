@@ -1,11 +1,13 @@
 //! Render command encoders
-use std::{mem, mem::MaybeUninit, ops::Range, ptr, slice};
+use std::mem::MaybeUninit;
+use std::ops::Range;
+use std::{mem, ptr, slice};
 
 use ash::vk;
 
 use crate::{
     is_depth_and_stencil_format, Barrier, BufferRangeUntyped, ClearColorValue, ColorAttachment, CommandStream,
-    DepthStencilAttachment, Descriptor, RcDevice, GpuResource, GraphicsPipeline, Rect2D,
+    DepthStencilAttachment, Descriptor, GpuResource, GraphicsPipeline, RcDevice, Rect2D,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -24,40 +26,6 @@ impl<'a> RenderEncoder<'a> {
     pub fn device(&self) -> &RcDevice {
         self.stream.device()
     }
-
-    /*pub fn use_image(&mut self, image: &Image, access: ImageAccess) {
-        let image_id = image.id();
-        if let Some(entry) = self.used_images.get_mut(&image_id) {
-            if entry.1 != access {
-                panic!(
-                    "Image {:?} is already used in render pass with conflicting access {:?} (new access: {:?})",
-                    image_id, entry.1, access
-                );
-            }
-        } else {
-            self.used_images.insert(image_id, (image.clone(), access));
-        }
-    }*/
-
-    /*pub fn use_buffer(&mut self, buffer: &BufferUntyped, access: BufferAccess) {
-        let buffer_id = buffer.id();
-        if let Some(entry) = self.used_buffers.get_mut(&buffer_id) {
-            if entry.1 != access {
-                panic!(
-                    "Buffer {:?} is already used in render pass with conflicting access {:?} (new access: {:?})",
-                    buffer_id, entry.1, access
-                );
-            }
-        } else {
-            self.used_buffers.insert(buffer_id, (buffer.clone(), access));
-        }
-    }*/
-
-    /*pub fn use_image_view(&mut self, image_view: &ImageView, state: ImageAccess) {
-        let image_view_id = image_view.id();
-        self.use_image(image_view.image(), state);
-        self.used_image_views.insert(image_view_id, image_view.clone());
-    }*/
 
     /// Marks the resource as being in use by the current submission.
     ///
@@ -217,7 +185,8 @@ impl<'a> RenderEncoder<'a> {
         unsafe {
             self.stream
                 .device
-                .raw.cmd_set_primitive_topology(self.command_buffer, topology.into());
+                .raw
+                .cmd_set_primitive_topology(self.command_buffer, topology.into());
         }
     }
 

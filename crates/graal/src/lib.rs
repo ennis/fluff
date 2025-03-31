@@ -6,11 +6,15 @@ mod surface;
 mod types;
 pub mod util;
 
-use std::{borrow::Cow, marker::PhantomData, mem, ops::{Bound, RangeBounds}, os::raw::c_void, ptr::NonNull, sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-}};
+use std::borrow::Cow;
+use std::marker::PhantomData;
+use std::mem;
 use std::mem::MaybeUninit;
+use std::ops::{Bound, RangeBounds};
+use std::os::raw::c_void;
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 // --- reexports ---
 
@@ -28,13 +32,13 @@ pub use types::*;
 pub use graal_macros::Vertex;
 
 pub mod prelude {
+    pub use crate::util::{CommandStreamExt, DeviceExt};
     pub use crate::{
-        util::{CommandStreamExt, DeviceExt},
         vk, Buffer, BufferUsage, ClearColorValue, ColorBlendEquation, ColorTargetState, CommandStream, ComputeEncoder,
-        DepthStencilState, RcDevice, Format, FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, Image,
-        ImageCreateInfo, ImageType, ImageUsage, ImageView, MemoryLocation, PipelineBindPoint, PipelineLayoutDescriptor,
-        Point2D, PreRasterizationShaders, RasterizationState, Rect2D, RenderEncoder, Sampler, SamplerCreateInfo,
-        ShaderCode, ShaderSource, Size2D, StencilState, Vertex, VertexBufferDescriptor, ShaderDescriptor,
+        DepthStencilState, Format, FragmentState, GraphicsPipeline, GraphicsPipelineCreateInfo, Image, ImageCreateInfo,
+        ImageType, ImageUsage, ImageView, MemoryLocation, PipelineBindPoint, PipelineLayoutDescriptor, Point2D,
+        PreRasterizationShaders, RasterizationState, RcDevice, Rect2D, RenderEncoder, Sampler, SamplerCreateInfo,
+        ShaderCode, ShaderDescriptor, ShaderSource, Size2D, StencilState, Vertex, VertexBufferDescriptor,
         VertexBufferLayoutDescription, VertexInputAttributeDescription, VertexInputState,
     };
 }
@@ -113,6 +117,12 @@ pub struct SamplerHandle {
     pub index: u32,
 }
 
+#[derive(Debug)]
+struct SwapchainImageInner {
+    image: Image,
+    render_finished: vk::Semaphore,
+}
+
 /// Represents a swap chain.
 #[derive(Debug)]
 pub struct Swapchain {
@@ -121,7 +131,7 @@ pub struct Swapchain {
     pub format: vk::SurfaceFormatKHR,
     pub width: u32,
     pub height: u32,
-    pub images: Vec<vk::Image>,
+    pub images: Vec<SwapchainImageInner>,
 }
 
 /// Contains information about an image in a swapchain.
@@ -132,6 +142,8 @@ pub struct SwapchainImage {
     /// Index of the image in the swap chain.
     pub index: u32,
     pub image: Image,
+    /// Used internally by `present` to synchronize rendering to presentation.
+    render_finished: vk::Semaphore,
 }
 
 /// Graphics pipelines.
@@ -324,7 +336,7 @@ impl GpuResource for BufferUntyped {
             .as_ref()
             .unwrap()
             .last_submission_index
-            .store(submission_index, Ordering::Release);
+            .fetch_max(submission_index, Ordering::Release);
     }
 }
 
@@ -463,7 +475,7 @@ impl GpuResource for Image {
             .as_ref()
             .unwrap()
             .last_submission_index
-            .store(submission_index, Ordering::Release);
+            .fetch_max(submission_index, Ordering::Release);
     }
 }
 
@@ -601,7 +613,7 @@ impl GpuResource for ImageView {
             .as_ref()
             .unwrap()
             .last_submission_index
-            .store(submission_index, Ordering::Release);
+            .fetch_max(submission_index, Ordering::Release);
     }
 }
 

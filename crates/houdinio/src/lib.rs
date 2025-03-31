@@ -7,7 +7,8 @@ mod parser;
 
 pub use error::Error;
 use smol_str::SmolStr;
-use std::{fs, path::Path, slice};
+use std::path::Path;
+use std::{fs, slice};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -180,7 +181,11 @@ impl<'a> Iterator for BezierRunIter<'a> {
 
         self.index += 1;
 
-        Some(BezierRef { vertices, closed, basis })
+        Some(BezierRef {
+            vertices,
+            closed,
+            basis,
+        })
     }
 }
 

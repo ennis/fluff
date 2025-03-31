@@ -1,13 +1,14 @@
 mod curve;
-mod popup_button;
 mod icon_button;
+mod popup_button;
 
 pub use curve::*;
 pub use icon_button::*;
 pub use popup_button::*;
 
 use egui::{Align, Color32, RichText, TextFormat, TextStyle};
-use std::{fmt::Debug, hash::Hash};
+use std::fmt::Debug;
+use std::hash::Hash;
 
 /*
 fn enum_combo<T: Debug + PartialEq + Copy>(ui: &Ui, label: &str, options: &[T], current: &mut T) {
@@ -109,8 +110,12 @@ fn generic_list_header<R>(ui: &mut egui::Ui, label: &str, right_buttons: impl Fn
             ui.painter().hline(rect.x_range(), rect.bottom(), hline_stroke);
 
             ui.strong(label);
-            ui.allocate_ui_with_layout(ui.available_size(), egui::Layout::right_to_left(egui::Align::Center), right_buttons)
-                .inner
+            ui.allocate_ui_with_layout(
+                ui.available_size(),
+                egui::Layout::right_to_left(egui::Align::Center),
+                right_buttons,
+            )
+            .inner
         },
     );
 }
@@ -118,7 +123,11 @@ fn generic_list_header<R>(ui: &mut egui::Ui, label: &str, right_buttons: impl Fn
 pub(crate) fn style_to_text_format(style: &egui::Style) -> TextFormat {
     let mut text_format = TextFormat::default();
     text_format.color = style.visuals.text_color();
-    text_format.font_id = style.override_text_style.clone().unwrap_or(TextStyle::Body).resolve(style);
+    text_format.font_id = style
+        .override_text_style
+        .clone()
+        .unwrap_or(TextStyle::Body)
+        .resolve(style);
     text_format
 }
 
@@ -224,7 +233,6 @@ fn icon_button(ui: &mut Ui, icon: &str, color: Color32) -> Response {
         .text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), color);
     response
 }*/
-
 
 /*
 fn resource_badge(ui: &mut Ui, r: &Resource) {

@@ -1,9 +1,10 @@
-use regex::Regex;
-use std::{fs, io, path::{Path, PathBuf}};
 use bytemuck::cast_slice;
 use glam::{dmat4, dvec4};
-use graal::{CommandStream, Format, Image, ImageCreateInfo, ImageType, ImageUsage, MemoryLocation};
 use graal::util::CommandStreamExt;
+use graal::{CommandStream, Format, Image, ImageCreateInfo, ImageType, ImageUsage, MemoryLocation};
+use regex::Regex;
+use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 /// Given a path of the form `foo####.ext`, with `####` being a frame number, returns a list of all files in the same directory
 /// that follow the same pattern, sorted by frame number.
@@ -49,7 +50,13 @@ pub fn resolve_file_sequence(path: &Path) -> io::Result<Vec<(usize, PathBuf)>> {
 }
 
 /// Loads a 2D image file into a GPU texture.
-pub fn load_rgba_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, format: Format, usage: ImageUsage, mipmaps: bool) -> Image {
+pub fn load_rgba_texture(
+    cmd: &mut CommandStream,
+    path: impl AsRef<Path>,
+    format: Format,
+    usage: ImageUsage,
+    mipmaps: bool,
+) -> Image {
     let path = path.as_ref();
     //let device = cmd.device().clone();
     let image_io = image::open(path).expect("could not open image file");
@@ -71,11 +78,19 @@ pub fn load_rgba_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, format
             vec_u16 = image_io.to_luma16().to_vec();
             data = cast_slice(&vec_u16[..]);
         }
-        Format::R8G8B8A8_SRGB | Format::R8G8B8A8_UNORM | Format::R8G8B8A8_SNORM | Format::R8G8B8A8_SINT | Format::R8G8B8A8_UINT => {
+        Format::R8G8B8A8_SRGB
+        | Format::R8G8B8A8_UNORM
+        | Format::R8G8B8A8_SNORM
+        | Format::R8G8B8A8_SINT
+        | Format::R8G8B8A8_UINT => {
             vec_u8 = image_io.to_rgba8().to_vec();
             data = &vec_u8[..];
         }
-        Format::R8G8B8_SRGB | Format::R8G8B8_UNORM | Format::R8G8B8_SNORM | Format::R8G8B8_UINT | Format::R8G8B8_SINT => {
+        Format::R8G8B8_SRGB
+        | Format::R8G8B8_UNORM
+        | Format::R8G8B8_SNORM
+        | Format::R8G8B8_UINT
+        | Format::R8G8B8_SINT => {
             vec_u8 = image_io.to_rgb8().to_vec();
             data = &vec_u8[..];
         }
@@ -90,15 +105,18 @@ pub fn load_rgba_texture(cmd: &mut CommandStream, path: impl AsRef<Path>, format
         _ => panic!("unsupported format"),
     };
 
-    cmd.create_image_with_data(&ImageCreateInfo {
-        memory_location: MemoryLocation::GpuOnly,
-        type_: ImageType::Image2D,
-        usage: usage | ImageUsage::TRANSFER_DST,
-        format,
-        width,
-        height,
-        ..Default::default()
-    }, data)
+    cmd.create_image_with_data(
+        &ImageCreateInfo {
+            memory_location: MemoryLocation::GpuOnly,
+            type_: ImageType::Image2D,
+            usage: usage | ImageUsage::TRANSFER_DST,
+            format,
+            width,
+            height,
+            ..Default::default()
+        },
+        data,
+    )
 }
 
 /// Returns the coefficients of the Lagrange interpolation polynomial for the given points.

@@ -2,7 +2,7 @@ use std::io;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum  Error {
+pub enum Error {
     #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
     #[error("unexpected property type")]

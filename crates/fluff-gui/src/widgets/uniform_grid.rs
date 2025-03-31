@@ -51,7 +51,7 @@ impl UniformGrid {
 }
 
 impl Element for UniformGrid {
-    fn measure(&mut self, _cx: &TreeCtx,  layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         if let Some(available) = layout_input.width.available() {
             let (rows, columns) = self.row_column_count(available);
             let width = columns as f64 * self.cell_size.width + (columns - 1) as f64 * self.h_gap;

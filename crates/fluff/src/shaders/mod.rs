@@ -4,9 +4,8 @@
 
 pub mod types;
 
-use std::marker::PhantomData;
 use graal::DeviceAddress;
-
+use std::marker::PhantomData;
 
 // Define type aliases for slang types. These are referenced in the generated bindings, which
 // are just a syntactical translation of the slang declarations to Rust.
@@ -21,7 +20,7 @@ type float = f32;
 //type bool = u32;
 type float2 = glam::Vec2;
 type float3 = glam::Vec3;
-type float4 = [f32;4];
+type float4 = [f32; 4];
 type uint2 = glam::UVec2;
 type uint3 = glam::UVec3;
 type uint4 = glam::UVec4;
@@ -58,7 +57,6 @@ pub struct RWTexture2D_Handle<T> {
     _phantom: PhantomData<fn() -> T>,
 }
 
-
 impl<T> From<graal::ImageHandle> for RWTexture2D_Handle<T> {
     fn from(handle: graal::ImageHandle) -> Self {
         RWTexture2D_Handle {
@@ -78,13 +76,9 @@ pub struct SamplerState_Handle {
 
 impl From<graal::SamplerHandle> for SamplerState_Handle {
     fn from(handle: graal::SamplerHandle) -> Self {
-        SamplerState_Handle {
-            handle,
-            _unused: 0,
-        }
+        SamplerState_Handle { handle, _unused: 0 }
     }
 }
 
 // include generated bindings by the build script
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-

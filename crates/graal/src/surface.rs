@@ -1,7 +1,8 @@
 #[cfg(windows)]
 mod platform {
     use crate::instance::{get_vulkan_entry, get_vulkan_instance};
-    use ash::{extensions::khr::Win32Surface, vk};
+    use ash::extensions::khr::Win32Surface;
+    use ash::vk;
     use raw_window_handle::RawWindowHandle;
     use std::os::raw::c_void;
     use std::sync::LazyLock;

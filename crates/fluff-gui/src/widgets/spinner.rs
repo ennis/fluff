@@ -2,6 +2,7 @@ use crate::colors::DISPLAY_TEXT;
 use crate::widgets::menu::ContextMenuExt;
 use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::{BorderPosition, PlacementExt, RIGHT_CENTER, vec2};
+use kyute::element::TreeCtx;
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::event::{Key, PointerButton, ScrollDelta};
@@ -10,7 +11,6 @@ use kyute::kurbo::{Insets, Vec2};
 use kyute::model::EventSource;
 use kyute::text::Selection;
 use kyute::{Color, Point, Rect, Size};
-use kyute::element::TreeCtx;
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -324,7 +324,7 @@ impl Element for SpinnerBase {
                 cx.set_pointer_capture();
 
                 // check for button clicks
-               // let local_pos = (p.position - cx.bounds().origin()).to_point();
+                // let local_pos = (p.position - cx.bounds().origin()).to_point();
 
                 match buttons.hit_test(p.position) {
                     Some(Part::UpButton) => {

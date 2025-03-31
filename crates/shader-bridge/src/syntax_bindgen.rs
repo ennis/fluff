@@ -169,7 +169,6 @@ enum Token<'a> {
     LEXER_ERROR,
 }
 
-
 type Lexer<'a> = Peekable<logos::SpannedIter<'a, Token<'a>>>;
 type SpannedToken<'a> = (Token<'a>, Span);
 
@@ -201,7 +200,7 @@ impl<'a> LexerExt<'a> for Lexer<'a> {
             Some((Token::IDENT(ident), _)) => Ok(ident),
             Some((kind, range)) => Err(SyntaxError::new(
                 range,
-                format!("expected identifier, found {:?}  (at {:?})",  kind, Location::caller()),
+                format!("expected identifier, found {:?}  (at {:?})", kind, Location::caller()),
             )),
             None => Err(SyntaxError::eof()),
         }
@@ -339,7 +338,6 @@ fn translate_type(source: &str, lexer: &mut Lexer) -> Result<TokenStream, Syntax
 
 /// Translates a variable declaration or a field declaration.
 fn translate_variable(source: &str, lexer: &mut Lexer, is_field: bool) -> Result<TokenStream, SyntaxError> {
-
     let mut ty = translate_type(source, lexer)?;
     let ident = lexer.expect_ident()?;
     let (is_array, array_len) = parse_array_declarator(source, lexer)?;
@@ -361,8 +359,9 @@ fn translate_variable(source: &str, lexer: &mut Lexer, is_field: bool) -> Result
 
     lexer.expect(SEMICOLON)?;
 
-
-    let ident_snake = if is_field { ident.to_snake_case() } else {
+    let ident_snake = if is_field {
+        ident.to_snake_case()
+    } else {
         ident.to_shouty_snake_case()
     };
     let ident_snake = format_ident!("{ident_snake}");
@@ -405,7 +404,7 @@ fn translate_struct(source: &str, lexer: &mut Lexer) -> Result<TokenStream, Synt
     })
 }
 
-fn write_sanity_checks(out: &mut TokenStream){
+fn write_sanity_checks(out: &mut TokenStream) {
     let q = quote! {
         const _LAYOUT_CHECKS: () = {
             const fn same_layout<A, B>() -> bool {
@@ -472,9 +471,9 @@ impl LineMap {
     }
 
     fn line_col(&self, offset: usize) -> (usize, usize) {
-        let line = self.lines.binary_search(&offset).unwrap_or_else(|i| i-1).max(0);
+        let line = self.lines.binary_search(&offset).unwrap_or_else(|i| i - 1).max(0);
         let col = offset - self.lines[line] + 1;
-        (line+1, col)
+        (line + 1, col)
     }
 }
 

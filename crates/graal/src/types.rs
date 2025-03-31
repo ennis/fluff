@@ -1,4 +1,5 @@
-use std::{borrow::Cow, path::Path};
+use std::borrow::Cow;
+use std::path::Path;
 
 // TODO: eventually all vk types should disappear from the public API
 use crate::{aspects_for_format, ShaderDescriptor};

@@ -1,24 +1,17 @@
-use graal::{platform::windows::DeviceExtWindows, vk, ImageResourceCreateInfo};
+use graal::platform::windows::DeviceExtWindows;
+use graal::{vk, ImageResourceCreateInfo};
 use std::ptr;
 
-use windows::{
-    core::Interface,
-    Win32::{
-        Foundation::HANDLE,
-        Graphics::{
-            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1},
-            Direct3D11::{
-                D3D11CreateDevice, ID3D11Device5, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_CPU_ACCESS_FLAG,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
-                D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-            },
-            Dxgi::{
-                Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
-                IDXGIResource1, DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
-            },
-        },
-    },
+use windows::core::Interface;
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device5, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_CPU_ACCESS_FLAG,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
+    D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::{IDXGIResource1, DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE};
 
 #[test]
 fn test_win32_share() {

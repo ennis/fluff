@@ -1,5 +1,5 @@
 //! Description of paints.
-use kurbo::{ Size};
+use kurbo::Size;
 use skia_safe as sk;
 
 use crate::drawing::{Image, LinearGradient, ToSkia};

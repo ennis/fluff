@@ -2,6 +2,7 @@
 use std::f32::consts::TAU;
 
 use crate::camera_control::Camera;
+use crate::gpu;
 use crate::shaders::{
     OVERLAY_LINES_FRAGMENT_MAIN, OVERLAY_LINES_VERTEX_MAIN, OVERLAY_POLYGONS_FRAGMENT_MAIN,
     OVERLAY_POLYGONS_VERTEX_MAIN,
@@ -9,7 +10,6 @@ use crate::shaders::{
 use glam::{vec3, DVec2, DVec3, Mat4, Vec3};
 use graal::prelude::*;
 use graal::{ColorAttachment, DepthStencilAttachment, RenderPassInfo};
-use crate::gpu;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug)]
@@ -230,7 +230,7 @@ fn create_pipelines(target_color_format: Format, target_depth_format: Format) ->
         },
         pre_rasterization_shaders: PreRasterizationShaders::PrimitiveShading {
             vertex: OVERLAY_LINES_VERTEX_MAIN,
-        }, 
+        },
         rasterization: RasterizationState {
             polygon_mode: vk::PolygonMode::FILL,
             cull_mode: Default::default(),
@@ -495,9 +495,7 @@ impl OverlayRenderer {
             .device()
             .upload_slice(BufferUsage::VERTEX_BUFFER, &self.vertices);
         vertex_buffer.set_name("overlay vertex buffer");
-        let index_buffer = encoder
-            .device()
-            .upload_slice(BufferUsage::INDEX_BUFFER, &self.indices);
+        let index_buffer = encoder.device().upload_slice(BufferUsage::INDEX_BUFFER, &self.indices);
         index_buffer.set_name("overlay index buffer");
 
         encoder.set_viewport(0.0, height as f32, width as f32, -(height as f32), 0.0, 1.0);

@@ -1,10 +1,10 @@
+use crate::Result;
+use crate::error::{Error, invalid_data};
 use byteorder::ReadBytesExt;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::str::FromStr;
 use std::{fmt, io};
-use crate::error::{invalid_data, Error};
-use crate::Result;
 
 #[derive(Clone, Default)]
 pub struct Metadata {
@@ -48,7 +48,7 @@ impl FromStr for Metadata {
 
 pub(crate) fn read_indexed_metadata(data: &[u8]) -> Result<Vec<Metadata>> {
     let mut cursor = io::Cursor::new(data);
-    let mut metadata = vec![Metadata::default()];  // metadata #0 is empty metadata
+    let mut metadata = vec![Metadata::default()]; // metadata #0 is empty metadata
     while cursor.position() < data.len() as u64 {
         let size = cursor.read_u8()?;
         let mut buffer = vec![0; size as usize];

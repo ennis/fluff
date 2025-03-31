@@ -1,5 +1,6 @@
 //! JSON geometry format
-use crate::{error::Error, parser::Event};
+use crate::error::Error;
+use crate::parser::Event;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ParserState {
