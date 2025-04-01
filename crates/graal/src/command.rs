@@ -772,10 +772,10 @@ impl CommandStream {
                 SemaphoreSignal::D3D12Fence {
                     semaphore,
                     fence: _,
-                    value: _,
+                    value,
                 } => {
                     signal_semaphores.push(*semaphore);
-                    signal_semaphore_values.push(0);
+                    signal_semaphore_values.push(*value);
                     d3d12_fence_submit = true;
                 }
             }

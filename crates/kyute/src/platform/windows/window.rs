@@ -14,6 +14,7 @@ use windows::Win32::Graphics::Direct2D::Common::{D2D_MATRIX_4X4_F, D2D_MATRIX_4X
 use windows::Win32::Graphics::DirectComposition::{
     IDCompositionTarget, IDCompositionVisual, IDCompositionVisual2, IDCompositionVisual3,
 };
+use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 use winit::platform::windows::WindowBuilderExtWindows;
 
 /// Win32 window.
@@ -101,27 +102,38 @@ impl Deref for Window {
 }
 
 impl Window {
+    
+    fn get_or_create_dcomp_visual(&self, layer_id: LayerID) -> IDCompositionVisual3 {
+        let mut layer_map = self.layer_map.borrow_mut();
+        if let Some(visual) = layer_map.get(layer_id) {
+            //eprintln!("get_or_create_dcomp_visual (layer_id: {:?}) -- update", layer_id);
+            visual.clone()
+        } else {
+            unsafe {
+                //eprintln!("get_or_create_dcomp_visual (layer_id: {:?}) -- new visual", layer_id);
+                let visual = app_backend().composition_device.CreateVisual().unwrap();
+                let visual = visual.cast::<IDCompositionVisual3>().unwrap();
+                layer_map.insert(layer_id, visual.clone());
+                visual
+            }
+        }
+    }
+    
     /// Creates a layer with the specified ID and attaches a `DrawSurface` to it.
     ///
     /// The layer displays the contents of the `DrawSurface`.
     pub fn attach_draw_surface(&self, layer_id: LayerID, surface: &DrawSurface) {
-        let mut layer_map = self.layer_map.borrow_mut();
-        if let Some(visual) = layer_map.get(layer_id) {
-            eprintln!("Window::attach_draw_surface (layer_id: {:?}) -- update", layer_id);
-            unsafe {
-                // update existing visual with new content
-                visual.SetContent(&surface.swap_chain).unwrap();
-            }
-        } else {
-            unsafe {
-                eprintln!("Window::attach_draw_surface (layer_id: {:?}) -- new visual", layer_id);
-                // create a new visual
-                let visual = app_backend().composition_device.CreateVisual().unwrap();
-                // IDCompositionVisual3 is available from Windows 8.1 onwards
-                let visual = visual.cast::<IDCompositionVisual3>().unwrap();
-                visual.SetContent(&surface.swap_chain).unwrap();
-                layer_map.insert(layer_id, visual);
-            }
+        let visual = self.get_or_create_dcomp_visual(layer_id);
+        unsafe {
+            visual.SetContent(&surface.swap_chain).unwrap();
+        }
+    }
+    
+    /// Attaches a swap chain to the specified layer.
+    pub fn attach_swap_chain(&self, layer_id: LayerID, swap_chain: IDXGISwapChain3) {
+        let visual = self.get_or_create_dcomp_visual(layer_id);
+        unsafe {
+            visual.SetContent(&swap_chain).unwrap();
         }
     }
 
@@ -142,6 +154,8 @@ impl Window {
     }
 
     fn end_composition(&self) {
+        // TODO: all layers not used in the composition should increment an "age" counter
+        //       and be deleted if they are not used for a certain number of frames.
         unsafe {
             app_backend().composition_device.Commit().unwrap();
         }
@@ -172,7 +186,7 @@ impl<'a> CompositionContext<'a> {
     ///
     /// If no layer with the specified ID exists for the window.
     pub fn add_layer(&mut self, layer_id: LayerID, transform: Affine) {
-        eprintln!("CompositionContext::add_layer (layer_id: {:?})", layer_id);
+        //eprintln!("CompositionContext::add_layer (layer_id: {:?})", layer_id);
         let layer_map = self.window.layer_map.borrow();
         let transform = affine_to_d2d_matrix_4x4(&transform);
         let visual = layer_map.get(layer_id).unwrap();

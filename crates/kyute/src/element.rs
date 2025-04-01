@@ -3,7 +3,7 @@ use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventSource};
 use crate::window::WindowHandle;
-use crate::{compositor, PaintCtx};
+use crate::{PaintCtx};
 use bitflags::bitflags;
 use kurbo::{Point, Rect, Size, Vec2};
 use std::any::Any;
@@ -274,7 +274,41 @@ pub trait Element: Any {
         }
     }
 
-    /// Called to perform hit-testing on the bounds of this element.
+    /// Called to perform hit-testing on this element and its children, recursively.
+    ///
+    /// This is used primarily to determine which element should receive a pointer event.
+    ///
+    /// Implementations should also hit-test their children recursively by calling `ElementRc::hit_test`
+    /// (unless the element explicitly filters out pointer events for its children).
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - hit-test context. Should be passed to child elements.
+    /// * `point` - the point to test, in window coordinates
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// pub struct MyElement {
+    ///    child: ElementAny,
+    /// }
+    ///
+    /// impl Element for MyElement {
+    ///    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+    ///       // Check if the point is inside the bounds of this element
+    ///       if ctx.bounds.contains(point) {
+    ///          // assume that the child is fully contained in the parent
+    ///          // so hit-test it only if the point is inside the parent
+    ///          self.child.hit_test(ctx, point);
+    ///          true
+    ///      } else {
+    ///          false
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// FIXME: this should receive a TreeCtx like the other methods
+    /// TODO: there could be a default implementation
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool;
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
@@ -769,7 +803,7 @@ impl ElementCtx {
             parent: WeakElementAny::default(),
             weak_this: WeakElementAny::default(),
             //weak_this_any: Weak::<()>::default(),
-            change_flags: Default::default(),
+            change_flags: Cell::new(ChangeFlags::PAINT | ChangeFlags::LAYOUT),
             window: WindowHandle::default(),
             offset: Default::default(),
             window_position: Default::default(),

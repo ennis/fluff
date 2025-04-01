@@ -4,15 +4,13 @@ use kurbo::Size;
 use std::rc::Rc;
 use windows::core::{Interface, Owned};
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
-};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{
     IDXGISwapChain3, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
     DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 
-const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
+pub(super) const SWAP_CHAIN_BUFFER_COUNT: u32 = 3;
 const SWAP_CHAIN_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
 const SKIA_COLOR_TYPE: skia_safe::ColorType = skia_safe::ColorType::RGBA8888;
 
@@ -60,7 +58,7 @@ impl SwapChainInner {
                         Scaling: DXGI_SCALING_STRETCH,
                         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
                         AlphaMode: DXGI_ALPHA_MODE_IGNORE,
-                        Flags: DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
+                        Flags: 0 // DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
                     },
                     None,
                 )
@@ -179,6 +177,19 @@ pub(crate) fn create_composition_swap_chain(dxgi_format: DXGI_FORMAT, width: u32
         width != 0 && height != 0,
         "swap chain width and height must be non-zero"
     );
+    
+    // NOTE: using too few buffers can lead to contention on the present queue since frames
+    // must wait for a buffer to be available.
+    //
+    // For instance:
+    // - Compositor tick
+    // - Render frame 1 to buffer A
+    // - Compositor tick
+    // - Render frame 2 to buffer B
+    //    (frame 1 took longer than expected)
+    //    render frame 1 finishes, present buffer A
+    // - Render frame 3 to buffer A
+    //    fence on 
 
     // SAFETY: FFI calls
     unsafe {
@@ -199,8 +210,8 @@ pub(crate) fn create_composition_swap_chain(dxgi_format: DXGI_FORMAT, width: u32
                     BufferCount: SWAP_CHAIN_BUFFER_COUNT,
                     Scaling: DXGI_SCALING_STRETCH,
                     SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-                    AlphaMode: DXGI_ALPHA_MODE_IGNORE,
-                    Flags: DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
+                    AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+                    Flags: 0 //DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
                 },
                 None,
             )
@@ -213,7 +224,7 @@ pub(crate) fn create_composition_swap_chain(dxgi_format: DXGI_FORMAT, width: u32
         // I.e. at any time there's one front buffer current being scanned out,
         // and a back buffer being rendered to. This means that once we've rendered a frame,
         // we can't render another until the next vflip.
-        swap_chain.SetMaximumFrameLatency(1).unwrap();
+        //swap_chain.SetMaximumFrameLatency(1).unwrap();
 
         swap_chain
     }

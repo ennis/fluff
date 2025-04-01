@@ -1,6 +1,6 @@
 use crate::app_backend;
 use crate::compositor::ColorType;
-use crate::platform::format_to_dxgi_format;
+use crate::platform::windows::format_to_dxgi_format;
 use crate::platform::windows::swap_chain::create_composition_swap_chain;
 use skia_safe::gpu::d3d::TextureResourceInfo;
 use skia_safe::gpu::{FlushInfo, Protected};
@@ -9,12 +9,12 @@ use skia_safe::{ColorSpace, SurfaceProps};
 use windows::core::Owned;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Direct3D12::{
-    ID3D12Resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET,
+    ID3D12Resource, D3D12_RESOURCE_STATE_COMMON,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_PRESENT};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT, DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT};
 use windows::Win32::System::Threading::WaitForSingleObject;
 
 /// Represents a surface that can be drawn on with a skia canvas.
@@ -60,7 +60,7 @@ impl DrawSurface {
         let swap_chain = create_composition_swap_chain(dxgi_format, width, height);
         let frame_latency_waitable = unsafe {
             let handle = swap_chain.GetFrameLatencyWaitableObject();
-            assert!(!handle.is_invalid());
+            //assert!(!handle.is_invalid());
             Owned::new(handle)
         };
         let surface = DrawSurface {
@@ -71,7 +71,7 @@ impl DrawSurface {
             height,
         };
         // Initial wait for presentation as suggested by the docs.
-        surface.wait_for_presentation();
+        //surface.wait_for_presentation();
         surface
     }
 
@@ -160,9 +160,12 @@ impl DrawSurface {
             // (DrawSurface swap chains have only two buffers), this call is likely to block until
             // the next blanking interval.
 
-            let t = std::time::Instant::now();
-            self.swap_chain.Present(0, DXGI_PRESENT::default()).unwrap();
-            eprintln!("Present took {:?}", t.elapsed());
+            //let t = std::time::Instant::now();
+            let r = self.swap_chain.Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+            if r == DXGI_ERROR_WAS_STILL_DRAWING {
+                eprintln!("DXGI_ERROR_WAS_STILL_DRAWING");
+            }
+            //eprintln!("Present took {:?}", t.elapsed());
         }
 
         // Mark the end of a frame for Tracy.
@@ -172,7 +175,13 @@ impl DrawSurface {
             client.frame_mark();
         }
 
-        self.wait_for_presentation();
+
+        // FIXME this is not the right way to do frame pacing when there are multiple swap chains,
+        //       because each swap chain in the compositor tree will wait for the compositor
+        //       (thus, if there are N layers, the window will take N compositor frames to update!).
+        //       The correct way to do this is to use the compositor's frame pacing mechanism.
+        //       (https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock)
+        //self.wait_for_presentation();
     }
 }
 

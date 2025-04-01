@@ -1,18 +1,19 @@
 //! Composition swap chains with vulkan interop.
 use crate::app_backend;
 use crate::compositor::ColorType;
-use crate::platform::format_to_dxgi_format;
-use crate::platform::windows::swap_chain::create_composition_swap_chain;
+use crate::platform::windows::format_to_dxgi_format;
+use crate::platform::windows::swap_chain::{create_composition_swap_chain, SWAP_CHAIN_BUFFER_COUNT};
 use graal::platform::windows::DeviceExtWindows;
 use graal::{vk, SemaphoreWaitKind};
 use kurbo::Size;
 use std::cell::Cell;
-use windows::core::Interface;
+use windows::core::{Interface, Owned};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
 use windows::Win32::Graphics::Direct3D12::{
     ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_FENCE_FLAG_SHARED,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_PRESENT};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT, DXGI_PRESENT_DO_NOT_WAIT};
+use windows::Win32::System::Threading::WaitForSingleObject;
 
 struct VulkanInteropImage {
     /// Shared handle to DXGI swap chain buffer.
@@ -30,12 +31,22 @@ struct VulkanInteropImage {
     discard_cmd_list: ID3D12GraphicsCommandList,
 }
 
+/// Image returned by `acquire` that can be rendered to.
+pub struct DxgiVulkanInteropImage {
+    pub image: graal::Image,
+    /// Semaphore that should be waited on before rendering to the image.
+    pub ready: graal::SemaphoreWait,
+    /// Should be signaled after rendering to the image.
+    pub rendering_finished: graal::SemaphoreSignal
+}
+
+
 /// DXGI swap chain that provides facilities for interoperation with Vulkan.
 ///
 /// This holds a composition DXGI swap chain, whose images are imported as Vulkan images.
 /// This uses VK_EXT_external_memory_win32 to import the swap chain images.
 pub struct DxgiVulkanInteropSwapChain {
-    pub swap_chain: IDXGISwapChain3,
+    pub dxgi_swap_chain: IDXGISwapChain3,
     device: graal::RcDevice,
     /// Imported vulkan images for the swap chain buffers.
     images: Vec<VulkanInteropImage>,
@@ -51,6 +62,9 @@ pub struct DxgiVulkanInteropSwapChain {
     fence_shared_handle: HANDLE,
     /// Presentation fence value
     fence_value: Cell<u64>,
+
+    // frame latency waitable
+    frame_latency_waitable: Owned<HANDLE>,
 }
 
 impl DxgiVulkanInteropSwapChain {
@@ -96,10 +110,14 @@ impl DxgiVulkanInteropSwapChain {
         let mut images = vec![];
 
         unsafe {
+
+            let frame_latency_waitable = Owned::new(swap_chain.GetFrameLatencyWaitableObject());
+            //assert!(!frame_latency_waitable.is_invalid());
+
             app.command_allocator.get_ref().unwrap().Reset().unwrap();
 
             // wrap swap chain buffers as vulkan images
-            for i in 0..2 {
+            for i in 0..SWAP_CHAIN_BUFFER_COUNT {
                 // obtain the ID3D12Resource of each swap chain buffer and create a shared handle for them
                 let swap_chain_buffer = swap_chain.GetBuffer::<ID3D12Resource>(i).unwrap();
                 // NOTE: I'm not sure if CreateSharedHandle is supposed to work on swap chain
@@ -166,18 +184,32 @@ impl DxgiVulkanInteropSwapChain {
                 fence_shared_handle.0,
                 None,
             );
+            device.set_object_name(fence_semaphore, "DxgiVulkanSharedFence");
 
-            DxgiVulkanInteropSwapChain {
-                swap_chain,
+            let swap_chain = DxgiVulkanInteropSwapChain {
+                dxgi_swap_chain: swap_chain,
                 images,
-                fence_value: Cell::new(0),
+                fence_value: Cell::new(1),
                 fence_semaphore,
                 fence,
                 fence_shared_handle,
                 surface_acquired: Cell::new(false),
                 device,
+                frame_latency_waitable
+            };
+            //swap_chain.wait_for_presentation();
+            swap_chain
+        }
+    }
+
+    fn wait_for_presentation(&self) {
+        //let t = std::time::Instant::now();
+        if !self.frame_latency_waitable.is_invalid() {
+            unsafe {
+                WaitForSingleObject(*self.frame_latency_waitable, 1000);
             }
         }
+        //trace!("wait_for_presentation took {:?}", t.elapsed());
     }
 
     /// Acquires the next image in the swap chain, and returns a vulkan image handle to it.
@@ -187,15 +219,15 @@ impl DxgiVulkanInteropSwapChain {
     ///
     /// You should call `present` to release the returned image, before calling this again.
     ///
-    /// FIXME: there should not be any active command stream when calling this! this is extremely
-    ///        error prone (simply create the command stream before acquiring the image,
-    ///        and you'll get an assert)
-    pub(crate) fn acquire(&self) -> &graal::Image {
+    /// # Return value
+    /// Returns a tuple containing the vulkan image handle and a semaphore wait object that
+    /// should be waited on before rendering to the image.
+    pub fn acquire(&self) -> DxgiVulkanInteropImage {
         assert!(!self.surface_acquired.get(), "surface already acquired");
 
         let app = app_backend();
 
-        let index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+        let index = unsafe { self.dxgi_swap_chain.GetCurrentBackBufferIndex() };
         let image = &self.images[index as usize];
 
         let fence_value = self.fence_value.get();
@@ -208,57 +240,51 @@ impl DxgiVulkanInteropSwapChain {
             app.command_queue
                 .ExecuteCommandLists(&[Some(image.discard_cmd_list.cast().unwrap())]);
             app.command_queue.Signal(&self.fence, fence_value).unwrap();
-
-            // TODO improve API legibility in graal: the flush does nothing but waiting for the fence
-            //      maybe add a shorthand for this?
-            self.device
-                .create_command_stream()
-                .flush(
-                    &[graal::SemaphoreWait {
-                        kind: SemaphoreWaitKind::D3D12Fence {
-                            semaphore: self.fence_semaphore,
-                            fence: Default::default(),
-                            value: fence_value,
-                        },
-                        dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
-                    }],
-                    &[],
-                )
-                .unwrap();
         }
 
         self.surface_acquired.set(true);
-        &image.image
+
+        // FIXME: SemaphoreWait is not the correct type because the caller should choose the dst_stage
+        DxgiVulkanInteropImage {
+            image: image.image.clone(),
+            ready: graal::SemaphoreWait {
+                kind: SemaphoreWaitKind::D3D12Fence {
+                    semaphore: self.fence_semaphore,
+                    fence: Default::default(),
+                    value: fence_value,
+                },
+                dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
+            },
+            rendering_finished: graal::SemaphoreSignal::D3D12Fence {
+                semaphore: self.fence_semaphore,
+                fence: Default::default(),
+                value: fence_value + 1,
+            }
+        }
     }
 
     /// Submits the last acquired swap chain image for presentation.
     ///
     /// TODO: incremental present
-    pub(crate) fn present(&self) {
+    pub fn present(&self) {
         let fence_value = self.fence_value.get();
         self.fence_value.set(fence_value + 1);
 
         // Synchronization: Vulkan -> D3D12
         unsafe {
-            // signal the fence on the vulkan side ...
-            self.device
-                .create_command_stream()
-                .flush(
-                    &[],
-                    &[graal::SemaphoreSignal::D3D12Fence {
-                        semaphore: self.fence_semaphore,
-                        fence: Default::default(),
-                        value: fence_value,
-                    }],
-                )
-                .unwrap();
-            // ... and wait for it on the D3D12 side
+            //eprintln!("DxgiVulkanInteropSwapChain::present: fence_value = {}", fence_value);
+            // synchronize with vulkan rendering before presenting
             app_backend().command_queue.Wait(&self.fence, fence_value).unwrap();
             // present the image
-            self.swap_chain.Present(1, DXGI_PRESENT::default()).unwrap();
+            //self.dxgi_swap_chain.Present(0, DXGI_PRESENT::default()).unwrap();
+            let r = self.dxgi_swap_chain.Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+            if r == DXGI_ERROR_WAS_STILL_DRAWING {
+                eprintln!("DXGI_ERROR_WAS_STILL_DRAWING");
+            }
         }
 
         self.surface_acquired.set(false);
+        //self.wait_for_presentation();
     }
 }
 
@@ -282,8 +308,9 @@ impl Drop for DxgiVulkanInteropSwapChain {
 
 fn format_to_vk_format(format: ColorType) -> vk::Format {
     match format {
-        ColorType::RGBA8888 => vk::Format::R8G8B8A8_SRGB,
-        ColorType::BGRA8888 => vk::Format::B8G8R8A8_SRGB,
+        ColorType::RGBA8888 => vk::Format::R8G8B8A8_UNORM,
+        ColorType::BGRA8888 => vk::Format::B8G8R8A8_UNORM,
+        ColorType::SRGBA8888 => vk::Format::R8G8B8A8_SRGB,
         _ => unimplemented!(),
     }
 }

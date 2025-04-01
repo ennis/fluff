@@ -1,10 +1,11 @@
-use crate::compositor::{ColorType, Composition, CompositionBuilder};
-use crate::drawing::{round_to_device_pixel, round_to_device_pixel_center, vec2, BorderPosition, Image, Paint, ToSkia};
-use crate::element::{with_tree_ctx, ChangeFlags, ElementAny, ElementRc, TreeCtx};
+use crate::compositor::CompositionBuilder;
+use crate::drawing::{round_to_device_pixel, round_to_device_pixel_center, BorderPosition, Image, Paint, ToSkia};
+use crate::element::{with_tree_ctx, ChangeFlags, ElementAny, TreeCtx};
 use crate::text::{TextLayout, TextRun, TextStyle};
-use crate::{platform, Color};
+use crate::Color;
 use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Size, Vec2};
 use skia_safe::PaintStyle;
+use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 
 struct Layer {
     transform: Affine,
@@ -89,6 +90,17 @@ impl<'a> PaintCtx<'a> {
         // restore the previous bounds
         self.comp_builder.set_bounds(self.bounds);
     }
+
+    pub fn finish_picture_layer(&mut self) {
+        self.comp_builder.finish_record_and_push_picture_layer();
+        //self.comp_builder.add_swap_chain(pos, swap_chain);
+    }
+
+    #[cfg(windows)]
+    pub fn add_swap_chain(&mut self, pos: Point, swap_chain: IDXGISwapChain3) {
+        self.comp_builder.add_swap_chain(pos, swap_chain);
+    }
+    
 
     /*
     /// Creates a color filter layer and invokes the drawing callback with the new context.

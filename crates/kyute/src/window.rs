@@ -23,9 +23,7 @@ use winit::monitor::MonitorHandle;
 use crate::application::WindowHandler;
 use crate::compositor::{ColorType, Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
-use crate::element::{
-    dispatch_event, get_keyboard_focus, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny,
-};
+use crate::element::{dispatch_event, get_keyboard_focus, ChangeFlags, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny};
 use crate::event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
@@ -661,6 +659,10 @@ impl WindowInner {
         if physical_size != self.last_physical_size.get() {
             self.last_physical_size.set(physical_size);
             //self.layer.set_surface_size(physical_size);
+        }
+
+        if !self.root.0.ctx.change_flags.get().contains(ChangeFlags::PAINT) {
+            return;
         }
 
         if self.needs_layout.replace(false) {

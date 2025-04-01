@@ -68,9 +68,15 @@ windows = { version = "0.58.0", features = [
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D"] }
 
+[[example]]
+name = "swap_chain"
+path = "examples/swap_chain.rs"
+required-features = ["vulkan-interop"]
+
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.10", features = ["fmt", "env-filter"] }
 tracing-tree = "0.4"
+graal = { workspace = true }
 
 [features]
 default = ["d3d"]

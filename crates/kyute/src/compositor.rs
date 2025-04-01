@@ -1,11 +1,10 @@
 //! System compositor interface
 use crate::drawing::{FromSkia, ToSkia};
-use crate::element::ElementCtx;
 use crate::platform::DrawSurface;
-use crate::{app_backend, platform};
-use kurbo::{Affine, Point, Rect, Size, Vec2};
+use crate::{platform};
+use kurbo::{Affine, Point, Rect, Vec2};
 use skia_safe as sk;
-use slotmap::{new_key_type, Key};
+use slotmap::{new_key_type};
 use std::ops::Range;
 use tracing::trace;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -16,6 +15,10 @@ new_key_type! {
     /// The ID is unique across all layers in the application.
     pub struct LayerID;
 }
+
+/// Native swap chain type.
+#[cfg(windows)]
+pub type NativeSwapChain = windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 
 /// Pixel format of a drawable surface.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
@@ -93,17 +96,14 @@ impl PictureLayer {
     }
 }
 
-/*
-struct PlatformSwapChainLayer {
-    swap_chain: SwapChain,
-    /// Position of the layer in window coordinates.
-    pos: Point,
-    layer: Option<platform::SwapChainLayer>,
-}*/
-
 enum Layer {
     Picture(PictureLayer),
-    //SwapChain(PlatformSwapChainLayer),
+    #[cfg(windows)]
+    NativeSwapChain {
+        swap_chain: NativeSwapChain,
+        x: u32,
+        y: u32,
+    },
     Group,
 }
 
@@ -153,6 +153,10 @@ impl Composition {
                     assert!(pic.surface.is_some());
                     window.attach_draw_surface(id, &pic.surface.as_ref().unwrap());
                 }
+                #[cfg(windows)]
+                Layer::NativeSwapChain { swap_chain, .. } => {
+                    window.attach_swap_chain(id, swap_chain.clone());
+                }
                 // TODO: external swap chains
                 _ => {}
             }
@@ -165,16 +169,14 @@ impl Composition {
                 StackOp::Exit => {}
                 StackOp::Layer(layer) => match &self.layers[layer] {
                     Layer::Picture(pic) => {
-                        cc.add_layer(
-                            layer,
-                            Affine::translate(Vec2 {
-                                x: pic.x0 as f64,
-                                y: pic.y0 as f64,
-                            }),
-                        );
+                        cc.add_layer(layer, Affine::translate(Vec2::new(pic.x0 as f64, pic.y0 as f64)));
                     }
                     Layer::Group => {
                         unreachable!()
+                    }
+                    #[cfg(windows)]
+                    Layer::NativeSwapChain { x, y, .. } => {
+                        cc.add_layer(layer, Affine::translate(Vec2::new(*x as f64, *y as f64)));
                     }
                 },
             }
@@ -225,12 +227,16 @@ impl CompositionBuilder {
 
     /// Sets the current drawing bounds in window coordinates.
     pub fn set_bounds(&mut self, bounds: Rect) {
+        if !self.bounds.contains_rect(bounds) {
+            // If the new bounds are larger than the current picture recorder,
+            // finish the current picture recorder and start a new one with the larger bounds.
+            // It's up to the caller to avoid calling set_bounds in a way that would cause
+            // the picture recorder to be recreated too often.
+            self.finish_record_and_push_picture_layer();
+        }
+        
         // This will affect the bounds of the next created picture recorder.
         self.bounds = bounds;
-        // TODO: If the bounds are larger than the current picture recorder bounds,
-        //       finish the current picture recorder and start a new one with the larger bounds.
-        //       It's up to the caller to avoid calling set_bounds in a way that would cause
-        //       the picture recorder to be recreated too often.
     }
 
     fn insert_layer(&mut self, layer: Layer) -> LayerID {
@@ -307,9 +313,16 @@ impl CompositionBuilder {
     /// Returns the current picture recorder.
     pub fn picture_recorder(&mut self) -> &mut sk::PictureRecorder {
         self.picture_recorder.get_or_insert_with(|| {
-            eprintln!("new picture recorder: {:?}", self.bounds);
+            //eprintln!("new picture recorder: {:?}", self.bounds);
             let mut rec = sk::PictureRecorder::new();
             rec.begin_recording(self.bounds.to_skia(), None);
+            // clear to transparent
+            let canvas = rec.recording_canvas().unwrap();
+            canvas.clear(sk::Color::TRANSPARENT);
+            // The canvas should be in window coordinates, but the layer origin is not necessarily at (0, 0) in window coordinates,
+            // so we need to compensate for that.
+            // FIXME: this ignores the scale factor!
+            canvas.translate((-self.bounds.x0 as f32, -self.bounds.y0 as f32));
             rec
         })
     }
@@ -372,21 +385,46 @@ impl CompositionBuilder {
         self.sp += g.len();
     }
 
-    /*pub fn add_swap_chain_layer(&mut self, window_pos: Point, swap_chain: &platform::SwapChain) {
+    /// Adds a native swap chain layer.
+    ///
+    /// TODO: make that not windows-specific (use a generic type)
+    ///       nothing in the implementation of the function is windows-specific, only the
+    ///       swap chain type
+    #[cfg(windows)]
+    pub fn add_swap_chain(&mut self, window_pos: Point, swap_chain: NativeSwapChain) {
         self.finish_record_and_push_picture_layer();
 
         // cannibalize the next layer if it's a swap chain layer
-        if let StackOp::Layer(layer) = self.comp.stack[self.sp] {
-            if let Layer::SwapChain(ref mut scl) = self.comp.layers[layer] {
-                if scl.swap_chain != *swap_chain {
-                    scl.swap_chain = swap_chain.clone();
-                    scl.layer = None;
-                }
-                scl.pos = window_pos;
+        // TODO: factor out common code with finish_record_and_push_picture_layer
+        if let Some(StackOp::Layer(layer)) = self.comp.stack.get(self.sp) {
+            if let Layer::NativeSwapChain {
+                swap_chain: ref mut scl_swap_chain,
+                 x: ref mut scl_x,
+                 y: ref mut scl_y,
+            } = self.comp.layers[*layer]
+            {
+                self.comp.infos[*layer].rev = self.comp.rev;
+                *scl_swap_chain = swap_chain;
+                // FIXME: this ignores the scale factor!
+                *scl_x = window_pos.x as u32;
+                *scl_y = window_pos.y as u32;
                 self.sp += 1;
                 return;
             }
         }
+
+        // otherwise insert a new layer
+        let layer = self.insert_layer(Layer::NativeSwapChain {
+            swap_chain,
+            x: window_pos.x as u32,
+            y: window_pos.y as u32,
+        });
+        self.comp.stack.insert(self.sp, StackOp::Layer(layer));
+        self.sp += 1;
+    }
+
+    /*pub fn add_swap_chain_layer(&mut self, window_pos: Point, swap_chain: &platform::SwapChain) {
+        self.finish_record_and_push_picture_layer();
 
         // otherwise insert a new layer
         let layer = self.insert_layer(Layer::SwapChain(PlatformSwapChainLayer {
@@ -399,7 +437,7 @@ impl CompositionBuilder {
     }*/
 
     /// Finishes recording draw commands and pushes a picture layer on the stack.
-    fn finish_record_and_push_picture_layer(&mut self) {
+    pub(crate) fn finish_record_and_push_picture_layer(&mut self) {
         if let Some(mut rec) = self.picture_recorder.take() {
             let mut drawable = rec.finish_recording_as_drawable().unwrap();
             let bounds = Rect::from_skia(drawable.bounds());
@@ -473,7 +511,8 @@ impl CompositionBuilder {
                         }
                         Layer::Group => {
                             todo!()
-                        }
+                        },
+                        _ => {}
                     }
                 }
                 _ => continue,

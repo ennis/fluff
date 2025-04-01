@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementBuilder, ElementCtx, ElementRc, HitTestCtx, TreeCtx};
+use crate::element::{Element, ElementBuilder, HitTestCtx, TreeCtx};
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};

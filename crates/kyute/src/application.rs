@@ -1,5 +1,5 @@
 use crate::model::maintain_subscription_map;
-use crate::{init_application, teardown_application};
+use crate::{app_backend, init_application, teardown_application};
 use anyhow::Context;
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
@@ -10,25 +10,38 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::{poll_fn, Future};
 use std::rc::{Rc, Weak};
+use std::sync::atomic::AtomicBool;
 use std::sync::OnceLock;
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
+use tokio::task::spawn_blocking;
 use tracy_client::set_thread_name;
 use winit::event::{Event, StartCause};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use winit::window::WindowId;
 
 /// Event loop user event.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExtEvent {
     /// Triggers an UI update
     UpdateUi,
+    /// Compositor clock tick
+    CompositorClockTick,
 }
 
+static REDRAW_REQUESTED: AtomicBool = AtomicBool::new(false);
 static EVENT_LOOP_PROXY: OnceLock<EventLoopProxy<ExtEvent>> = OnceLock::new();
 
-pub fn wake_event_loop() {
-    EVENT_LOOP_PROXY.get().unwrap().send_event(ExtEvent::UpdateUi).unwrap()
+/// Call to wake the event loop.
+pub fn wake_event_loop(reason: ExtEvent) {
+    if reason == ExtEvent::CompositorClockTick {
+        // don't queue multiple compositor clock ticks
+        if REDRAW_REQUESTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("comp miss");
+            return;
+        }
+    }
+    EVENT_LOOP_PROXY.get().unwrap().send_event(reason).unwrap()
 }
 
 scoped_thread_local!(static EVENT_LOOP_WINDOW_TARGET: EventLoopWindowTarget<ExtEvent>);
@@ -71,7 +84,7 @@ pub fn run_queued(f: impl FnOnce() + 'static) {
     APP_STATE.with(|state| {
         state.queued_callbacks.borrow_mut().push(Box::new(f));
     });
-    wake_event_loop();
+    wake_event_loop(ExtEvent::UpdateUi);
 }
 
 /// Registers a closure to run at a certain point in the future.
@@ -137,6 +150,7 @@ pub async fn wait_for(duration: Duration) {
     wait_until(deadline).await;
 }
 
+/// Runs the application event loop.
 pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow::Error> {
     set_thread_name!("UI thread");
     let event_loop: EventLoop<ExtEvent> = EventLoopBuilder::with_user_event()
@@ -169,6 +183,8 @@ pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow
             spawn(root_future);
             local_pool.run_until_stalled();
         });
+        
+        app_backend().start_compositor_clock();
 
         event_loop.run(move |event, elwt| {
             EVENT_LOOP_WINDOW_TARGET.set(elwt, || {
@@ -208,12 +224,30 @@ pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow
                             }
                         }
 
+                        // COMPOSITOR WAKEUP ///////////////////////////////////////////////////////
+                        Event::UserEvent(ExtEvent::CompositorClockTick) => {
+                            //eprintln!("compositor tick");
+                            REDRAW_REQUESTED.store(false, std::sync::atomic::Ordering::Relaxed);
+                            // repaint windows
+                            for window in state.windows.borrow().values() {
+                                if let Some(window) = window.upgrade() {
+                                    // TODO: don't fake the event, add a proper repaint method
+                                    window.event(&winit::event::WindowEvent::RedrawRequested);
+                                }
+                            }
+                        }
+
                         // WINDOW EVENTS ///////////////////////////////////////////////////////////
                         Event::WindowEvent {
                             window_id,
                             event: window_event,
                         } => {
                             // eprintln!("[{:?}] [{:?}]", window_id, window_event);
+                            if matches!(window_event, winit::event::WindowEvent::RedrawRequested) {
+                                // we redraw when the compositor tells us to
+                                return ;
+                            }
+
                             // Don't hold a borrow of `state.windows` across the handler since
                             // the handler may create new windows.
                             let handler = state.windows.borrow().get(&window_id).cloned();
@@ -234,6 +268,19 @@ pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow
 
                     // perform various cleanup tasks
                     maintain_subscription_map();
+
+                    // before processing further input events, wait for the system compositor
+                    // to finish rendering the previous frame
+
+                    // ISSUE: if there are queued tasks, we'd like to run them during
+                    // the compositor's idle time.
+                    //
+                    // In summary:
+                    // - we want to receive a periodic event from the compositor that tells us
+                    //   that we should render the next frame
+                    // - when we receive this event, trigger a repaint of every window.
+                    //   if the window contents are not dirty, the repaint should be a no-op.
+
 
                     // set control flow to wait until next timer expires, or wait until next
                     // event if there are no timers

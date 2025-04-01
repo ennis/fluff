@@ -1,10 +1,11 @@
 //! Illustrates how to embed a custom DXGI swap chain in the element tree.
-use kurbo::{Point, Size};
+use graal::ClearColorValue;
+use kurbo::{Line, Point, Size};
 use kyute::compositor::ColorType;
 use kyute::element::{HitTestCtx, TreeCtx};
 use kyute::elements::Frame;
 use kyute::layout::{LayoutInput, LayoutOutput};
-use kyute::platform::DxgiVulkanInteropSwapChain;
+use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
 use kyute::{application, Element, PaintCtx, Window, WindowOptions};
 use kyute_common::Color;
 use tokio::select;
@@ -59,32 +60,82 @@ impl Element for CustomSwapChainElement {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
-        todo!()
+        ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx) {
-        // draw something to the swap chain
-        // FIXME: we need access to a CommandStream here, the only way to do that for now is for the
-        //        element to own it. This makes it difficult to have multiple elements doing vulkan
-        //        rendering at the same time (e.g. multiple windows).
-        //        There should be a way to retrieve the "current" command stream. Possibly via
-        //        scoped TLS or something.
+        // by the time we get here, `layout` has been called and the swap chain has been created
+        // so we can unwrap safely
+        let swap_chain = self.swap_chain.as_ref().unwrap();
 
-        // TODO: we should be able to build multiple command streams concurrently (not necessarily in parallel though).
-        //       CommandStreams as they are now are too error prone because they are expected to
-        //       be submitted in the same order as they are created (batches are assigned a sequence number
-        //       *on creation*, not after they are submitted).
-        // Proposal: allow creating multiple command streams from a device, but enforce the correct
-        //           submission order (check that the sequence number is the expected one before submission).
+        // acquire an image to draw into
+        let DxgiVulkanInteropImage {
+            image,
+            ready,
+            rendering_finished,
+        } = swap_chain.acquire();
+
+        // draw something to the swap chain
+        // (we just clear the image with a color, but you can do something more interesting)
+        let mut cmd = self.device.create_command_stream();
+        let (r, g, b, a) = Color::from_hex("FFE20E").to_rgba();
+        cmd.clear_image(&image, ClearColorValue::Float([r, g, b, a]));
+
+        // Submit the commands.
+        //
+        // It is **essential** to synchronize with the presentation engine by using the two semaphores
+        // returned by `acquire`:
+        // - before executing the commands, synchronize with the presentation by waiting on `ready`
+        // - after executing the commands, signal `rendering_finished` to indicate that we are done
+        //   rendering to the image.
+        //
+        // If we don't do this, `swap_chain.present()` will deadlock.
+        cmd.flush(&[ready], &[rendering_finished]).unwrap();
+
+        // Present the image. Internally, this is synchronized with our rendering via the
+        // `rendering_finished` semaphore.
+        swap_chain.present();
+
+        // Add the swap chain to the composition tree.
+        // This will display the swap chain on the screen.
+        ctx.add_swap_chain(ctx.bounds.origin(), swap_chain.dxgi_swap_chain.clone());
+        
+        // We can still draw things on top of the swap chain if we want to.
+        // This will be put on a separate compositor layer, above the swap chain in Z-order.
+        // Draw a white crosshair in the center of the window.
+        let center = ctx.bounds.center();
+        let size = 100.0;
+        ctx.draw_line(
+            Line::new((center.x - size, center.y), (center.x + size, center.y)),
+            2.0,
+            Color::from_rgb_u8(255, 255, 255),
+        );
+        ctx.draw_line(
+            Line::new((center.x, center.y - size), (center.x, center.y + size)),
+            2.0,
+            Color::from_rgb_u8(255, 255, 255),
+        );
+
+        // Request a repaint to redraw the window continuously.
+        // In a real application you would only request a repaint when the content changes,
+        // but here we do that to check for memory leaks.
+        ctx.tree.mark_needs_paint();
+
+        // we should call `device::cleanup` periodically to free resources (on every frame)
+        self.device.cleanup();
     }
 }
 
 fn main() {
     // create the vulkan device and command stream
-    let (device, cmd) = graal::create_device_and_command_stream().unwrap();
+    let device = graal::create_device().unwrap();
 
-    application::run(async {
-        let root = Frame::new().background_color(Color::from_hex("413e13"));
+    application::run(async move {
+        // Embed the custom swap chain element in a frame
+        let root = Frame::new()
+            .background_color(Color::from_hex("413e13"))
+            .padding(50.0)
+            .content(CustomSwapChainElement::new(device));
 
         let main_window = Window::new(
             &WindowOptions {

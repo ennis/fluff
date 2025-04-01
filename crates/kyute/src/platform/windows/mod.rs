@@ -1,5 +1,5 @@
 //! Windows implementation details
-use crate::application::with_event_loop_window_target;
+use crate::application::{spawn, wake_event_loop, with_event_loop_window_target, ExtEvent};
 use crate::{app_backend, WindowOptions};
 use raw_window_handle::{HasRawWindowHandle, HasWindowHandle, RawWindowHandle};
 use skia_safe::gpu::Protected;
@@ -8,20 +8,20 @@ use std::ffi::{c_void, OsString};
 use std::time::Duration;
 use threadbound::ThreadBound;
 use windows::core::{IUnknown, Interface, Owned};
-use windows::Win32::Foundation::{HANDLE, HWND};
+use windows::Win32::Foundation::{HANDLE, HWND, WAIT_OBJECT_0};
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
 use windows::Win32::Graphics::Direct3D12::{
     D3D12CreateDevice, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Device, ID3D12Fence,
     D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_FENCE_FLAG_NONE,
 };
-use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, IDCompositionDesktopDevice};
+use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice3, DCompositionWaitForCompositorClock, IDCompositionDesktopDevice};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
     DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
 };
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, IDXGIAdapter1, IDXGIFactory3, DXGI_CREATE_FACTORY_FLAGS};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
 
@@ -38,7 +38,7 @@ mod vulkan_interop;
 mod window;
 
 #[cfg(feature = "vulkan-interop")]
-pub use vulkan_interop::DxgiVulkanInteropSwapChain;
+pub use vulkan_interop::{DxgiVulkanInteropSwapChain, DxgiVulkanInteropImage};
 
 /////////////////////////////////////////////////////////////////////////////
 // COM wrappers
@@ -127,6 +127,7 @@ pub struct ApplicationBackend {
     //debug: IDXGIDebug1,
     direct_context: RefCell<skia_safe::gpu::DirectContext>,
     pub(crate) composition_device: IDCompositionDesktopDevice,
+    abort_compositor_clock: RefCell<Owned<HANDLE>>,
 }
 
 impl ApplicationBackend {
@@ -275,6 +276,7 @@ impl ApplicationBackend {
             composition_device,
             sync,
             direct_context: RefCell::new(direct_context),
+            abort_compositor_clock: Default::default(),
         }
     }
 
@@ -298,6 +300,24 @@ impl ApplicationBackend {
         }
     }
 
+    /// Wait for the next compositor clock tick.
+    pub(crate) fn start_compositor_clock(&self) {
+        let abort = unsafe { CreateEventW(None, false, false, None).unwrap() };
+        // Some HANDLEs aren't thread safe, but some are meant to be used across threads, like events.
+        // Annoyingly windows-rs sided with making all HANDLEs !Send,
+        // which means that we need some ugliness to get around that.
+        //
+        // See https://github.com/microsoft/windows-rs/issues/3169 for some discussion.
+        //
+        // I don't think that's a good choice: first, HANDLEs are not necessarily
+        // pointers, and most importantly all functions taking HANDLEs are FFI-unsafe, so
+        // thread-safety requirements can be added to the safety contracts of the APIs
+        // that use HANDLEs, instead of being on the HANDLE type itself.
+        let abort_raw = abort.0 as isize;
+        std::thread::spawn(move || compositor_clock_thread(HANDLE(abort_raw as *mut c_void)));
+        self.abort_compositor_clock.replace(unsafe { Owned::new(abort)});
+    }
+
     /// Returns the system double click time in milliseconds.
     pub(crate) fn double_click_time(&self) -> Duration {
         unsafe {
@@ -317,10 +337,34 @@ impl ApplicationBackend {
 
     pub(crate) fn teardown(&self) {
         self.wait_for_gpu();
+        unsafe {
+            SetEvent(**self.abort_compositor_clock.borrow()).unwrap();
+        }
     }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO: this should really be in winit but it's a minefield at the moment
+fn compositor_clock_thread(abort_event: HANDLE) {
+    loop {
+        unsafe {
+            let wait_result = DCompositionWaitForCompositorClock(Some(&[abort_event]), 1000);
+            if wait_result == WAIT_OBJECT_0.0 {
+                // Abort event was signaled, exit the thread
+                break;
+            }
+            else if wait_result == WAIT_OBJECT_0.0 + 1 {
+                // Compositor clock ticked
+                tracy_client::secondary_frame_mark!("compositor_clock_tick");
+                wake_event_loop(ExtEvent::CompositorClockTick);
+            } else {
+                // wait failed?
+            }
+        }
+    }
+}
+
 
 //-------------------------------------------------------------------------------------------------
 

@@ -1,6 +1,7 @@
 //! Platform-specific implementations of certain types and functions.
 
 #[cfg(windows)]
-mod windows;
+pub mod windows;
+
 #[cfg(windows)]
-pub use self::windows::*;
+pub use self::windows::{Window, CompositionContext, ApplicationBackend, DrawSurface, DrawSurfaceContext};
