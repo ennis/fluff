@@ -13,6 +13,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::AtomicBool;
 use std::sync::OnceLock;
 use std::task::{Poll, Waker};
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tokio::task::spawn_blocking;
 use tracy_client::set_thread_name;
@@ -37,7 +38,7 @@ pub fn wake_event_loop(reason: ExtEvent) {
     if reason == ExtEvent::CompositorClockTick {
         // don't queue multiple compositor clock ticks
         if REDRAW_REQUESTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("comp miss");
+           // eprintln!("comp miss");
             return;
         }
     }
@@ -227,6 +228,7 @@ pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow
                         // COMPOSITOR WAKEUP ///////////////////////////////////////////////////////
                         Event::UserEvent(ExtEvent::CompositorClockTick) => {
                             //eprintln!("compositor tick");
+                            //sleep(Duration::from_millis(10));
                             REDRAW_REQUESTED.store(false, std::sync::atomic::Ordering::Relaxed);
                             // repaint windows
                             for window in state.windows.borrow().values() {

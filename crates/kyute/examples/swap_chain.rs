@@ -122,7 +122,7 @@ impl Element for CustomSwapChainElement {
         ctx.tree.mark_needs_paint();
 
         // we should call `device::cleanup` periodically to free resources (on every frame)
-        self.device.cleanup();
+        //self.device.cleanup();
     }
 }
 

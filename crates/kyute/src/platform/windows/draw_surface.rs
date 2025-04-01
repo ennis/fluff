@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Direct3D12::{
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT, DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT, DXGI_PRESENT_ALLOW_TEARING, DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT};
 use windows::Win32::System::Threading::WaitForSingleObject;
 
 /// Represents a surface that can be drawn on with a skia canvas.
@@ -161,7 +161,7 @@ impl DrawSurface {
             // the next blanking interval.
 
             //let t = std::time::Instant::now();
-            let r = self.swap_chain.Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+            let r = self.swap_chain.Present(0, DXGI_PRESENT_ALLOW_TEARING);
             if r == DXGI_ERROR_WAS_STILL_DRAWING {
                 eprintln!("DXGI_ERROR_WAS_STILL_DRAWING");
             }

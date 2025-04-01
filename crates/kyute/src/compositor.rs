@@ -199,6 +199,9 @@ impl Composition {
 pub struct CompositionBuilder {
     comp: Composition,
     picture_recorder: Option<sk::PictureRecorder>,
+    /// Bounds of the current picture.
+    picture_recorder_bounds: Rect,
+    /// Last value passed to `set_bounds`, the size of a new layer when one is needed.
     bounds: Rect,
     /// Current position in the stack.
     sp: usize,
@@ -212,6 +215,7 @@ impl CompositionBuilder {
         let mut ctx = CompositionBuilder {
             comp: previous.unwrap_or_default(),
             picture_recorder: None,
+            picture_recorder_bounds: Rect::ZERO,
             bounds: init_bounds,
             sp: 0,
         };
@@ -227,14 +231,14 @@ impl CompositionBuilder {
 
     /// Sets the current drawing bounds in window coordinates.
     pub fn set_bounds(&mut self, bounds: Rect) {
-        if !self.bounds.contains_rect(bounds) {
+        if !self.picture_recorder_bounds.contains_rect(bounds) {
             // If the new bounds are larger than the current picture recorder,
             // finish the current picture recorder and start a new one with the larger bounds.
             // It's up to the caller to avoid calling set_bounds in a way that would cause
             // the picture recorder to be recreated too often.
             self.finish_record_and_push_picture_layer();
         }
-        
+
         // This will affect the bounds of the next created picture recorder.
         self.bounds = bounds;
     }
@@ -316,6 +320,7 @@ impl CompositionBuilder {
             //eprintln!("new picture recorder: {:?}", self.bounds);
             let mut rec = sk::PictureRecorder::new();
             rec.begin_recording(self.bounds.to_skia(), None);
+            self.picture_recorder_bounds = self.bounds;
             // clear to transparent
             let canvas = rec.recording_canvas().unwrap();
             canvas.clear(sk::Color::TRANSPARENT);
