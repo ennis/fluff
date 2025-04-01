@@ -161,10 +161,12 @@ impl DrawSurface {
             // the next blanking interval.
 
             //let t = std::time::Instant::now();
-            let r = self.swap_chain.Present(0, DXGI_PRESENT_ALLOW_TEARING);
-            if r == DXGI_ERROR_WAS_STILL_DRAWING {
-                eprintln!("DXGI_ERROR_WAS_STILL_DRAWING");
-            }
+            
+            // SyncInterval = 0 
+            self.swap_chain.Present(0, DXGI_PRESENT::default()).unwrap();
+            //if r == DXGI_ERROR_WAS_STILL_DRAWING {
+            //    eprintln!("DXGI_ERROR_WAS_STILL_DRAWING");
+            //}
             //eprintln!("Present took {:?}", t.elapsed());
         }
 

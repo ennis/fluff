@@ -38,10 +38,11 @@ fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     paint.set_stroke_width(1.0);
     paint.set_style(skia_safe::paint::Style::Stroke);
 
+    let size = 100.;
     let x = pos.x as f32 + 0.5;
     let y = pos.y as f32 + 0.5;
-    canvas.draw_line((x - 20.0, y), (x + 20.0, y), &paint);
-    canvas.draw_line((x, y - 20.0), (x, y + 20.0), &paint);
+    canvas.draw_line((x - size, y), (x + size, y), &paint);
+    canvas.draw_line((x, y - size), (x, y + size), &paint);
     // draw a circle around the crosshair
     canvas.draw_circle((x, y), 10.0, &paint);
 }
@@ -539,7 +540,7 @@ impl WindowInner {
     }*/
 
     fn mark_needs_paint(&self) {
-        self.window.request_redraw();
+        //self.window.request_redraw();
     }
 
     /// Converts & dispatches a winit window event.
@@ -588,7 +589,7 @@ impl WindowInner {
                 let converted_event = self.convert_keyboard_input(event);
                 self.dispatch_keyboard_event(converted_event);
                 // for the debugging overlay
-                self.window.request_redraw();
+                //self.window.request_redraw();
             }
             WindowEvent::MouseInput {
                 button,
@@ -629,6 +630,7 @@ impl WindowInner {
                     // resize the compositor layer
                     //self.
                     //self.layer.resize(sizef);
+                    self.window.request_redraw();
                 }
                 self.needs_layout.set(true);
             }
@@ -661,7 +663,8 @@ impl WindowInner {
             //self.layer.set_surface_size(physical_size);
         }
 
-        if !self.root.0.ctx.change_flags.get().contains(ChangeFlags::PAINT) {
+        // TODO: a more principled way to determine if we need to redraw
+        if !self.root.0.ctx.change_flags.get().contains(ChangeFlags::PAINT) && !self.needs_layout.get() {
             return;
         }
 
@@ -674,6 +677,7 @@ impl WindowInner {
             });
             let _geom = self.root.layout_root(size);
         }
+
 
         {
             let mut composition_builder =
@@ -728,6 +732,14 @@ impl WindowHandler for WindowInner {
     fn event(&self, event: &WindowEvent) {
         self.dispatch_window_event(event);
     }
+
+    fn redraw(&self) {
+        self.do_redraw();
+    }
+
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
 }
 
 pub struct Window {
@@ -777,11 +789,11 @@ impl WindowHandle {
         }
     }
 
-    pub fn request_repaint(&self) {
+    /*pub fn request_repaint(&self) {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.request_redraw();
         }
-    }
+    }*/
 
     pub fn mark_needs_layout(&self) {
         if let Some(shared) = self.shared.upgrade() {
@@ -907,14 +919,6 @@ impl Window {
         let phy_size = platform_window.inner_size();
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
 
-        //let layer = app_backend().create_layer(phy_size, ColorType::RGBAF16);
-        //platform_window.set_layer(&layer);
-
-        // On windows, the initial wait is important:
-        // see https://learn.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains#step-4-wait-before-rendering-each-frame
-
-        //layer.wait_for_presentation();
-
         let window_id = platform_window.id();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             weak_this: weak_this.clone(),
@@ -935,7 +939,6 @@ impl Window {
         });
 
         application::register_window(window_id, shared.clone());
-
         Window { shared }
     }
 
