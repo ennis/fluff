@@ -10,6 +10,103 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Atomic reference counter object.
+pub struct RefCount(*const AtomicUsize);
+
+impl Clone for RefCount {
+    fn clone(&self) -> Self {
+        // Increment the reference count
+        let count = unsafe { &*self.0 };
+        count.fetch_add(1, Relaxed);
+        Self(self.0)
+    }
+}
+
+impl Drop for RefCount {
+    fn drop(&mut self) {
+        // Decrement the reference count
+        let count = unsafe { &*self.0 };
+        let old_count = count.fetch_sub(1, Relaxed);
+        if old_count == 1 {
+            // The last reference was dropped, so we can free the memory
+            unsafe { let _ = Box::from_raw(self.0 as *mut AtomicUsize); }
+        }
+    }
+}
+
+impl RefCount {
+    pub fn new() -> Self {
+        let count = Box::new(AtomicUsize::new(1));
+        Self(Box::into_raw(count))
+    }
+
+    pub fn use_count(&self) -> usize {
+        unsafe { (*self.0).load(SeqCst) }
+    }
+}
+
+
+impl PartialEq for RefCount {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for RefCount {}
+
+impl Hash for RefCount {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl PartialOrd for RefCount {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RefCount {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.0 as *const ()).cmp(&(other.0 as *const ()))
+    }
+}
+
+impl fmt::Debug for RefCount {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RefCount({:p})", self.0)
+    }
+}
+
+
+/// Reference-counted handle to an abstract entity of an unspecified type that can emit events.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EntityHandle(RefCount);
+
+impl EntityHandle {
+    pub fn new() -> Self {
+        Self(RefCount::new())
+    }
+
+    pub fn use_count(&self) -> usize {
+        self.0.use_count()
+    }
+}
+
+impl fmt::Debug for EntityHandle {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Entity#{:08x}", self.0.0 as *const () as usize as u32)
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // New
 pub trait EventSource: Any {
@@ -19,6 +116,7 @@ pub trait EventSource: Any {
     ///        to erase the type of the object.
     fn as_weak(&self) -> Weak<dyn Any>;
 
+    /// Adds a subscription to an event of the specified type emitted by this object.
     #[track_caller]
     fn subscribe<E: 'static>(&self, mut callback: impl FnMut(&E) -> bool + 'static) -> SubscriptionKey
     where
@@ -68,7 +166,7 @@ pub trait EventSource: Any {
         });
 
         // If the future is cancelled, we need to make sure the subscription is removed
-        // So wrap the subsciption in a guard object
+        // So wrap the subscription in a guard object
         struct Guard(SubscriptionKey);
         impl Drop for Guard {
             fn drop(&mut self) {

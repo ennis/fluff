@@ -686,7 +686,7 @@ See also [this comment](https://www.reddit.com/r/rust/comments/e04b1p/towards_a_
 > failure,
 > either panic or deadlock, as callback chains become more complex.
 
-* unpleasant because of ergonmics: yes
+* unpleasant because of ergonomics: yes
 * opportunities for runtime failure: with callback chains, that's true, but async might be able to clean things up.
     * For instance, with async and scoped callbacks, moving weak pointers in callbacks is not necessary anymore.
     * Interior mutability is probably inevitable, unless we can keep the state inside a future.

@@ -60,11 +60,12 @@ impl Element for CustomSwapChainElement {
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        // this is the default implementation
         ctx.bounds.contains(point)
     }
 
     fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx) {
-        /*// by the time we get here, `layout` has been called and the swap chain has been created
+        // by the time we get here, `layout` has been called and the swap chain has been created
         // so we can unwrap safely
         let swap_chain = self.swap_chain.as_ref().unwrap();
 
@@ -114,7 +115,7 @@ impl Element for CustomSwapChainElement {
             Line::new((center.x, center.y - size), (center.x, center.y + size)),
             2.0,
             Color::from_rgb_u8(255, 255, 255),
-        );*/
+        );
 
         // Request a repaint to redraw the window continuously.
         // In a real application you would only request a repaint when the content changes,
@@ -122,7 +123,7 @@ impl Element for CustomSwapChainElement {
         ctx.tree.mark_needs_paint();
 
         // we should call `device::cleanup` periodically to free resources (on every frame)
-        //self.device.cleanup();
+        self.device.cleanup();
     }
 }
 

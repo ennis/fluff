@@ -207,9 +207,9 @@ pub(crate) fn create_composition_swap_chain(dxgi_format: DXGI_FORMAT, width: u32
                     BufferCount: SWAP_CHAIN_BUFFER_COUNT,
                     Scaling: DXGI_SCALING_STRETCH,
                     SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-                    // FIXME this should be a parameter
-                    AlphaMode: DXGI_ALPHA_MODE_IGNORE, //DXGI_ALPHA_MODE_PREMULTIPLIED, //DXGI_ALPHA_MODE_IGNORE,
-                    Flags: /*DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32 | */ DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING.0 as u32,
+                    // FIXME this should be a parameter; DXGI_ALPHA_MODE_PREMULTIPLIED adds some latency though
+                    AlphaMode: DXGI_ALPHA_MODE_IGNORE, //DXGI_ALPHA_MODE_PREMULTIPLIED,
+                    Flags: DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING.0 as u32,
                 },
                 None,
             )

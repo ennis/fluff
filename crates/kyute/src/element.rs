@@ -1,9 +1,9 @@
 use crate::application::run_queued;
 use crate::event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventSource};
+use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventEmitter, EventSource};
 use crate::window::WindowHandle;
-use crate::{PaintCtx};
+use crate::PaintCtx;
 use bitflags::bitflags;
 use kurbo::{Point, Rect, Size, Vec2};
 use std::any::Any;
@@ -280,6 +280,10 @@ pub trait Element: Any {
     ///
     /// Implementations should also hit-test their children recursively by calling `ElementRc::hit_test`
     /// (unless the element explicitly filters out pointer events for its children).
+    /// 
+    /// The default implementation checks whether the point is inside the layout bounds of this 
+    /// element. You should reimplement this method if your element has children, so that they
+    /// can be hit-tested as well.
     ///
     /// # Arguments
     ///
@@ -308,8 +312,9 @@ pub trait Element: Any {
     /// ```
     ///
     /// FIXME: this should receive a TreeCtx like the other methods
-    /// TODO: there could be a default implementation
-    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool;
+    fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
+        ctx.bounds.contains(point)
+    }
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
     ///
@@ -954,6 +959,25 @@ impl<T: Element> ElementBuilder<T> {
             this: &self.0.ctx,
         };
         inner.measure(&child_tree, layout_input)
+    }
+
+    /// Runs the specified function when an event source emits an event.
+    pub fn connect<Event, Source>(&self, source: &Source, mut f: impl FnMut(&mut T, &TreeCtx, &Event) + 'static) 
+    where
+        Event: 'static,
+        Source: EventSource + EventEmitter<Event>,
+    {
+        let weak = self.weak();
+        source.subscribe(move |e| {
+            if let Some(this) = weak.upgrade() {
+                this.invoke(|this, cx| {
+                    f(this, cx, e);
+                });
+                true
+            } else {
+                false
+            }
+        });
     }
 
     /// Runs the specified function when the element emits the specified event.

@@ -7,5 +7,3 @@ pub enum SceneEvent {
     /// The scene changed somehow.
     Changed,
 }
-
-pub type SceneModel = Model<Scene3D>;
