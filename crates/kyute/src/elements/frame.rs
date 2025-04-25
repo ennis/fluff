@@ -1,13 +1,13 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
 use crate::element::{
-    Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, TreeCtx, WeakElement,
+    Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, TreeCtx, 
 };
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
-use crate::event::Event;
+use crate::input_event::Event;
 use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
-use crate::model::EventSource;
+use crate::event::EventSource;
 use crate::{drawing, Color, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
 use skia_safe::PaintStyle;
@@ -81,7 +81,6 @@ impl FrameStyle {
 
 /// A container with a fixed width and height, into which a widget is placed.
 pub struct Frame {
-    weak: WeakElement<Self>,
     width: SizeValue,
     height: SizeValue,
     min_width: SizeValue,
@@ -102,8 +101,7 @@ pub struct Frame {
 impl Frame {
     /// Creates a new `Frame` with the default styles.
     pub fn new() -> ElementBuilder<Self> {
-        ElementBuilder::new_cyclic(|weak_this| Frame {
-            weak: weak_this,
+        ElementBuilder::new(Frame {
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -145,7 +143,7 @@ impl Frame {
     /// Adds a child item to this frame.
     #[must_use]
     pub fn content(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
-        self.content = Some(child.into_element_any(self.weak.clone().as_dyn()));
+        self.content = Some(child.into_element_any(self.weak().as_dyn()));
         self
     }
 
@@ -476,7 +474,7 @@ impl Element for Frame {
     fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
         fn update_state(this: &mut Frame, cx: &TreeCtx, state: ElementState) {
             this.state = state;
-            this.weak.emit(ElementStateChanged(state));
+            cx.emit(ElementStateChanged(state));
             if this.state_affects_style {
                 this.style_changed = true;
                 cx.mark_needs_paint();
@@ -487,24 +485,24 @@ impl Element for Frame {
             Event::PointerDown(_) => {
                 self.state.set_active(true);
                 update_state(self, cx, self.state);
-                self.weak.emit(ActivatedEvent(true));
+                cx.emit(ActivatedEvent(true));
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
-                    self.weak.emit(ActivatedEvent(false));
+                    cx.emit(ActivatedEvent(false));
                     update_state(self, cx, self.state);
-                    self.weak.emit(ClickedEvent);
+                    cx.emit(ClickedEvent);
                 }
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
                 update_state(self, cx, self.state);
-                self.weak.emit(HoveredEvent(true));
+                cx.emit(HoveredEvent(true));
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
                 update_state(self, cx, self.state);
-                self.weak.emit(HoveredEvent(false));
+                cx.emit(HoveredEvent(false));
             }
             _ => {}
         }

@@ -1,16 +1,8 @@
 use crate::platform::ApplicationBackend;
-use std::cell::{OnceCell, RefCell};
-use std::rc::Rc;
+use std::cell::OnceCell;
 use std::time::Duration;
 
 //==================================================================================================
-
-/// Application globals.
-///
-/// Stuff that would be too complicated/impractical/ugly to carry and pass around as parameters.
-pub struct AppGlobals {
-    pub(crate) backend: ApplicationBackend,
-}
 
 thread_local! {
     static APP_BACKEND: OnceCell<&'static ApplicationBackend> = OnceCell::new();
@@ -40,28 +32,3 @@ pub fn caret_blink_time() -> Duration {
     app_backend().get_caret_blink_time()
 }
 
-/*
-impl AppGlobals {
-    /// Creates a new `Application` instance.
-    pub fn new() -> Rc<AppGlobals> {
-        // TODO: make sure that we're not making multiple applications
-        let backend = ApplicationBackend::new();
-        let app = Rc::new(AppGlobals { backend });
-
-        APP_GLOBALS.with(|g| g.replace(Some(app.clone())));
-        app
-    }
-
-    pub fn try_get() -> Option<Rc<AppGlobals>> {
-        APP_GLOBALS.with(|g| Some(g.borrow().as_ref()?.clone()))
-    }
-
-    pub fn get() -> Rc<AppGlobals> {
-        AppGlobals::try_get().expect("an application should be active on this thread")
-    }
-
-    pub fn teardown() {
-        APP_GLOBALS.with(|g| g.replace(None));
-    }
-}
-*/

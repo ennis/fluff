@@ -22,8 +22,8 @@ struct EguiPushConstants {
     screen_size: [f32; 2],
 }
 
-const _: () = assert!(mem::size_of::<egui::epaint::Vertex>() == mem::size_of::<EguiVertex>());
-const _: () = assert!(mem::align_of::<EguiVertex>() <= mem::align_of::<egui::epaint::Vertex>());
+const _: () = assert!(size_of::<egui::epaint::Vertex>() == size_of::<EguiVertex>());
+const _: () = assert!(align_of::<EguiVertex>() <= align_of::<egui::epaint::Vertex>());
 
 struct Texture {
     image: Image,

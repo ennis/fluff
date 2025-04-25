@@ -8,13 +8,18 @@ use kyute::element::prelude::*;
 use kyute::element::{TreeCtx, WeakElement};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
-use kyute::model::{emit_global, wait_event_global};
+use kyute::event::{emit_global, subscribe_global, wait_event_global};
 use kyute::text::TextLayout;
 use kyute::window::{FocusChanged, PopupPlacement, WindowHandle, place_popup};
 use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions, select, text};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
+use tracing::warn;
+
+/// Event emitted when a menu entry is activated.
+#[derive(Debug, Clone, Copy)]
+pub struct MenuEntryActivated<ID>(pub ID);
 
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryActivated {
@@ -29,6 +34,7 @@ pub struct InternalMenuEntryHighlighted {
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuCancelled;
 
+#[allow(dead_code)]
 enum InternalMenuItem {
     Entry {
         index: usize,
@@ -42,7 +48,7 @@ enum InternalMenuItem {
 }
 
 impl InternalMenuItem {
-    pub fn measure(&mut self, input: &LayoutInput) -> Size {
+    /*fn measure(&mut self, input: &LayoutInput) -> Size {
         match self {
             InternalMenuItem::Entry { label, .. } => {
                 label.layout(input.width.available().unwrap_or_default());
@@ -50,7 +56,7 @@ impl InternalMenuItem {
             }
             InternalMenuItem::Separator => Size::new(input.width.available().unwrap_or_default(), 4.0),
         }
-    }
+    }*/
 }
 
 fn submenu_range(nodes: &[MenuItemNode], index: usize) -> Range<usize> {
@@ -63,10 +69,9 @@ fn submenu_range(nodes: &[MenuItemNode], index: usize) -> Range<usize> {
     }
 }
 
-// FIXME this should take arbitrary widgets, not just MenuBase, and it should also call place_popup
 fn open_anchored_popup<T: Element>(
     parent_window: WindowHandle,
-    mut content: ElementBuilder<T>,
+    content: ElementBuilder<T>,
     anchor_rect: Rect,
     popup_placement: PopupPlacement,
 ) -> Window {
@@ -77,17 +82,16 @@ fn open_anchored_popup<T: Element>(
     let parent_window = parent_window.clone();
 
     // the parent of the menu is the main window,
-    // but the menu will be set as a popup of the parent menu
     let window = Window::new(
         &WindowOptions {
-            title: "",
             size,
-            parent: Some(parent_window.raw_window_handle().expect("parent window closed")),
+            owner: Some(parent_window.raw_window_handle().expect("parent window closed")),
             decorations: false,
             visible: true,
             background: STATIC_BACKGROUND,
             position: Some(position),
             no_focus: true,
+            ..Default::default()
         },
         content,
     );
@@ -95,6 +99,7 @@ fn open_anchored_popup<T: Element>(
     //let popup_parent = parent_menu.unwrap_or(parent_window);
     // not sure if this is necessary
     //popup_parent.set_popup(&window);
+    
     window
 }
 
@@ -224,17 +229,18 @@ impl MenuBase {
         })
     }
 
+    /*
     /// Opens a menu at the specified position.
     fn open(self: ElementBuilder<Self>, at: Point, popup_placement: PopupPlacement) -> Window {
         self.open_around(Rect::from_origin_size(at, Size::ZERO), popup_placement)
-    }
+    }*/
 
     /// Opens a menu around the specified rectangle.
     ///
     ///  # Arguments
     /// * `rect` - The bounding rectangle of the parent menu item, in the coordinate space of
     ///            the monitor or the parent window (`self.parent_window`).
-    fn open_around(mut self: ElementBuilder<Self>, rect: Rect, popup_placement: PopupPlacement) -> Window {
+    fn open_around(self: ElementBuilder<Self>, rect: Rect, popup_placement: PopupPlacement) -> Window {
         // round size to device pixels
         //let scale_factor = self.parent_window.scale_factor();
         //let size = Size::new(
@@ -250,7 +256,7 @@ impl MenuBase {
     /// * `cx` - The element context.
     /// * `around` - The bounding rectangle of the parent menu item, in the coordinate space of the
     ///              parent window (`self.parent_window`).
-    fn open_submenu(&mut self, cx: &ElementCtx, around: Rect, range: MenuItemNodeRange) {
+    fn open_submenu(&mut self, _cx: &ElementCtx, around: Rect, range: MenuItemNodeRange) {
         let submenu = MenuBase::new(self.parent_window.clone(), range).set_focus();
         let popup = submenu.open_around(around, PopupPlacement::RightThenLeft);
 
@@ -333,9 +339,9 @@ impl MenuBase {
         None
     }
 
-    fn rect_to_display(&self, rect: Rect) -> Rect {
+    /*fn rect_to_display(&self, rect: Rect) -> Rect {
         Rect::from_origin_size(self.parent_window.map_to_screen(rect.origin()), rect.size())
-    }
+    }*/
 }
 
 const MENU_ICON_PADDING_LEFT: f64 = 4.0;
@@ -404,9 +410,9 @@ impl Element for MenuBase {
         for item in self.items.iter() {
             match &item {
                 InternalMenuItem::Entry {
-                    icon,
+                    icon: _,
                     label,
-                    shortcut,
+                    shortcut: _,
                     index,
                     ..
                 } => {
@@ -500,7 +506,7 @@ impl Element for MenuBase {
                 }
             }
             Event::KeyDown(event) => match event.key {
-                kyute::event::Key::Escape => {
+                kyute::input_event::Key::Escape => {
                     emit_global(InternalMenuCancelled);
                 }
                 _ => {}
@@ -694,6 +700,10 @@ impl ContextMenuExt for TreeCtx<'_> {
 
 // Menu bar
 
+/// Menu bar widget.
+///
+/// Emits a global event of type `InternalMenuEntryActivated` when an entry is activated.
+#[allow(dead_code)]
 pub struct MenuBar<ID> {
     weak_this: WeakElement<Self>,
     entries: Vec<MenuBarEntry>,
@@ -703,6 +713,7 @@ pub struct MenuBar<ID> {
     menu: Option<Window>,
 }
 
+#[allow(dead_code)]
 struct MenuBarEntry {
     // bounds in local coord space
     bounds: Rect,
@@ -748,7 +759,7 @@ const MENU_BAR_LEFT_PADDING: f64 = 4.0;
 const MENU_BAR_BASELINE: f64 = 16.0;
 const MENU_BAR_ITEM_PADDING: f64 = 4.0;
 
-impl<ID: 'static> MenuBar<ID> {
+impl<ID: 'static + Clone> MenuBar<ID> {
     fn hit_test_bar(&self, local_pos: Vec2) -> Option<usize> {
         for (i, entry) in self.entries.iter().enumerate() {
             if entry.bounds.contains(local_pos.to_point()) {
@@ -758,6 +769,7 @@ impl<ID: 'static> MenuBar<ID> {
         None
     }
 
+    /// Opens the menu for the given entry index in the menu bar.
     fn open_menu(&mut self, cx: &TreeCtx, entry_index: usize) {
         let Some(nodes) = self.nodes.child_item_range(self.entries[entry_index].index) else {
             // no items in menu
@@ -769,10 +781,34 @@ impl<ID: 'static> MenuBar<ID> {
         let popup = MenuBase::new(parent_window.clone(), nodes)
             .set_focus()
             .open_around(bounds_screen, PopupPlacement::BottomThenUp);
+
+        // convert internal events to typed events
+        subscribe_global::<InternalMenuEntryActivated>({
+            let popup_handle = popup.handle();
+            let weak_this = self.weak_this.clone();
+            move |InternalMenuEntryActivated { index }| {
+                // unsubscribe when the menu is closed or the menu bar is dropped
+                let Some(this) = weak_this.upgrade() else {
+                    return false;
+                };
+                if !popup_handle.is_opened() {
+                    return false;
+                }
+
+                if let Some(id) = this.borrow().index_to_id.get(index) {
+                    emit_global(MenuEntryActivated(id.clone()));
+                } else {
+                    warn!("menu entry index {index} invalid for menu bar");
+                }
+
+                true
+            }
+        });
+
         self.menu = Some(popup);
         let weak_this = self.weak_this.clone();
-        let parent_window = cx.get_parent_window();
 
+        // spawn a tasks that closes the menu when the window dismisses the popup
         spawn(async move {
             parent_window.popup_cancelled().await;
             if let Some(this) = weak_this.upgrade() {
@@ -784,14 +820,14 @@ impl<ID: 'static> MenuBar<ID> {
     }
 }
 
-impl<ID: 'static> Element for MenuBar<ID> {
-    fn measure(&mut self, cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+impl<ID: 'static + Clone> Element for MenuBar<ID> {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let width = layout_input.width.available().unwrap_or_default();
         let height = 24.0;
         Size { width, height }
     }
 
-    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
         let mut x = MENU_BAR_LEFT_PADDING;
         for entry in self.entries.iter_mut() {
             entry.title.layout(f64::INFINITY);

@@ -3,15 +3,9 @@ use crate::drawing::{round_to_device_pixel, round_to_device_pixel_center, Border
 use crate::element::{with_tree_ctx, ChangeFlags, ElementAny, TreeCtx};
 use crate::text::{TextLayout, TextRun, TextStyle};
 use crate::Color;
-use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Size, Vec2};
+use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Vec2};
 use skia_safe::PaintStyle;
 use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
-
-struct Layer {
-    transform: Affine,
-    size: Size,
-    has_surface: bool,
-}
 
 /// Paint context.
 pub struct PaintCtx<'a> {
@@ -230,7 +224,7 @@ impl<'a> PaintCtx<'a> {
     /// FIXME: if the picture recorder is reset (because a new layer started), the clip will be lost
     ///        i.e. clips don't transfer to new layers
     pub fn clip_rect(&mut self, rect: Rect) {
-        /// TODO:  if child elements need compositing, use a clip layer instead
+        // TODO:  if child elements need compositing, use a clip layer instead
         self.canvas()
             .clip_rect(rect.to_skia(), skia_safe::ClipOp::Intersect, false);
     }

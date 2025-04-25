@@ -1,7 +1,7 @@
 use crate::application::run_queued;
-use crate::event::Event;
+use crate::event::{EmitterHandle, EmitterKey, EventEmitter, EventSource};
+use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::model::{watch_multi_once_with_location, with_tracking_scope, EventEmitter, EventSource};
 use crate::window::WindowHandle;
 use crate::PaintCtx;
 use bitflags::bitflags;
@@ -12,7 +12,6 @@ use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::panic::Location;
 use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
 use typed_arena::Arena;
@@ -21,7 +20,7 @@ pub mod prelude {
     pub use crate::element::{
         Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement, WeakElementAny,
     };
-    pub use crate::event::Event;
+    pub use crate::input_event::Event;
     pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
     pub use crate::PaintCtx;
 }
@@ -335,9 +334,16 @@ pub trait Element: Any {
     fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {}
 }
 
-impl<T: Element> ElemCell<T> {
-    fn new(element: T) -> UniqueRc<ElemCell<T>> {
-        let mut rc = UniqueRc::new(ElemCell {
+/// Bundles an element and its associated context.
+pub(crate) struct ElementWithCtx<T: ?Sized> {
+    pub(crate) ctx: ElementCtx,
+    element: RefCell<T>,
+}
+
+
+impl<T: Element> ElementWithCtx<T> {
+    fn new(element: T) -> UniqueRc<ElementWithCtx<T>> {
+        let mut rc = UniqueRc::new(ElementWithCtx {
             ctx: ElementCtx::new(),
             element: RefCell::new(element),
         });
@@ -347,17 +353,17 @@ impl<T: Element> ElemCell<T> {
         rc
     }
 
-    fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> UniqueRc<ElemCell<T>> {
-        let mut urc = UniqueRc::new(MaybeUninit::<ElemCell<T>>::uninit());
+    fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> UniqueRc<ElementWithCtx<T>> {
+        let mut urc = UniqueRc::new(MaybeUninit::<ElementWithCtx<T>>::uninit());
         // SAFETY: I'd say it's safe to transmute here even if the value is uninitialized
         // because the resulting weak pointer can't be upgraded anyway.
-        let weak: Weak<ElemCell<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
-        urc.write(ElemCell {
+        let weak: Weak<ElementWithCtx<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
+        urc.write(ElementWithCtx {
             ctx: ElementCtx::new(),
             element: RefCell::new(f(WeakElement(weak.clone()))),
         });
         // SAFETY: the value is now initialized
-        let mut urc: UniqueRc<ElemCell<T>> = unsafe { mem::transmute(urc) };
+        let mut urc: UniqueRc<ElementWithCtx<T>> = unsafe { mem::transmute(urc) };
         urc.ctx.weak_this = WeakElement(weak.clone());
         //urc.ctx.weak_this_any = weak;
         urc
@@ -367,7 +373,7 @@ impl<T: Element> ElemCell<T> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Weak reference to an element in the element tree.
-pub struct WeakElement<T: ?Sized>(Weak<ElemCell<T>>);
+pub struct WeakElement<T: ?Sized>(Weak<ElementWithCtx<T>>);
 
 pub type WeakElementAny = WeakElement<dyn Element>;
 
@@ -400,16 +406,17 @@ impl<T: Element> WeakElement<T> {
     }
 }
 
+/*
 impl<T: 'static> EventSource for WeakElement<T> {
     fn as_weak(&self) -> Weak<dyn Any> {
         self.0.clone()
     }
-}
+}*/
 
 impl WeakElementAny {
     pub unsafe fn downcast_unchecked<T: 'static>(self) -> WeakElement<T> {
         unsafe {
-            let ptr = self.0.into_raw() as *const ElemCell<T>;
+            let ptr = self.0.into_raw() as *const ElementWithCtx<T>;
             WeakElement(Weak::from_raw(ptr))
         }
     }
@@ -437,7 +444,7 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
         }
-        let weak = Weak::<ElemCell<Dummy>>::new();
+        let weak = Weak::<ElementWithCtx<Dummy>>::new();
         WeakElement(weak)
     }
 }
@@ -471,17 +478,13 @@ impl PartialOrd for WeakElementAny {
     }
 }
 
-pub(crate) struct ElemCell<T: ?Sized> {
-    pub(crate) ctx: ElementCtx,
-    element: RefCell<T>,
-}
-
 /// Strong reference to an element in the element tree.
 // Yes it's a big fat Rc<RefCell>, deal with it.
-// FIXME: consider eliminating the wrapper and use a typedef instead (move methods to ElemCell)
-//        ISSUE: the wrapper is here for a reason: it implements by-reference Eq/Ord/Hash.
-//        We can't do that with a typedef.
-pub struct ElementRc<T: ?Sized>(pub(crate) Rc<ElemCell<T>>);
+// NOTE: the wrapper is here for a reason: it implements by-reference Eq/Ord/Hash.
+// We can't do that with a typedef.
+// TODO find another name, because this is not simply a `Rc<Element>`, there's additional context.
+//      maybe something like `Node` or `ElementNode`?
+pub struct ElementRc<T: ?Sized>(pub(crate) Rc<ElementWithCtx<T>>);
 
 impl<T: ?Sized> Clone for ElementRc<T> {
     fn clone(&self) -> Self {
@@ -512,7 +515,7 @@ impl<T: ?Sized + Element> ElementRc<T> {
 
     /// Invokes a method on this widget.
     pub fn invoke<R>(&self, f: impl FnOnce(&mut T, &TreeCtx) -> R) -> R {
-        with_tree_ctx(self, |element, tree| f(&mut *self.0.element.borrow_mut(), tree))
+        with_tree_ctx(self, |_element, tree| f(&mut *self.0.element.borrow_mut(), tree))
     }
 }
 
@@ -687,7 +690,7 @@ impl ElementAny {
         //inner.ctx.propagate_dirty_flags();
     }
 
-    pub(crate) fn paint_inner(&self, parent: Option<&TreeCtx>, parent_ctx: &mut PaintCtx) {
+    /*pub(crate) fn paint_inner(&self, parent: Option<&TreeCtx>, parent_ctx: &mut PaintCtx) {
         let ref mut inner = *self.borrow_mut();
         let ctx = &self.0.ctx;
         let child_tree = TreeCtx { parent, this: ctx };
@@ -705,7 +708,7 @@ impl ElementAny {
         parent_ctx.bounds = Rect::from_origin_size(ctx.window_position.get(), ctx.size());
         inner.paint(&child_tree, parent_ctx);
         parent_ctx.bounds = prev_bounds;
-    }
+    }*/
 
     //pub fn paint(&self, tree: &TreeCtx, parent_ctx: &mut PaintCtx) {
     //    self.paint_inner(Some(tree), parent_ctx);
@@ -727,8 +730,13 @@ impl ElementAny {
 
 /// Trait for elements that can be converted into a `ElementAny`.
 pub trait IntoElementAny {
+    /// The type of the created element.
     type Element: Element;
+
+    /// Builds an `ElementAny` with the specified parent.
     fn into_element(self, parent: WeakElementAny) -> ElementRc<Self::Element>;
+
+    /// Builds an `ElementAny` with the specified parent window.
     fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element>;
 
     fn into_element_any(self, parent: WeakElementAny) -> ElementAny
@@ -755,13 +763,13 @@ where
     type Element = T;
 
     fn into_element(self, parent: WeakElementAny) -> ElementRc<Self> {
-        let mut urc = ElemCell::new(self);
+        let mut urc = ElementWithCtx::new(self);
         urc.ctx.parent = parent;
         ElementRc(UniqueRc::into_rc(urc))
     }
 
     fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element> {
-        let mut urc = ElemCell::new(self);
+        let mut urc = ElementWithCtx::new(self);
         urc.ctx.window = parent_window;
         ElementRc(UniqueRc::into_rc(urc))
     }
@@ -780,11 +788,9 @@ pub struct ElementCtx {
     parent: WeakElementAny,
     /// Weak pointer to this element (~= `Weak<RefCell<dyn Element>>`)
     weak_this: WeakElementAny,
-    // Weak pointer to this element (~= `Weak<dyn Any>`)
-    // This is used for event and subscription functions which expect a `Weak<dyn Any>`
-    // we can't use `weak_this` because it can't coerce dyn Any, even with trait upcasting.
-    // TODO: remove this, it's not used
-    //weak_this_any: Weak<dyn Any>,
+    /// Event emitter handle,
+    emitter_handle: EmitterHandle,
+
     pub(crate) change_flags: Cell<ChangeFlags>,
     /// Pointer to the parent owner window. Valid only for the root element the window.
     pub(crate) window: WindowHandle,
@@ -797,9 +803,15 @@ pub struct ElementCtx {
     /// Name of the element.
     name: String,
     /// Whether the element is focusable via tab-navigation.
-    focusable: bool,
+    _focusable: bool,
     /// Whether this element currently has focus.
     focused: Cell<bool>,
+}
+
+impl EventSource for ElementCtx {
+    fn emitter_key(&self) -> EmitterKey {
+        self.emitter_handle.key()
+    }
 }
 
 impl ElementCtx {
@@ -808,13 +820,14 @@ impl ElementCtx {
             parent: WeakElementAny::default(),
             weak_this: WeakElementAny::default(),
             //weak_this_any: Weak::<()>::default(),
+            emitter_handle: EmitterHandle::new(),
             change_flags: Cell::new(ChangeFlags::PAINT | ChangeFlags::LAYOUT),
             window: WindowHandle::default(),
             offset: Default::default(),
             window_position: Default::default(),
             geometry: Default::default(),
             name: String::new(),
-            focusable: false,
+            _focusable: false,
             focused: Cell::new(false),
         }
     }
@@ -902,7 +915,7 @@ impl EventSource for ElementCtx {
 ///
 /// Basically this is a wrapper around Rc that provides a `DerefMut` impl since we know it's the
 /// only strong reference to it.
-pub struct ElementBuilder<T>(UniqueRc<ElemCell<T>>);
+pub struct ElementBuilder<T>(UniqueRc<ElementWithCtx<T>>);
 
 impl<T: Default + Element> Default for ElementBuilder<T> {
     fn default() -> Self {
@@ -911,19 +924,19 @@ impl<T: Default + Element> Default for ElementBuilder<T> {
 }
 
 impl<T: Element> EventSource for ElementBuilder<T> {
-    fn as_weak(&self) -> Weak<dyn Any> {
-        self.weak().0
+    fn emitter_key(&self) -> EmitterKey {
+        self.0.ctx.emitter_handle.key()
     }
 }
 
 impl<T: Element> ElementBuilder<T> {
     /// Creates a new `ElementBuilder` instance.
     pub fn new(inner: T) -> ElementBuilder<T> {
-        ElementBuilder(ElemCell::new(inner))
+        ElementBuilder(ElementWithCtx::new(inner))
     }
 
     pub fn new_cyclic(f: impl FnOnce(WeakElement<T>) -> T) -> ElementBuilder<T> {
-        ElementBuilder(ElemCell::new_cyclic(f))
+        ElementBuilder(ElementWithCtx::new_cyclic(f))
     }
 
     pub fn weak(&self) -> WeakElement<T> {
@@ -997,6 +1010,7 @@ impl<T: Element> ElementBuilder<T> {
         self
     }
 
+    /*
     /// Runs the specified function on the widget, and runs it again when it changes.
     #[track_caller]
     pub fn dynamic(mut self, func: impl FnMut(&mut T, &TreeCtx) + 'static) -> Self {
@@ -1054,7 +1068,7 @@ impl<T: Element> ElementBuilder<T> {
             false
         });
         r
-    }
+    }*/
 }
 
 impl<T> Deref for ElementBuilder<T> {
@@ -1099,29 +1113,6 @@ impl<T: Element> IntoElementAny for ElementBuilder<T> {
     fn into_root_element_any(self, parent_window: WindowHandle) -> ElementAny {
         self.into_root_element(parent_window).as_dyn()
     }
-}
-
-/// Builds a linked list of `TreeCtx` for a sequence of ancestor elements.
-///
-/// # Arguments
-/// * `chain` - a list of elements forming a path from the root of the element tree to a target element.
-///             Usually this is obtained by calling `ancestors_and_self` on a target element.
-/// * `arena` - the arena to allocate the `TreeCtx` nodes.
-///
-/// # Return value
-///
-/// Returns the `TreeCtx` corresponding to the tail of the linked list (the `TreeCtx` associated
-/// to the last element in the chain).
-fn build_tree_ctx_chain<'a>(chain: &'a [ElementAny], arena: &'a typed_arena::Arena<TreeCtx<'a>>) -> &'a TreeCtx<'a> {
-    assert!(!chain.is_empty());
-    let mut tree = None;
-    for e in chain.iter() {
-        tree = Some(&*arena.alloc(TreeCtx {
-            parent: tree,
-            this: &e.0.ctx,
-        }));
-    }
-    tree.unwrap()
 }
 
 /// Dispatches an event to a target element, bubbling up if requested.

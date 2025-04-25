@@ -5,10 +5,10 @@ use kyute::drawing::{BorderPosition, PlacementExt, RIGHT_CENTER, vec2};
 use kyute::element::TreeCtx;
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
-use kyute::event::{Key, PointerButton, ScrollDelta};
+use kyute::input_event::{Key, PointerButton, ScrollDelta};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
-use kyute::model::EventSource;
+use kyute::event::EventSource;
 use kyute::text::Selection;
 use kyute::{Color, Point, Rect, Size};
 
@@ -170,7 +170,7 @@ impl SpinnerBase {
             value = value.round();
         }
         self.value = value;
-        self.weak.emit(ValueChangedEvent(value));
+        cx.emit(ValueChangedEvent(value));
         self.update_text(cx);
     }
 

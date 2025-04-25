@@ -7,6 +7,8 @@ use skia_safe as sk;
 use slotmap::{new_key_type};
 use std::ops::Range;
 use tracing::trace;
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 new_key_type! {
@@ -83,7 +85,7 @@ struct PictureLayer {
     x1: u32,
     y1: u32,
     /// Draw surface that holds the rasterized picture.
-    surface: Option<platform::DrawSurface>,
+    surface: Option<DrawSurface>,
 }
 
 impl PictureLayer {
@@ -108,9 +110,6 @@ enum Layer {
 }
 
 struct LayerInfo {
-    /// TODO: unused, remove
-    transform: Affine,
-    parent: Option<LayerID>,
     rev: usize,
 }
 
@@ -248,8 +247,7 @@ impl CompositionBuilder {
         self.comp.infos.insert(
             id,
             LayerInfo {
-                transform: Default::default(),
-                parent: None,
+                //parent: None,
                 rev: self.comp.rev,
             },
         );
@@ -547,25 +545,6 @@ fn enclosing_integer_rect(rect: Rect) -> Rect {
 // If layers can't be shared (but should be retained), but surfaces can, then we need two concepts in the backend:
 // - LayerID for layers (per window)
 // - SurfaceID for surfaces (global)
-
-trait SystemCompositor {
-    // create a drawing surface -> LayerID
-    // create a surface backed by an external swap chain (IDXGISwapChain, etc.) -> LayerID
-
-    // begin compositing a target window `begin_composition(target: CompositionTargetID)`
-    // end compositing
-
-    // OR:
-    // PlatformWindow::begin_composition() -> CompositionBuilder
-
-    // OR:
-    // One layer tree per window
-
-    // OR: every layer associated to a window
-    // * PlatformWindow::attach_drawing_surface(layerID, surface, size): creates a drawing surface and associates it with the layer ID
-    // * PlatformWindow::create_swap_chain_layer(layerID, swap_chain): creates a swap chain surface and associates it with the layer ID
-    // * PlatformWindow::destroy_layer(layerID): destroys the layer and releases resources
-}
 
 // Final design:
 // - two base concepts: Layers & Surfaces

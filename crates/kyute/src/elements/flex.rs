@@ -246,7 +246,7 @@ impl Element for Flex {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, _cx: &TreeCtx, ctx: &mut PaintCtx) {
         for child in self.children.iter_mut() {
             ctx.paint_child(&mut child.element);
         }

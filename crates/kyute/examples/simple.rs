@@ -4,7 +4,7 @@ use kyute::element::IntoElementAny;
 use kyute::elements::button::button;
 use kyute::elements::text_edit::TextEditBase;
 use kyute::elements::{Flex, Frame};
-use kyute::model::Model;
+use kyute::event::Model;
 use kyute::text::TextStyle;
 use kyute::{application, text, Color, Window, WindowOptions};
 use tokio::select;

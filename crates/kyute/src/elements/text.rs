@@ -4,7 +4,7 @@ use tracing::trace_span;
 
 use crate::drawing::ToSkia;
 use crate::element::{Element, ElementBuilder, HitTestCtx, TreeCtx};
-use crate::event::Event;
+use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{TextLayout, TextRun, TextStyle};
 use crate::PaintCtx;

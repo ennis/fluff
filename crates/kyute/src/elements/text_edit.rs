@@ -4,13 +4,12 @@ use kurbo::{Point, Rect, Size, Vec2};
 use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
 use skia_safe::PaintStyle;
 use std::ops::Range;
-use std::time::Duration;
 use tracing::{trace_span, warn};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
 use crate::element::HitTestCtx;
-use crate::event::Event;
+use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
 use crate::{Color, PaintCtx};
@@ -269,7 +268,7 @@ impl TextEditBase {
     }
 }
 
-const CARET_BLINK_INITIAL_DELAY: Duration = Duration::from_secs(1);
+//const CARET_BLINK_INITIAL_DELAY: Duration = Duration::from_secs(1);
 
 fn next_word_boundary(text: &str, offset: usize) -> usize {
     let mut pos = offset;
@@ -344,6 +343,7 @@ enum Gesture {
 }
 
 /// Single- or multiline text editor.
+#[allow(dead_code)]
 pub struct TextEditBase {
     //selection_changed: Notifier<Selection>,
     offset: Vec2,

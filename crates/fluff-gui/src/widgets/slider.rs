@@ -1,9 +1,9 @@
 use crate::colors;
 use crate::widgets::{INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
-use kyute::element::{ElementBuilder, ElementCtx, HitTestCtx, TreeCtx, WeakElement};
+use kyute::element::{ElementBuilder, HitTestCtx, TreeCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
-use kyute::event::ScrollDelta;
+use kyute::input_event::ScrollDelta;
 use kyute::kurbo::{Line, PathEl, Vec2};
 use kyute::layout::{LayoutInput, LayoutOutput};
 use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
@@ -150,14 +150,12 @@ impl SliderBase {
 
 /// Standalone slider widget.
 pub struct Slider {
-    weak: WeakElement<Self>,
     base: SliderBase,
 }
 
 impl Slider {
     pub fn new(value: f64, range: Range<f64>) -> ElementBuilder<Self> {
-        ElementBuilder::new_cyclic(|weak| Slider {
-            weak,
+        ElementBuilder::new(Slider {
             base: SliderBase::new(value, range),
         })
     }
@@ -197,7 +195,7 @@ impl Element for Slider {
 
         if let Some(value) = result.value_changed {
             cx.mark_needs_paint();
-            self.weak.emit(ValueChangedEvent(value));
+            cx.emit(ValueChangedEvent(value));
         }
     }
 }

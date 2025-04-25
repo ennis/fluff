@@ -1,16 +1,16 @@
 //! 3D viewport widget
-
-use graal::ClearColorValue;
-use crate::data::viewport::{ViewportEvent, ViewportModel};
+use crate::data::viewport::ViewportEvent;
 use crate::gpu;
-use crate::ui::viewport;
 use kyute::compositor::ColorType;
 use kyute::element::{ElementBuilder, HitTestCtx, TreeCtx};
 use kyute::layout::{LayoutInput, LayoutOutput};
-use kyute::{app_backend, Color, Element, Event, EventSource, IntoElementAny, PaintCtx, Point, Size};
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
+use kyute::{Element, Event, PaintCtx, Point, Size};
+use std::rc::Rc;
 
 const DEFAULT_SIZE: Size = Size::new(500., 500.);
+
+type ViewportModel = Rc<crate::data::viewport::Viewport>;
 
 /// The 3D viewport.
 ///
@@ -31,7 +31,8 @@ pub struct Viewport {
 impl Viewport {
     pub fn new(data: ViewportModel) -> ElementBuilder<Self> {
         let this = ElementBuilder::new(Viewport { data: data.clone(), swap_chain: None });
-        this.connect::<ViewportEvent, _>(&data, |_this, cx, event| {
+        
+        this.connect(&*data, |_this, cx, event: &ViewportEvent| {
             match event {
                 ViewportEvent::CameraChangedInternal => {
                     // only repaint on external camera changes
@@ -40,6 +41,7 @@ impl Viewport {
                 _ => {}
             }
         });
+        
         this
     }
 }
@@ -93,11 +95,9 @@ impl Element for Viewport {
         //let (r, g, b, a) = Color::from_hex("FFE20E").to_rgba();
         //cmd.clear_image(&image, ClearColorValue::Float([r, g, b, a]));
         
-        self.data.read().render(&mut cmd, &image);
-
+        self.data.render(&mut cmd, &image);
         
         cmd.flush(&[ready], &[rendering_finished]).unwrap();
-
 
         swap_chain.present();
         ctx.add_swap_chain(ctx.bounds.origin(), swap_chain.dxgi_swap_chain.clone());

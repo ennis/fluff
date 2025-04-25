@@ -1,10 +1,9 @@
 //! Events sent to elements.
-
 use std::any::Any;
 use std::fmt;
 
 pub use keyboard_types::{Key, KeyboardEvent, Modifiers};
-use kurbo::{Affine, Point, Rect, Vec2};
+use kurbo::Point;
 
 mod key_code;
 

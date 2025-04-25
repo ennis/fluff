@@ -3,7 +3,7 @@
 use crate::colors::{SCROLL_BAR, SCROLL_BAR_BACKGROUND};
 use kyute::element::TreeCtx;
 use kyute::element::prelude::*;
-use kyute::layout::{Axis, AxisSizeHelper};
+use kyute::layout::{Axis};
 use kyute::{Point, Rect, Size};
 //const SCROLL_BAR_WIDTH: f64 = 18.0;
 //const SCROLL_BAR_BUTTON_SIZE: f64 = 18.0;
@@ -118,7 +118,7 @@ impl ScrollBarBase {
             Axis::Horizontal => (local.x, bounds.width()),
         };
 
-        let button_size = self.cross_size;
+        //let button_size = self.cross_size;
 
         //if inline_coord < button_size {
         //    return Some(ScrollbarPart::StartButton);
@@ -129,7 +129,7 @@ impl ScrollBarBase {
         if inline_coord < self.thumb_pos + self.thumb_size {
             return Some(ScrollbarPart::Thumb);
         }
-        return Some(ScrollbarPart::EndButton);
+        Some(ScrollbarPart::EndButton)
     }
 
     fn inline_pos(&self, point: Point) -> f64 {

@@ -107,14 +107,14 @@ impl Element for Button {
                 cx.set_focus();
                 cx.set_pointer_capture();
 
-                self.weak.emit(ActivatedEvent(true));
+                cx.emit(ActivatedEvent(true));
                 true
             }
             Event::PointerUp(_) => {
                 if self.state.is_active() {
                     self.state.set_active(false);
-                    self.weak.emit(ActivatedEvent(false));
-                    self.weak.emit(ClickedEvent);
+                    cx.emit(ActivatedEvent(false));
+                    cx.emit(ClickedEvent);
                     true
                 } else {
                     false
@@ -122,12 +122,12 @@ impl Element for Button {
             }
             Event::PointerEnter(_) => {
                 self.state.set_hovered(true);
-                self.weak.emit(HoveredEvent(true));
+                cx.emit(HoveredEvent(true));
                 true
             }
             Event::PointerLeave(_) => {
                 self.state.set_hovered(false);
-                self.weak.emit(HoveredEvent(false));
+                cx.emit(HoveredEvent(false));
                 true
             }
             _ => false,

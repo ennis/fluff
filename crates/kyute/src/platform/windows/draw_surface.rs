@@ -6,16 +6,13 @@ use skia_safe::gpu::d3d::TextureResourceInfo;
 use skia_safe::gpu::{FlushInfo, Protected};
 use skia_safe::surface::BackendSurfaceAccess;
 use skia_safe::{ColorSpace, SurfaceProps};
-use windows::core::Owned;
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Direct3D12::{
     ID3D12Resource, D3D12_RESOURCE_STATE_COMMON,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT, DXGI_PRESENT_ALLOW_TEARING, DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT};
-use windows::Win32::System::Threading::WaitForSingleObject;
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain3, DXGI_PRESENT};
 
 /// Represents a surface that can be drawn on with a skia canvas.
 ///
@@ -28,7 +25,7 @@ use windows::Win32::System::Threading::WaitForSingleObject;
 ///
 pub struct DrawSurface {
     pub(crate) swap_chain: IDXGISwapChain3,
-    frame_latency_waitable: Owned<HANDLE>,
+    //frame_latency_waitable: Owned<HANDLE>,
     dxgi_format: DXGI_FORMAT,
     width: u32,
     height: u32,
@@ -58,15 +55,15 @@ impl DrawSurface {
         );
         let dxgi_format = format_to_dxgi_format(format);
         let swap_chain = create_composition_swap_chain(dxgi_format, width, height);
-        let frame_latency_waitable = unsafe {
+        /*let frame_latency_waitable = unsafe {
             let handle = swap_chain.GetFrameLatencyWaitableObject();
             //assert!(!handle.is_invalid());
             Owned::new(handle)
-        };
+        };*/
         let surface = DrawSurface {
             swap_chain,
             dxgi_format,
-            frame_latency_waitable,
+            //frame_latency_waitable,
             width,
             height,
         };
@@ -75,7 +72,7 @@ impl DrawSurface {
         surface
     }
 
-    fn wait_for_presentation(&self) {
+    /*fn wait_for_presentation(&self) {
         //let t = std::time::Instant::now();
         if !self.frame_latency_waitable.is_invalid() {
             unsafe {
@@ -83,7 +80,7 @@ impl DrawSurface {
             }
         }
         //trace!("wait_for_presentation took {:?}", t.elapsed());
-    }
+    }*/
 
     /// Returns the width of the surface, in physical pixels.
     pub fn width(&self) -> u32 {

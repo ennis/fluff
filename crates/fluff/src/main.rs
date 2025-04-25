@@ -8,8 +8,10 @@ use graal::vk;
 use winit::event::{Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::raw_window_handle::{HasRawWindowHandle, HasWindowHandle};
-
+use fluff_gui::colors;
+use kyute::{application, select, Size, Window, WindowOptions};
 use crate::app::App;
+use crate::data::AppModel;
 
 mod aabb;
 mod animation;
@@ -54,7 +56,33 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 fn main() {
     tracing_subscriber::fmt::init();
 
-    // Create the event loop and the main window
+    application::run(async {
+        let app = AppModel::new();
+
+        // Create the main window
+        let root = ui::root_frame(app);
+        let main_window = Window::new(
+            &WindowOptions {
+                title: "Hello, world!",
+                size: Size::new(800.0, 600.0),
+                background: colors::STATIC_BACKGROUND,
+                ..Default::default()
+            },
+            root,
+        );
+
+        loop {
+            select! {
+                _ = main_window.close_requested() => {
+                    eprintln!("Window closed");
+                    application::quit();
+                    break
+                }
+            }
+        }
+    }).unwrap();
+
+    /*// Create the event loop and the main window
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let egui_ctx = egui::Context::default();
     let window = create_window(&egui_ctx, &event_loop, &ViewportBuilder::default().with_title("Fluff"))
@@ -187,5 +215,5 @@ fn main() {
                 });
             }
         })
-        .expect("event loop run failed");
+        .expect("event loop run failed");*/
 }

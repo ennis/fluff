@@ -1,7 +1,7 @@
 //! Container that places its items in a uniform grid.
 
 use kyute::drawing::vec2;
-use kyute::element::{ElementAny, ElementBuilder, ElementCtx, HitTestCtx, TreeCtx, WeakElement};
+use kyute::element::{ElementAny, ElementBuilder, HitTestCtx, TreeCtx, WeakElement};
 use kyute::layout::{LayoutInput, LayoutOutput};
 use kyute::{Element, IntoElementAny, PaintCtx, Point, Size};
 
@@ -89,7 +89,7 @@ impl Element for UniformGrid {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &TreeCtx, painter: &mut PaintCtx) {
+    fn paint(&mut self, _cx: &TreeCtx, painter: &mut PaintCtx) {
         for element in &mut self.elements {
             painter.paint_child(element);
             //element.paint(cx, painter);

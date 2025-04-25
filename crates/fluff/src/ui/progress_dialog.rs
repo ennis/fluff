@@ -1,0 +1,1 @@
+//! Generic progress dialog used when loading or processing things.

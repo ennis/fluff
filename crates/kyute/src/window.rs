@@ -3,7 +3,6 @@
 //! `Window` manages an operating system window that hosts a tree of `Visual` elements.
 //! It is responsible for translating window events from winit into `Events` that are dispatched to the `Visual` tree.
 
-use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::{Rc, Weak};
@@ -21,15 +20,16 @@ use winit::keyboard::KeyLocation;
 use winit::monitor::MonitorHandle;
 
 use crate::application::WindowHandler;
-use crate::compositor::{ColorType, Composition, CompositionBuilder};
+use crate::compositor::{ Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
 use crate::element::{dispatch_event, get_keyboard_focus, ChangeFlags, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny};
-use crate::event::{
+use crate::input_event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::paint_ctx::paint_root_element;
-use crate::{app_backend, application, double_click_time, platform, Color, EventSource};
+use crate::{ application, double_click_time, platform, Color, EventSource};
+use crate::event::{wait_event, EmitterHandle, EmitterKey};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -189,7 +189,7 @@ pub fn place_popup(
 }
 
 pub(crate) struct WindowInner {
-    weak_this: Weak<WindowInner>,
+    emitter_handle: EmitterHandle,
     root: ElementAny,
     /// Previous compositor layers.
     composition: RefCell<Option<Composition>>,
@@ -621,11 +621,11 @@ impl WindowInner {
                 }
             }
             WindowEvent::CloseRequested => {
-                self.weak_this.emit(CloseRequested);
+                self.emitter_handle.emit(CloseRequested);
             }
             WindowEvent::Resized(size) => {
                 let sizef = Size::new(size.width as f64, size.height as f64);
-                self.weak_this.emit(Resized(sizef));
+                self.emitter_handle.emit(Resized(sizef));
                 if size.width != 0 && size.height != 0 {
                     // resize the compositor layer
                     //self.
@@ -636,9 +636,9 @@ impl WindowInner {
             }
             WindowEvent::Focused(focused) => {
                 eprintln!("[window@{:?}] Focused: {:?}", self.window.id(), focused);
-                self.weak_this.emit(FocusChanged(*focused));
+                self.emitter_handle.emit(FocusChanged(*focused));
                 // FIXME: this could be a global event instead
-                self.weak_this.emit(PopupCancelled);
+                self.emitter_handle.emit(PopupCancelled);
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -692,7 +692,7 @@ impl WindowInner {
                 self.cursor_pos.get(),
             );
 
-            if let Some(event) = &*self.last_kb_event.borrow() {
+            if let Some(_event) = &*self.last_kb_event.borrow() {
                 //draw_text_blob(
                 //    skia_surface.canvas(),
                 //    &format!("{:?} ({:?}) +{:?}", event.key, event.code, event.modifiers),
@@ -747,14 +747,8 @@ pub struct Window {
 }
 
 impl EventSource for Window {
-    fn as_weak(&self) -> Weak<dyn Any> {
-        Rc::downgrade(&self.shared) as Weak<dyn Any>
-    }
-}
-
-impl EventSource for Weak<WindowInner> {
-    fn as_weak(&self) -> Weak<dyn Any> {
-        self.clone() as Weak<dyn Any>
+    fn emitter_key(&self) -> EmitterKey {
+        self.shared.emitter_handle.key()
     }
 }
 
@@ -764,6 +758,7 @@ impl EventSource for Weak<WindowInner> {
 #[derive(Clone)]
 pub struct WindowHandle {
     pub(crate) shared: Weak<WindowInner>,
+    emitter_key: EmitterKey,
 }
 
 /*
@@ -775,7 +770,7 @@ impl PartialEq for WeakWindow {
 
 impl Default for WindowHandle {
     fn default() -> Self {
-        Self { shared: Weak::new() }
+        Self { shared: Weak::new(), emitter_key: Default::default() }
     }
 }
 
@@ -827,6 +822,7 @@ impl WindowHandle {
         }
     }
 
+    /// Maps a point in logical window coordinates to screen coordinates.
     pub fn map_to_screen(&self, pos: Point) -> Point {
         self.shared
             .upgrade()
@@ -834,6 +830,7 @@ impl WindowHandle {
             .unwrap_or_default()
     }
 
+    /// Returns the monitor on which the window is currently displayed.
     pub fn monitor(&self) -> Option<Monitor> {
         self.shared
             .upgrade()
@@ -841,25 +838,20 @@ impl WindowHandle {
             .map(Monitor)
     }
 
+    /// Returns the raw window handle of the window.
     pub fn raw_window_handle(&self) -> Option<RawWindowHandle> {
         Some(self.shared.upgrade()?.window.window_handle().ok()?.as_raw())
     }
 
+    /// Returns whether the window is still open.
     pub fn is_opened(&self) -> bool {
         self.shared.upgrade().is_some()
     }
 
+    /// Emitted when transient popups on this window (like context menus) should be closed.
     pub async fn popup_cancelled(&self) {
-        self.shared.wait_event::<PopupCancelled>().await;
+        wait_event::<PopupCancelled>(self.emitter_key).await;
     }
-
-    /*/// Returns a reference to the currently focused element.
-    pub fn is_focused(&self, element: &Node) -> bool {
-        self.shared
-            .upgrade()
-            .map(|shared| shared.is_focused(element))
-            .unwrap_or(false)
-    }*/
 }
 
 #[derive(Debug, Clone)]
@@ -879,8 +871,7 @@ pub struct WindowOptions<'a> {
     /// Initial size of the window, in device-independent pixels (logical size).
     pub size: Size,
     /// Owner window handle (Windows only).
-    // FIXME that's not really the parent but rather the "owner"
-    pub parent: Option<RawWindowHandle>,
+    pub owner: Option<RawWindowHandle>,
     /// Whether the window should have decorations (title bar, close button, etc).
     pub decorations: bool,
     /// Whether the window should be initially visible.
@@ -893,6 +884,9 @@ pub struct WindowOptions<'a> {
     ///
     /// This is typically used for context menus.
     pub no_focus: bool,
+    /// Whether to make this window modal (disables interaction on all other windows).
+    pub modal: bool,
+
 }
 
 impl<'a> Default for WindowOptions<'a> {
@@ -900,12 +894,13 @@ impl<'a> Default for WindowOptions<'a> {
         Self {
             title: "",
             size: Size::new(800.0, 600.0),
-            parent: None,
+            owner: None,
             decorations: true,
             visible: true,
             background: Color::from_hex("#151515"),
             position: None,
             no_focus: false,
+            modal: false,
         }
     }
 }
@@ -920,10 +915,13 @@ impl Window {
         let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
 
         let window_id = platform_window.id();
+        let emitter_handle = EmitterHandle::new();
+        let emitter_key = emitter_handle.key();
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
-            weak_this: weak_this.clone(),
+            emitter_handle,
             root: root.into_root_element_any(WindowHandle {
                 shared: weak_this.clone(),
+                emitter_key
             }),
             window: platform_window,
             hidden_before_first_draw: Cell::new(true),
@@ -949,6 +947,7 @@ impl Window {
     pub fn handle(&self) -> WindowHandle {
         WindowHandle {
             shared: Rc::downgrade(&self.shared),
+            emitter_key: self.shared.emitter_handle.key(),
         }
     }
 
@@ -989,23 +988,62 @@ impl Window {
     }*/
 
     pub async fn close_requested(&self) {
-        self.wait_event::<CloseRequested>().await;
+        wait_event::<CloseRequested>(self.emitter_key()).await;
     }
 
     pub async fn resized(&self) -> Size {
-        self.wait_event::<Resized>().await.0
+        wait_event::<Resized>(self.emitter_key()).await.0
     }
 
     pub async fn focus_changed(&self) -> bool {
-        self.wait_event::<FocusChanged>().await.0
+        wait_event::<FocusChanged>(self.emitter_key()).await.0
     }
 
-    /// Hides the window.
-    pub fn hide(&self) {
-        self.shared.window.set_visible(false);
-    }
+    // Hides the window.
+    //pub fn hide(&self) {
+    //    self.shared.window.set_visible(false);
+    //}
 
     pub fn is_hidden(&self) -> bool {
         !self.shared.window.is_visible().unwrap()
     }
 }
+
+// Window refactor:
+// - `PlatformWindow` should probably be clonable wrappers around a weak reference to a window (like WindowHandle)
+//      - this is because we want to keep a list of all active windows in the application, for various reasons
+//      - various reasons = handling of modal windows/dialogs that disable all other windows
+//      - those cannot be owning references, for obvious reasons
+// - `Window` is a wrapper around `PlatformWindow` that holds the element tree, input state, and focus-related state
+// - popup & modality management is done in `PlatformWindow`
+//
+// Does dropping a window close the window? I.e. does the user "own" the window?
+//
+// Annoyingly, if the user owns the window, there are two APIs to manage windows: WindowHandle and direct references to Window.
+// Weak window handles are essential.
+
+
+// The plan:
+// - `PlatformWindow` becomes PlatformWindowHandle
+// - on creation, PlatformWindowHandle::new takes a `dyn WindowHandler` object that receives events.
+//   (it's a trait object, and is boxed internally).
+//      - more precisely, PlatformWindowHandle::new takes a closure that receives an incomplete `PlatformWindowHandle` (like Rc::new_cyclic)
+//        and returns a `dyn WindowHandler`, so that the window handler can refer to the window.
+// - PlatformWindowHandle is the only object through which the window can be accessed.
+//
+// - `Window` is an owned wrapper around a PlatformWindowHandle.
+//      - Window == (PlatformWindowHandle, EmitterID)
+//   It has its own handler (WindowHandler), which is inaccessible to the user. It contains the
+//   element tree, input state, and focus-related state.
+// - Currently we need to refer to the WindowHandler in order to set dirty flags (see mark_needs_layout, mark_needs_paint).
+//   However it's not strictly necessary. For instance mark_needs_paint does nothing (the dirty flag is set on the root element, not the window)
+//   We could do the same for layout.
+// - Windows can emit events (they have an emitter key). This can be used by the windowhandler to communicate with external code.
+//
+// NOTE: the WindowHandler should be accessible to the user. E.g. for programmatic access to the
+// currently focused element from outside a TreeCtx.
+//
+// In the end, the only change is to turn PlatformWindow into PlatformWindowHandle, and replace
+// some references to WindowHandle with just a PlatformWindowHandle.
+
+

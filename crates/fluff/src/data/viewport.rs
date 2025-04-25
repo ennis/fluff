@@ -1,9 +1,10 @@
+use std::rc::Rc;
 use crate::camera_control::Camera;
-use crate::data::scene::SceneModel;
-use crate::data::timeline::{Timeline, TimelineEvent, TimelineModel};
+use crate::data::timeline::{Timeline, TimelineEvent};
 use crate::gpu;
 use graal::CommandStream;
-use kyute::model::{EventEmitter, Model};
+use kyute::event::{EmitterHandle, EmitterKey, EventEmitter};
+use kyute::EventSource;
 use crate::scene::Scene3D;
 
 /// Event emitted by the viewport model.
@@ -16,12 +17,13 @@ pub enum ViewportEvent {
 
 /// Viewport model data.
 pub struct Viewport {
+    emitter: EmitterHandle,
     /// Current camera.
     pub camera: Camera,
     /// The scene to render.
-    pub scene: Model<Scene3D>,
+    pub scene: Rc<Scene3D>,
     /// Timeline associated to this viewport.
-    pub timeline: Model<Timeline>,
+    pub timeline: Rc<Timeline>,
 }
 
 
@@ -30,16 +32,10 @@ impl EventEmitter<TimelineEvent> for Viewport {}
 
 impl Viewport {
     
-    pub fn new(camera: Camera, scene: Model<Scene3D>, timeline: Model<Timeline>) -> Model<Self> {
-        
-        let mut model = Model::new(Self { camera, scene, timeline });
-        // reemit timeline events
-        //model.connect::<TimelineEvent, _>(&timeline, |model, _ctx, event| {
-        //    model.emit(event);
-        //});
-        
-        model
-        
+    pub fn new(timeline: Rc<Timeline>) -> Rc<Self> {
+        let camera = Camera::default();
+        let scene = Rc::new(Scene3D::new());
+        Rc::new(Self { emitter: EmitterHandle::new(), camera, scene, timeline })
     }
     
     /// Renders the viewport to the target image.
@@ -73,6 +69,12 @@ impl Viewport {
         let device = gpu::device();
 
         //let camera_data = cmd.upload_temporary()
+    }
+}
+
+impl EventSource for Viewport {
+    fn emitter_key(&self) -> EmitterKey {
+        self.emitter.key()
     }
 }
 
