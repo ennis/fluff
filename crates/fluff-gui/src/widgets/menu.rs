@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 use tracing::warn;
+use kyute::platform::PlatformWindowHandle;
 
 /// Event emitted when a menu entry is activated.
 #[derive(Debug, Clone, Copy)]
@@ -70,22 +71,19 @@ fn submenu_range(nodes: &[MenuItemNode], index: usize) -> Range<usize> {
 }
 
 fn open_anchored_popup<T: Element>(
-    parent_window: WindowHandle,
+    owner: PlatformWindowHandle,
     content: ElementBuilder<T>,
     anchor_rect: Rect,
     popup_placement: PopupPlacement,
 ) -> Window {
     // create popup window
     let size = content.measure(&LayoutInput::default());
-    let position = place_popup(parent_window.monitor(), size, anchor_rect, popup_placement);
+    let position = place_popup(Some(owner.monitor()), size, anchor_rect, popup_placement);
 
-    let parent_window = parent_window.clone();
-
-    // the parent of the menu is the main window,
     let window = Window::new(
         &WindowOptions {
             size,
-            owner: Some(parent_window.raw_window_handle().expect("parent window closed")),
+            owner: Some(owner.clone()),
             decorations: false,
             visible: true,
             background: STATIC_BACKGROUND,
@@ -166,7 +164,7 @@ impl MenuItemNodeRange {
 
 pub struct MenuBase {
     weak_this: WeakElement<Self>,
-    parent_window: WindowHandle,
+    owner: PlatformWindowHandle,
     items: Vec<InternalMenuItem>,
     tree: MenuItemNodeRange,
     insets: Insets,
@@ -195,7 +193,7 @@ fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
 }
 
 impl MenuBase {
-    fn new(parent_window: WindowHandle, tree: MenuItemNodeRange) -> ElementBuilder<Self> {
+    fn new(owner: PlatformWindowHandle, tree: MenuItemNodeRange) -> ElementBuilder<Self> {
         let mut items = Vec::new();
 
         for (index, item) in tree.iter() {
@@ -219,7 +217,7 @@ impl MenuBase {
 
         ElementBuilder::new_cyclic(|weak_this| MenuBase {
             weak_this,
-            parent_window,
+            owner,
             items,
             tree,
             insets: Insets::uniform(4.0),
@@ -247,7 +245,7 @@ impl MenuBase {
         //    round_to_device_pixel(size.width, scale_factor),
         //    round_to_device_pixel(size.height, scale_factor),
         //);
-        open_anchored_popup(self.parent_window.clone(), self, rect, popup_placement)
+        open_anchored_popup(self.owner.clone(), self, rect, popup_placement)
     }
 
     /// Opens a submenu.
@@ -257,7 +255,7 @@ impl MenuBase {
     /// * `around` - The bounding rectangle of the parent menu item, in the coordinate space of the
     ///              parent window (`self.parent_window`).
     fn open_submenu(&mut self, _cx: &ElementCtx, around: Rect, range: MenuItemNodeRange) {
-        let submenu = MenuBase::new(self.parent_window.clone(), range).set_focus();
+        let submenu = MenuBase::new(self.owner.clone(), range).set_focus();
         let popup = submenu.open_around(around, PopupPlacement::RightThenLeft);
 
         // Close menu when focus is lost
@@ -586,7 +584,7 @@ where
 ///
 /// Drop to close the context menu.
 pub struct ContextMenu<ID> {
-    parent_window: WindowHandle,
+    owner: PlatformWindowHandle,
     popup: Window,
     index_to_id: BTreeMap<usize, ID>,
 }
@@ -616,7 +614,7 @@ impl<ID: Clone + 'static> ContextMenu<ID> {
         select! {
             _ = wait_event_global::<InternalMenuCancelled>() => {}
             _ = self.popup.close_requested() => {}
-            _ = self.parent_window.popup_cancelled() => {}
+            //_ = self.owner.popup_cancelled() => {}
         }
     }
 
@@ -626,8 +624,8 @@ impl<ID: Clone + 'static> ContextMenu<ID> {
 }
 
 // TODO remove this
-fn open_context_menu_popup(parent_window: WindowHandle, around_rect_monitor: Rect, items: MenuItemNodeRange) -> Window {
-    let popup = MenuBase::new(parent_window, items)
+fn open_context_menu_popup(owner: PlatformWindowHandle, around_rect_monitor: Rect, items: MenuItemNodeRange) -> Window {
+    let popup = MenuBase::new(owner, items)
         .set_focus()
         .open_around(around_rect_monitor, PopupPlacement::RightOrOverlap);
     popup
@@ -674,14 +672,14 @@ impl ContextMenuExt for TreeCtx<'_> {
         items: &[MenuItem<ID>],
         on_entry_activated: impl FnOnce(ID) + 'static,
     ) {
-        let parent_window = self.get_parent_window();
+        let owner = self.get_window().platform_window().unwrap();
         let (nodes, index_to_id) = flatten_menu(items);
         let rect_monitor = self.map_rect_to_monitor(rect);
         spawn(async move {
             let menu = ContextMenu {
-                parent_window: parent_window.clone(),
+                owner: owner.clone(),
                 index_to_id,
-                popup: open_context_menu_popup(parent_window, rect_monitor, nodes),
+                popup: open_context_menu_popup(owner, rect_monitor, nodes),
             };
             // FIXME: there's no way to cancel it?
             select! {
@@ -771,16 +769,17 @@ impl<ID: 'static + Clone> MenuBar<ID> {
 
     /// Opens the menu for the given entry index in the menu bar.
     fn open_menu(&mut self, cx: &TreeCtx, entry_index: usize) {
+
         let Some(nodes) = self.nodes.child_item_range(self.entries[entry_index].index) else {
             // no items in menu
             return;
         };
-        let bounds = self.entries[entry_index].bounds;
-        let bounds_screen = cx.map_rect_to_monitor(bounds);
-        let parent_window = cx.get_parent_window();
-        let popup = MenuBase::new(parent_window.clone(), nodes)
+
+        let entry_bounds_screen = cx.map_rect_to_monitor(self.entries[entry_index].bounds);
+        let owner = cx.get_platform_window();
+        let popup = MenuBase::new(owner.clone(), nodes)
             .set_focus()
-            .open_around(bounds_screen, PopupPlacement::BottomThenUp);
+            .open_around(entry_bounds_screen, PopupPlacement::BottomThenUp);
 
         // convert internal events to typed events
         subscribe_global::<InternalMenuEntryActivated>({
@@ -808,15 +807,16 @@ impl<ID: 'static + Clone> MenuBar<ID> {
         self.menu = Some(popup);
         let weak_this = self.weak_this.clone();
 
-        // spawn a tasks that closes the menu when the window dismisses the popup
-        spawn(async move {
-            parent_window.popup_cancelled().await;
+        // TODO spawn a task that closes the menu when the window dismisses the popup
+        //
+        /*spawn(async move {
+            owner.popup_cancelled().await;
             if let Some(this) = weak_this.upgrade() {
                 this.invoke(|this, _| {
                     this.menu = None;
                 });
             }
-        });
+        });*/
     }
 }
 

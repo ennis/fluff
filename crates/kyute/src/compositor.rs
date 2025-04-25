@@ -1,6 +1,6 @@
 //! System compositor interface
 use crate::drawing::{FromSkia, ToSkia};
-use crate::platform::DrawSurface;
+use crate::platform::{DrawSurface, PlatformWindowHandle};
 use crate::{platform};
 use kurbo::{Affine, Point, Rect, Vec2};
 use skia_safe as sk;
@@ -144,7 +144,7 @@ impl Default for Composition {
 }
 
 impl Composition {
-    pub fn render_to_window(&self, window: &platform::Window) {
+    pub fn render_to_window(&self, window: &PlatformWindowHandle) {
         // attach surfaces to composition layers
         for (id, layer) in self.layers.iter() {
             match layer {

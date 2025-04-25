@@ -25,7 +25,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
 
 pub use draw_surface::{DrawSurface, DrawSurfaceContext};
-pub use window::{CompositionContext, Window};
+pub use window::{CompositionContext, PlatformWindowHandle, Monitor};
 
 use crate::compositor::ColorType;
 

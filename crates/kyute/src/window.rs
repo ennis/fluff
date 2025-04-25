@@ -20,16 +20,20 @@ use winit::keyboard::KeyLocation;
 use winit::monitor::MonitorHandle;
 
 use crate::application::WindowHandler;
-use crate::compositor::{ Composition, CompositionBuilder};
+use crate::compositor::{Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
-use crate::element::{dispatch_event, get_keyboard_focus, ChangeFlags, ElementAny, FocusedElement, HitTestCtx, IntoElementAny, WeakElementAny};
+use crate::element::{
+    dispatch_event, get_keyboard_focus, ChangeFlags, ElementAny, FocusedElement, HitTestCtx, IntoElementAny,
+    WeakElementAny,
+};
+use crate::event::{wait_event, EmitterHandle, EmitterKey};
 use crate::input_event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::paint_ctx::paint_root_element;
-use crate::{ application, double_click_time, platform, Color, EventSource};
-use crate::event::{wait_event, EmitterHandle, EmitterKey};
+use crate::platform::{Monitor, PlatformWindowHandle};
+use crate::{application, double_click_time, platform, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -193,10 +197,9 @@ pub(crate) struct WindowInner {
     root: ElementAny,
     /// Previous compositor layers.
     composition: RefCell<Option<Composition>>,
-    window: platform::Window,
+    window: PlatformWindowHandle,
     hidden_before_first_draw: Cell<bool>,
     cursor_pos: Cell<Point>,
-    last_physical_size: Cell<Size>,
     input_state: RefCell<InputState>,
     /// The widget that is currently capturing pointer events.
     pointer_capture: RefCell<Option<WeakElementAny>>,
@@ -222,9 +225,7 @@ impl WindowInner {
         //        as the scale factor of the monitor. I'm not sure if this is always the case.
         let window_pos = self
             .window
-            .inner_position()
-            .expect("failed to get window position")
-            .to_logical::<f64>(self.window.scale_factor());
+            .client_area_position();
 
         Point {
             x: point.x + window_pos.x,
@@ -543,6 +544,11 @@ impl WindowInner {
         //self.window.request_redraw();
     }
 
+    /// Emits an application event.
+    fn emit<T: 'static>(&self, event: T) {
+        self.emitter_handle.emit(event);
+    }
+
     /// Converts & dispatches a winit window event.
     fn dispatch_window_event(&self, event: &WindowEvent) {
         // First, redirect the input event to the popup window if there is one.
@@ -621,24 +627,21 @@ impl WindowInner {
                 }
             }
             WindowEvent::CloseRequested => {
-                self.emitter_handle.emit(CloseRequested);
+                self.emit(CloseRequested);
             }
             WindowEvent::Resized(size) => {
                 let sizef = Size::new(size.width as f64, size.height as f64);
-                self.emitter_handle.emit(Resized(sizef));
+                self.emit(Resized(sizef));
                 if size.width != 0 && size.height != 0 {
-                    // resize the compositor layer
-                    //self.
-                    //self.layer.resize(sizef);
                     self.window.request_redraw();
                 }
                 self.needs_layout.set(true);
             }
             WindowEvent::Focused(focused) => {
                 eprintln!("[window@{:?}] Focused: {:?}", self.window.id(), focused);
-                self.emitter_handle.emit(FocusChanged(*focused));
-                // FIXME: this could be a global event instead
-                self.emitter_handle.emit(PopupCancelled);
+                self.emit(FocusChanged(*focused));
+                // FIXME: this should be a global event instead
+                self.emit(PopupCancelled);
             }
             WindowEvent::RedrawRequested => {
                 //eprintln!("[{:?}] RedrawRequested", self.window.id());
@@ -650,38 +653,35 @@ impl WindowInner {
 
     fn do_redraw(&self) {
         let scale_factor = self.window.scale_factor();
-        let physical_size = self.window.inner_size();
-        if physical_size.width == 0 || physical_size.height == 0 {
-            return;
-        }
-        let size = physical_size.to_logical(scale_factor);
-        let physical_size = Size::new(physical_size.width as f64, physical_size.height as f64);
-        let size = Size::new(size.width, size.height);
+        let client_area = self.window.client_area_size();
 
-        if physical_size != self.last_physical_size.get() {
-            self.last_physical_size.set(physical_size);
-            //self.layer.set_surface_size(physical_size);
+        if client_area.width == 0.0 || client_area.height == 0.0 {
+            return;
         }
 
         // TODO: a more principled way to determine if we need to redraw
-        if !self.root.0.ctx.change_flags.get().contains(ChangeFlags::PAINT) && !self.needs_layout.get() {
+        let root_change_flags = self.root.0.ctx.change_flags.get();
+        if !root_change_flags.contains(ChangeFlags::PAINT)
+            && !root_change_flags.contains(ChangeFlags::LAYOUT)
+            && !self.needs_layout.get()
+        {
             return;
         }
 
-        if self.needs_layout.replace(false) {
+        if self.needs_layout.replace(false) || root_change_flags.contains(ChangeFlags::LAYOUT) {
+            // perform layout if necessary
             let size = self.root.measure_root(&LayoutInput {
-                parent_width: Some(size.width),
-                parent_height: Some(size.height),
-                width: SizeConstraint::Available(size.width),
-                height: SizeConstraint::Available(size.height),
+                parent_width: Some(client_area.width),
+                parent_height: Some(client_area.height),
+                width: SizeConstraint::Available(client_area.width),
+                height: SizeConstraint::Available(client_area.height),
             });
             let _geom = self.root.layout_root(size);
         }
 
-
         {
             let mut composition_builder =
-                CompositionBuilder::new(scale_factor, size.to_rect(), self.composition.take());
+                CompositionBuilder::new(scale_factor, client_area.to_rect(), self.composition.take());
             composition_builder.canvas().clear(self.background.get().to_skia());
 
             paint_root_element(&self.root, &mut composition_builder);
@@ -770,20 +770,14 @@ impl PartialEq for WeakWindow {
 
 impl Default for WindowHandle {
     fn default() -> Self {
-        Self { shared: Weak::new(), emitter_key: Default::default() }
+        Self {
+            shared: Weak::new(),
+            emitter_key: Default::default(),
+        }
     }
 }
 
 impl WindowHandle {
-    pub fn scale_factor(&self) -> f64 {
-        if let Some(shared) = self.shared.upgrade() {
-            shared.window.scale_factor()
-        } else {
-            warn!("scale_factor: window has been dropped");
-            1.0
-        }
-    }
-
     /*pub fn request_repaint(&self) {
         if let Some(shared) = self.shared.upgrade() {
             shared.window.request_redraw();
@@ -831,17 +825,19 @@ impl WindowHandle {
     }
 
     /// Returns the monitor on which the window is currently displayed.
-    pub fn monitor(&self) -> Option<Monitor> {
-        self.shared
-            .upgrade()
-            .and_then(|shared| shared.window.current_monitor())
-            .map(Monitor)
+    pub fn monitor(&self) -> Monitor {
+        self.shared.upgrade().unwrap().window.monitor()
     }
 
-    /// Returns the raw window handle of the window.
+    /// Returns the plaform window handle.
+    pub fn platform_window(&self) -> Option<PlatformWindowHandle> {
+        self.shared.upgrade().map(|shared| shared.window.clone())
+    }
+
+    /*/// Returns the raw window handle of the window.
     pub fn raw_window_handle(&self) -> Option<RawWindowHandle> {
         Some(self.shared.upgrade()?.window.window_handle().ok()?.as_raw())
-    }
+    }*/
 
     /// Returns whether the window is still open.
     pub fn is_opened(&self) -> bool {
@@ -854,24 +850,14 @@ impl WindowHandle {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Monitor(MonitorHandle);
-
-impl Monitor {
-    pub fn logical_size(&self) -> Size {
-        let size = self.0.size().to_logical(self.0.scale_factor());
-        Size::new(size.width, size.height)
-    }
-}
-
 /// Describes the options for creating a new window.
 pub struct WindowOptions<'a> {
     /// Initial title of the window.
     pub title: &'a str,
     /// Initial size of the window, in device-independent pixels (logical size).
     pub size: Size,
-    /// Owner window handle (Windows only).
-    pub owner: Option<RawWindowHandle>,
+    /// Owner window handle.
+    pub owner: Option<PlatformWindowHandle>,
     /// Whether the window should have decorations (title bar, close button, etc).
     pub decorations: bool,
     /// Whether the window should be initially visible.
@@ -886,7 +872,6 @@ pub struct WindowOptions<'a> {
     pub no_focus: bool,
     /// Whether to make this window modal (disables interaction on all other windows).
     pub modal: bool,
-
 }
 
 impl<'a> Default for WindowOptions<'a> {
@@ -907,13 +892,7 @@ impl<'a> Default for WindowOptions<'a> {
 
 impl Window {
     pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
-        let platform_window = platform::Window::new(options);
-
-        // Setup compositor layer
-        // Get the physical size from the window
-        let phy_size = platform_window.inner_size();
-        let phy_size = Size::new(phy_size.width as f64, phy_size.height as f64);
-
+        let platform_window = PlatformWindowHandle::new(options);
         let window_id = platform_window.id();
         let emitter_handle = EmitterHandle::new();
         let emitter_key = emitter_handle.key();
@@ -921,12 +900,11 @@ impl Window {
             emitter_handle,
             root: root.into_root_element_any(WindowHandle {
                 shared: weak_this.clone(),
-                emitter_key
+                emitter_key,
             }),
             window: platform_window,
             hidden_before_first_draw: Cell::new(true),
             cursor_pos: Cell::new(Default::default()),
-            last_physical_size: Cell::new(phy_size),
             input_state: Default::default(),
             pointer_capture: Default::default(),
             background: Cell::new(options.background),
@@ -955,8 +933,8 @@ impl Window {
         self.shared.map_to_screen(pos)
     }
 
-    pub fn monitor(&self) -> Option<Monitor> {
-        self.shared.window.current_monitor().map(Monitor)
+    pub fn monitor(&self) -> Monitor {
+        self.shared.window.monitor()
     }
 
     pub fn mark_needs_layout(&self) {
@@ -969,10 +947,6 @@ impl Window {
 
     pub fn set_popup(&self, window: &Window) {
         self.shared.set_popup(window);
-    }
-
-    pub fn raw_window_handle(&self) -> RawWindowHandle {
-        self.shared.window.window_handle().unwrap().as_raw()
     }
 
     /*pub fn on_close_requested(&self, f: impl Fn() + 'static) {
@@ -1004,8 +978,8 @@ impl Window {
     //    self.shared.window.set_visible(false);
     //}
 
-    pub fn is_hidden(&self) -> bool {
-        !self.shared.window.is_visible().unwrap()
+    pub fn is_visible(&self) -> bool {
+        self.shared.window.is_visible()
     }
 }
 
@@ -1021,7 +995,6 @@ impl Window {
 //
 // Annoyingly, if the user owns the window, there are two APIs to manage windows: WindowHandle and direct references to Window.
 // Weak window handles are essential.
-
 
 // The plan:
 // - `PlatformWindow` becomes PlatformWindowHandle
@@ -1045,5 +1018,3 @@ impl Window {
 //
 // In the end, the only change is to turn PlatformWindow into PlatformWindowHandle, and replace
 // some references to WindowHandle with just a PlatformWindowHandle.
-
-

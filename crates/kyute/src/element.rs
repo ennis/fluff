@@ -15,6 +15,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
 use typed_arena::Arena;
+use crate::platform::PlatformWindowHandle;
 
 pub mod prelude {
     pub use crate::element::{
@@ -139,19 +140,24 @@ impl<'a> TreeCtx<'a> {
     ///
     /// This can be somewhat costly since it has to climb up the hierarchy of elements up to the
     /// root to get the window handle.
-    pub fn get_parent_window(&self) -> WindowHandle {
+    pub fn get_window(&self) -> WindowHandle {
         if let Some(parent) = self.parent {
-            parent.get_parent_window()
+            parent.get_window()
         } else {
             // no parent, this is the root element
             self.this.window.clone()
         }
     }
+    
+    /// Returns the parent platform window of this element.
+    pub fn get_platform_window(&self) -> PlatformWindowHandle {
+        self.get_window().platform_window().unwrap()
+    }
 
     /// Maps a point in window coordinates to screen coordinates.
     pub fn map_to_monitor(&self, window_point: Point) -> Point {
         //let window_point = self.map_to_window(local_point);
-        self.get_parent_window().map_to_screen(window_point)
+        self.get_window().map_to_screen(window_point)
     }
 
     /// Maps a rectangle in window coordinates to screen coordinates.

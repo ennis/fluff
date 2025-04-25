@@ -4,4 +4,5 @@
 pub mod windows;
 
 #[cfg(windows)]
-pub use self::windows::{Window, CompositionContext, ApplicationBackend, DrawSurface, DrawSurfaceContext};
+pub use self::windows::*;
+

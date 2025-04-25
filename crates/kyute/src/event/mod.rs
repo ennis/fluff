@@ -156,6 +156,7 @@ pub fn emit_global<E: 'static>(event: E) {
 }
 
 /// Subscribes to global events.
+#[track_caller]
 pub fn subscribe_global<E: 'static>(mut callback: impl FnMut(&E) -> bool + 'static) -> SubscriptionKey {
     subscribe_raw(
         [global_emitter()],

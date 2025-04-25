@@ -2,12 +2,15 @@ use crate::application::with_event_loop_window_target;
 use crate::compositor::LayerID;
 use crate::platform::windows::draw_surface::DrawSurface;
 use crate::{app_backend, WindowOptions};
-use kurbo::Affine;
+use kurbo::{Affine, Point, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slotmap::SecondaryMap;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::ffi::c_void;
+use std::fmt;
 use std::ops::Deref;
+use std::rc::{Rc, Weak};
+use tracing::warn;
 use windows::core::Interface;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_MATRIX_4X4_F, D2D_MATRIX_4X4_F_0, D2D_MATRIX_4X4_F_0_0};
@@ -18,8 +21,108 @@ use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows::Win32::UI::WindowsAndMessaging::EnumThreadWindows;
+use winit::monitor::MonitorHandle;
 use winit::platform::windows::WindowBuilderExtWindows;
+use winit::window::WindowId;
 
+// Some bullshit to get the HWND from winit
+fn get_hwnd(handle: RawWindowHandle) -> HWND {
+    match handle {
+        RawWindowHandle::Win32(win32) => HWND(win32.hwnd.get() as *mut c_void),
+        _ => unreachable!("only win32 windows are supported"),
+    }
+}
+
+/// Win32 window.
+///
+/// This is a thin wrapper around a winit window that also holds state necessary for
+/// DirectComposition.
+#[derive(Clone)]
+pub struct PlatformWindowHandle {
+    state: Weak<WindowState>,
+}
+
+impl fmt::Debug for PlatformWindowHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(_) = self.state.upgrade() {
+            write!(f, "HWND@{:08x}", self.hwnd().0 as isize)
+        } else {
+            write!(f, "(dropped window)")
+        }
+    }
+}
+
+impl PlatformWindowHandle {
+    /// Returns the HWND of the window.
+    pub fn hwnd(&self) -> HWND {
+        match self.state.upgrade() {
+            Some(state) => get_hwnd(state.inner.window_handle().unwrap().as_raw()),
+            None => {
+                panic!("Window has been dropped");
+            }
+        }
+    }
+
+    /// Enables or disables inputs to this window.
+    ///
+    /// Internally this calls `EnableWindow` on the HWND of the window.
+    pub fn enable_input(&self, enabled: bool) {
+        unsafe {
+            EnableWindow(self.hwnd(), enabled).unwrap();
+        }
+    }
+    
+    /// Closes the window.
+    pub fn close(&self) {
+        if let Some(state) = self.state.upgrade() {
+            assert_eq!(Rc::strong_count(&state), 2);
+            // remove the window from the global list
+            ALL_WINDOWS.with_borrow_mut(|windows| {
+                windows.retain(|w| !Rc::ptr_eq(w, &state));
+            });
+            // here the last reference should drop
+            // and the window will be closed
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub struct WindowState {
+    pub(crate) inner: winit::window::Window,
+    /// DComp window target bound to this window.
+    pub(crate) composition_target: IDCompositionTarget,
+    /// Root visual.
+    root_visual: IDCompositionVisual2,
+    /// Visuals for each layer.
+    layer_map: RefCell<SecondaryMap<LayerID, IDCompositionVisual3>>,
+
+    /// If this is a modal window, the handles of disabled windows that should be re-enabled
+    /// when this modal window is closed.
+    modal_disabled_windows: Vec<PlatformWindowHandle>,
+}
+
+thread_local! {
+    /// All windows in the main thread.
+    ///
+    /// When a platform window is created, it is added to this list.
+    static ALL_WINDOWS: RefCell<Vec<Rc<WindowState>>> = RefCell::new(Vec::new());
+}
+
+//--------------------------------------------------------------------------------------------------
+
+/// Represents a monitor that shows a window.
+#[derive(Debug, Clone)]
+pub struct Monitor(MonitorHandle);
+
+impl Monitor {
+    /// Returns the size in device-independent pixels of the monitor.
+    pub fn logical_size(&self) -> Size {
+        let size = self.0.size().to_logical(self.0.scale_factor());
+        Size::new(size.width, size.height)
+    }
+}
+
+/*
 /// Win32 window.
 ///
 /// This is a thin wrapper around a winit window that also holds state necessary for
@@ -47,15 +150,7 @@ impl Drop for Window {
             }
         }
     }
-}
-
-// Some bullshit to get the HWND from winit
-fn get_hwnd(window: RawWindowHandle) -> HWND {
-    match window {
-        RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as *mut c_void),
-        _ => unreachable!("only win32 windows are supported"),
-    }
-}
+}*/
 
 /*
 fn disable_windows() -> Vec<HWND> {
@@ -80,19 +175,19 @@ fn disable_windows() -> Vec<HWND> {
     }
 }*/
 
-impl Window {
+impl PlatformWindowHandle {
     /// Creates a new window with the specified options.
-    pub fn new(options: &WindowOptions) -> Window {
-        
+    pub fn new(options: &WindowOptions) -> PlatformWindowHandle {
+
+        // TODO check that we're not creating a window outside the main thread
+
         // if creating a modal window, disable all other windows
         let modal_disabled_windows = if options.modal {
             // If the owner is set, disable only the owner window.
             // Otherwise, disable all other windows, and re-enable them when exiting the modal.
-            if let Some(owner_hwnd) = options.owner.map(get_hwnd) {
-                unsafe {
-                    EnableWindow(owner_hwnd, false).unwrap();
-                }
-                vec![owner_hwnd]
+            if let Some(ref owner) = options.owner {
+                owner.enable_input(false);
+                vec![owner.clone()]
             } else {
                 todo!("modal windows without an owner are not yet supported");
             }
@@ -117,55 +212,152 @@ impl Window {
         if let Some(p) = options.position {
             builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
         }
-        if let Some(parent) = options.owner {
-            match parent {
-                RawWindowHandle::Win32(w) => {
-                    builder = builder.with_owner_window(w.hwnd.get());
-                }
-                _ => unreachable!(),
-            }
+        if let Some(ref owner) = options.owner {
+            builder = builder.with_owner_window(owner.hwnd().0 as isize);
         }
-        
-        let window_inner = with_event_loop_window_target(|event_loop| {
-            builder.build(&event_loop).unwrap()
-        });
 
+        // create the winit window
+        let window_inner = with_event_loop_window_target(|event_loop| builder.build(&event_loop).unwrap());
 
-        unsafe {
+        // Create a DirectComposition target for the window.
+        // SAFETY: the HWND handle is valid
+        let composition_target = unsafe {
             let hwnd = get_hwnd(window_inner.window_handle().unwrap().as_raw());
-            // Create a DirectComposition target for the window.
-            // SAFETY: the HWND handle is valid
-            let composition_target = app_backend()
+            app_backend()
                 .composition_device
                 .CreateTargetForHwnd(hwnd, false)
-                .unwrap();
+                .unwrap()
+        };
 
-            // Create the root visual and attach it to the composition target.
-            // SAFETY: FFI call
-            let root_visual = app_backend().composition_device.CreateVisual().unwrap();
+        // Create the root visual and attach it to the composition target.
+        // SAFETY: FFI call
+        let root_visual = unsafe { app_backend().composition_device.CreateVisual().unwrap() };
 
-            // SAFETY: FFI call
-            composition_target.SetRoot(&root_visual).unwrap();
+        // SAFETY: FFI call
+        unsafe { composition_target.SetRoot(&root_visual).unwrap() };
 
-            Window {
-                inner: window_inner,
-                composition_target,
-                root_visual,
-                layer_map: Default::default(),
-                modal_disabled_windows,
-            }
+        let state = Rc::new(WindowState {
+            inner: window_inner,
+            composition_target,
+            root_visual,
+            layer_map: Default::default(),
+            modal_disabled_windows,
+        });
+
+        // add to the global list
+        ALL_WINDOWS.with_borrow_mut(|windows| {
+            windows.push(state.clone());
+        });
+
+        PlatformWindowHandle {
+            state: Rc::downgrade(&state),
         }
+    }
+
+    fn state(&self) -> Rc<WindowState> {
+        self.state.upgrade().expect("window has been dropped")
+    }
+
+    /// Returns the monitor on which the window is currently displayed.
+    pub fn monitor(&self) -> Monitor {
+        Monitor(self.state().inner.current_monitor().unwrap())
+    }
+
+    /// Returns the unique identifier for this window.
+    pub fn id(&self) -> WindowId {
+        self.state().inner.id()
+    }
+
+    /// Returns the current scale factor of the window, i.e. the ratio of the window's
+    /// pixel size to its logical size.
+    ///
+    /// For example, a scale factor of 2.0 means that 1 logical pixel corresponds to 2 physical pixels.
+    pub fn scale_factor(&self) -> f64 {
+        self.state().inner.scale_factor()
+    }
+
+    /// Requests a redraw of the window.
+    pub fn request_redraw(&self) {
+        self.state().inner.request_redraw();
+    }
+
+    /// Returns the logical size of the client area (the window without its decorations) of this window.
+    pub fn client_area_size(&self) -> Size {
+        let size = self.state().inner.inner_size().to_logical(self.scale_factor());
+        Size::new(size.width, size.height)
+    }
+
+    /// Returns the logical coordinates of the window client area on the screen.
+    pub fn client_area_position(&self) -> Point {
+        let pos = self.state().inner.inner_position().unwrap();
+        let pos = pos.to_logical(self.scale_factor());
+        Point::new(pos.x, pos.y)
+    }
+
+    /// Returns whether the window is still open.
+    pub fn is_open(&self) -> bool {
+        self.state.upgrade().is_some()
+    }
+
+    /// Shows or hides the window.
+    pub fn set_visible(&self, visible: bool) {
+        let state = self.state();
+        state.inner.set_visible(visible);
+    }
+
+    /// Returns whether the window is currently visible.
+    pub fn is_visible(&self) -> bool {
+        self.state().inner.is_visible().unwrap_or(true)
+    }
+
+    /// Creates a layer with the specified ID and attaches a `DrawSurface` to it.
+    ///
+    /// The layer displays the contents of the `DrawSurface`.
+    pub fn attach_draw_surface(&self, layer_id: LayerID, surface: &DrawSurface) {
+        let visual = self.state().get_or_create_dcomp_visual(layer_id);
+        unsafe {
+            visual.SetContent(&surface.swap_chain).unwrap();
+        }
+    }
+
+    /// Attaches a swap chain to the specified layer.
+    pub fn attach_swap_chain(&self, layer_id: LayerID, swap_chain: IDXGISwapChain3) {
+        let visual = self.state().get_or_create_dcomp_visual(layer_id);
+        unsafe {
+            visual.SetContent(&swap_chain).unwrap();
+        }
+    }
+
+    /// Deletes resources associated with the specified layer.
+    pub fn release_layer(&self, layer_id: LayerID) {
+        // this should release the associated visual once it's not used anymore
+        // by the composition tree
+        self.state().layer_map.borrow_mut().remove(layer_id);
+    }
+
+    /// Starts building a new composition tree for the window.
+    ///
+    /// It's reasonable to call this function once per frame.
+    pub fn begin_composition(&self) -> CompositionContext {
+        let state = self.state();
+        unsafe {
+            // Remove all previous layers from the root visual.
+            // The stack is rebuilt from scratch on every call to begin_composition.
+            state.root_visual.RemoveAllVisuals().unwrap();
+        }
+        CompositionContext::new(state)
     }
 }
 
+/*
 impl Deref for Window {
     type Target = winit::window::Window;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
-}
+}*/
 
-impl Window {
+impl WindowState {
     fn get_or_create_dcomp_visual(&self, layer_id: LayerID) -> IDCompositionVisual3 {
         let mut layer_map = self.layer_map.borrow_mut();
         if let Some(visual) = layer_map.get(layer_id) {
@@ -182,44 +374,7 @@ impl Window {
         }
     }
 
-    /// Creates a layer with the specified ID and attaches a `DrawSurface` to it.
-    ///
-    /// The layer displays the contents of the `DrawSurface`.
-    pub fn attach_draw_surface(&self, layer_id: LayerID, surface: &DrawSurface) {
-        let visual = self.get_or_create_dcomp_visual(layer_id);
-        unsafe {
-            visual.SetContent(&surface.swap_chain).unwrap();
-        }
-    }
-
-    /// Attaches a swap chain to the specified layer.
-    pub fn attach_swap_chain(&self, layer_id: LayerID, swap_chain: IDXGISwapChain3) {
-        let visual = self.get_or_create_dcomp_visual(layer_id);
-        unsafe {
-            visual.SetContent(&swap_chain).unwrap();
-        }
-    }
-
-    /// Deletes resources associated with the specified layer.
-    pub fn release_layer(&self, layer_id: LayerID) {
-        // this should release the associated visual once it's not used anymore
-        // by the composition tree
-        self.layer_map.borrow_mut().remove(layer_id);
-    }
-
-    /// Starts building a new composition tree for the window.
-    ///
-    /// It's reasonable to call this function once per frame.
-    pub fn begin_composition(&self) -> CompositionContext {
-        unsafe {
-            // Remove all previous layers from the root visual.
-            // The stack is rebuilt from scratch on every call to begin_composition.
-            self.root_visual.RemoveAllVisuals().unwrap();
-        }
-        CompositionContext::new(self)
-    }
-
-    fn end_composition(&self) {
+    fn commit_composition(&self) {
         // TODO: all layers not used in the composition should increment an "age" counter
         //       and be deleted if they are not used for a certain number of frames.
         unsafe {
@@ -236,13 +391,13 @@ impl Window {
 /// The Z-order of layers is derived from the order in which they are added.
 ///
 /// Dropping the `CompositionContext` will commit the composition tree to the system compositor.
-pub struct CompositionContext<'a> {
-    window: &'a Window,
+pub struct CompositionContext {
+    window: Rc<WindowState>,
     last: Option<IDCompositionVisual>,
 }
 
-impl<'a> CompositionContext<'a> {
-    fn new(window: &'a Window) -> Self {
+impl CompositionContext {
+    fn new(window: Rc<WindowState>) -> Self {
         CompositionContext { window, last: None }
     }
 
@@ -269,9 +424,9 @@ impl<'a> CompositionContext<'a> {
     }
 }
 
-impl<'a> Drop for CompositionContext<'a> {
+impl Drop for CompositionContext {
     fn drop(&mut self) {
-        self.window.end_composition();
+        self.window.commit_composition();
     }
 }
 
