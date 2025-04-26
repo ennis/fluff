@@ -1,5 +1,4 @@
-//! Windows implementation details
-use crate::application::{wake_event_loop, ExtEvent};
+//! Windows platform backend
 use skia_safe::gpu::Protected;
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_void, OsString};
@@ -26,6 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetCaretBlinkTime;
 
 pub use draw_surface::{DrawSurface, DrawSurfaceContext};
 pub use window::{CompositionContext, PlatformWindowHandle, Monitor};
+pub use event_loop::{run_event_loop, wake_event_loop, quit, TimerToken};
 
 use crate::compositor::ColorType;
 
@@ -34,10 +34,11 @@ mod swap_chain;
 #[cfg(feature = "vulkan-interop")]
 mod vulkan_interop;
 mod window;
+mod event_loop;
 
 #[cfg(feature = "vulkan-interop")]
 pub use vulkan_interop::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
-
+use crate::platform::EventLoopWakeReason;
 /////////////////////////////////////////////////////////////////////////////
 // COM wrappers
 /////////////////////////////////////////////////////////////////////////////
@@ -329,7 +330,7 @@ impl ApplicationBackend {
                     } else if wait_result == WAIT_OBJECT_0.0 + 1 {
                         // Compositor clock ticked
                         tracy_client::secondary_frame_mark!("compositor_clock_tick");
-                        wake_event_loop(ExtEvent::CompositorClockTick);
+                        wake_event_loop(EventLoopWakeReason::CompositorClockTick);
                     } else {
                         // wait failed?
                     }

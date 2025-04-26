@@ -2,7 +2,7 @@
 
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
-use kyute::application::{run_after, spawn};
+use kyute::application::{run_after, spawn, CallbackToken};
 use kyute::drawing::{BorderPosition, Image, point, vec2};
 use kyute::element::prelude::*;
 use kyute::element::{TreeCtx, WeakElement};
@@ -171,7 +171,7 @@ pub struct MenuBase {
     highlighted: Option<usize>,
     submenu: Option<Window>,
     // Timer for submenu closing on focus loss
-    abort_submenu_closing: Option<AbortHandle>,
+    abort_submenu_closing: Option<CallbackToken>,
 }
 
 fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
@@ -274,7 +274,7 @@ impl MenuBase {
 
         // Cancel submenu close timer
         if let Some(submenu_closing) = self.abort_submenu_closing.take() {
-            submenu_closing.abort();
+            submenu_closing.cancel();
         }
 
         // This will close any existing submenu

@@ -402,7 +402,7 @@ impl<T: ?Sized + Element + 'static> WeakElement<T> {
             if let Some(this) = this.upgrade() {
                 this.invoke(f);
             }
-        })
+        });
     }
 }
 
@@ -900,7 +900,7 @@ impl ElementCtx {
                 let window = this.get_parent_window();
                 window.set_pointer_capture(weak_this);
             }
-        })
+        });
     }
 
     pub fn has_focus(&self) -> bool {

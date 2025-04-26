@@ -33,7 +33,6 @@ pub use event::EventSource;
 pub use notifier::Notifier;
 pub use paint_ctx::PaintCtx;
 pub use skia_safe;
-pub use application::WindowHandler;
 pub use window::{Window, WindowOptions};
 
 pub use futures::future::AbortHandle;

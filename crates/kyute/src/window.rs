@@ -11,15 +11,12 @@ use std::time::Instant;
 
 use keyboard_types::{Key, KeyboardEvent};
 use kurbo::{Point, Rect, Size};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use skia_safe::font::Edging;
 use skia_safe::{Font, FontMgr, FontStyle, Typeface};
 use tracing::warn;
 use winit::event::{DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::KeyLocation;
-use winit::monitor::MonitorHandle;
 
-use crate::application::WindowHandler;
 use crate::compositor::{Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
 use crate::element::{
@@ -32,7 +29,7 @@ use crate::input_event::{
 };
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::paint_ctx::paint_root_element;
-use crate::platform::{Monitor, PlatformWindowHandle};
+use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler};
 use crate::{application, double_click_time, platform, Color, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
@@ -223,9 +220,7 @@ impl WindowInner {
     fn map_to_screen(&self, point: Point) -> Point {
         // FIXME: this assumes that the scale factor of the window is the same
         //        as the scale factor of the monitor. I'm not sure if this is always the case.
-        let window_pos = self
-            .window
-            .client_area_position();
+        let window_pos = self.window.client_area_position();
 
         Point {
             x: point.x + window_pos.x,
@@ -728,7 +723,7 @@ impl WindowInner {
     }
 }
 
-impl WindowHandler for WindowInner {
+impl WindowHandler for Rc<WindowInner> {
     fn event(&self, event: &WindowEvent) {
         self.dispatch_window_event(event);
     }
@@ -850,6 +845,17 @@ impl WindowHandle {
     }
 }
 
+pub enum WindowKind {
+    /// A normal window.
+    Application,
+    /// Menu window (context menus, drop downs, etc.).
+    Menu { owner: Option<PlatformWindowHandle> },
+    /// Modal dialog window.
+    Modal { owner: Option<PlatformWindowHandle> },
+    /// Tooltip
+    Tooltip,
+}
+
 /// Describes the options for creating a new window.
 pub struct WindowOptions<'a> {
     /// Initial title of the window.
@@ -893,16 +899,16 @@ impl<'a> Default for WindowOptions<'a> {
 impl Window {
     pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
         let platform_window = PlatformWindowHandle::new(options);
-        let window_id = platform_window.id();
         let emitter_handle = EmitterHandle::new();
         let emitter_key = emitter_handle.key();
+
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             emitter_handle,
             root: root.into_root_element_any(WindowHandle {
                 shared: weak_this.clone(),
                 emitter_key,
             }),
-            window: platform_window,
+            window: platform_window.clone(),
             hidden_before_first_draw: Cell::new(true),
             cursor_pos: Cell::new(Default::default()),
             input_state: Default::default(),
@@ -914,7 +920,7 @@ impl Window {
             composition: RefCell::new(None),
         });
 
-        application::register_window(window_id, shared.clone());
+        platform_window.set_handler(Box::new(shared.clone()));
         Window { shared }
     }
 

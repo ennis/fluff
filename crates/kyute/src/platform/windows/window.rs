@@ -1,4 +1,3 @@
-use crate::application::with_event_loop_window_target;
 use crate::compositor::LayerID;
 use crate::platform::windows::draw_surface::DrawSurface;
 use crate::{app_backend, WindowOptions};
@@ -24,6 +23,8 @@ use windows::Win32::UI::WindowsAndMessaging::EnumThreadWindows;
 use winit::monitor::MonitorHandle;
 use winit::platform::windows::WindowBuilderExtWindows;
 use winit::window::WindowId;
+use crate::platform::WindowHandler;
+use crate::platform::windows::event_loop::with_event_loop_window_target;
 
 // Some bullshit to get the HWND from winit
 fn get_hwnd(handle: RawWindowHandle) -> HWND {
@@ -87,7 +88,7 @@ impl PlatformWindowHandle {
 }
 
 #[allow(dead_code)]
-pub struct WindowState {
+pub(super) struct WindowState {
     pub(crate) inner: winit::window::Window,
     /// DComp window target bound to this window.
     pub(crate) composition_target: IDCompositionTarget,
@@ -99,6 +100,9 @@ pub struct WindowState {
     /// If this is a modal window, the handles of disabled windows that should be re-enabled
     /// when this modal window is closed.
     modal_disabled_windows: Vec<PlatformWindowHandle>,
+
+    /// Window event handler.
+    handler: RefCell<Option<Box<dyn WindowHandler>>>,
 }
 
 thread_local! {
@@ -106,6 +110,16 @@ thread_local! {
     ///
     /// When a platform window is created, it is added to this list.
     static ALL_WINDOWS: RefCell<Vec<Rc<WindowState>>> = RefCell::new(Vec::new());
+}
+
+pub(super) fn find_window_by_id(id: WindowId) -> Option<Rc<WindowState>> {
+    ALL_WINDOWS.with(|windows| {
+        windows
+            .borrow()
+            .iter()
+            .find(|w| w.inner.id() == id)
+            .cloned()
+    })
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -122,126 +136,95 @@ impl Monitor {
     }
 }
 
-/*
-/// Win32 window.
-///
-/// This is a thin wrapper around a winit window that also holds state necessary for
-/// DirectComposition.
-#[allow(dead_code)]
-pub struct Window {
-    pub(crate) inner: winit::window::Window,
-    /// DComp window target bound to this window.
-    pub(crate) composition_target: IDCompositionTarget,
-    /// Root visual.
+struct CreateWindowResult {
+    window: winit::window::Window,
+    composition_target: IDCompositionTarget,
     root_visual: IDCompositionVisual2,
-    /// Visuals for each layer.
-    layer_map: RefCell<SecondaryMap<LayerID, IDCompositionVisual3>>,
-    /// If this is a modal window, the handles of disabled windows that should be re-enabled
-    /// when this modal window is closed.
-    modal_disabled_windows: Vec<HWND>,
+    modal_disabled_windows: Vec<PlatformWindowHandle>,
 }
 
-impl Drop for Window {
-    fn drop(&mut self) {
-        // Re-enable all disabled windows due to this window's modality.
-        for hwnd in &self.modal_disabled_windows {
-            unsafe {
-                EnableWindow(*hwnd, true).unwrap();
-            }
+fn create_window(options: &WindowOptions) -> CreateWindowResult {
+    // if creating a modal window, disable all other windows
+    let modal_disabled_windows = if options.modal {
+        // If the owner is set, disable only the owner window.
+        // Otherwise, disable all other windows, and re-enable them when exiting the modal.
+        if let Some(ref owner) = options.owner {
+            owner.enable_input(false);
+            vec![owner.clone()]
+        } else {
+            todo!("modal windows without an owner are not yet supported");
         }
-    }
-}*/
+    } else {
+        vec![]
+    };
+    eprintln!("modal_disabled_windows: {:?}", modal_disabled_windows);
 
-/*
-fn disable_windows() -> Vec<HWND> {
-    unsafe extern "system" fn wnd_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let windows = lparam.0 as *mut Vec<HWND>;
-        if IsWindowEnabled(hwnd).as_bool() {
-            let _ = EnableWindow(hwnd, false);
-            (*windows).push(hwnd);
-        }
-        BOOL::from(true)
+    // Create the window.
+    let mut builder = winit::window::WindowBuilder::new()
+        .with_title(options.title)
+        // no_redirection_bitmap is OK since we're using DirectComposition for all rendering
+        .with_no_redirection_bitmap(true)
+        .with_decorations(options.decorations)
+        .with_visible(options.visible)
+        .with_inner_size(winit::dpi::LogicalSize::new(options.size.width, options.size.height));
+
+    if options.no_focus {
+        builder = builder.with_no_focus();
+        builder = builder.with_active(false);
+    }
+    if let Some(p) = options.position {
+        builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
+    }
+    if let Some(ref owner) = options.owner {
+        builder = builder.with_owner_window(owner.hwnd().0 as isize);
     }
 
-    unsafe {
-        let thread_id = GetCurrentThreadId();
-        let mut disabled_windows = Vec::new();
-        let _ = EnumThreadWindows(
-            thread_id,
-            Some(wnd_enum_proc),
-            LPARAM(&mut disabled_windows as *mut _ as isize),
-        );
-        disabled_windows
+    // create the winit window
+    let window_inner = with_event_loop_window_target(|event_loop| builder.build(&event_loop).unwrap());
+
+    // Create a DirectComposition target for the window.
+    // SAFETY: the HWND handle is valid
+    let composition_target = unsafe {
+        let hwnd = get_hwnd(window_inner.window_handle().unwrap().as_raw());
+        app_backend()
+            .composition_device
+            .CreateTargetForHwnd(hwnd, false)
+            .unwrap()
+    };
+
+    // Create the root visual and attach it to the composition target.
+    // SAFETY: FFI call
+    let root_visual = unsafe { app_backend().composition_device.CreateVisual().unwrap() };
+
+    // SAFETY: FFI call
+    unsafe { composition_target.SetRoot(&root_visual).unwrap() };
+
+    CreateWindowResult {
+        window: window_inner,
+        composition_target,
+        root_visual,
+        modal_disabled_windows,
     }
-}*/
+}
 
 impl PlatformWindowHandle {
-    /// Creates a new window with the specified options.
-    pub fn new(options: &WindowOptions) -> PlatformWindowHandle {
-
+    /// Creates a new window.
+    pub fn new(options: &WindowOptions) -> PlatformWindowHandle
+    {
         // TODO check that we're not creating a window outside the main thread
+        let CreateWindowResult {
+            window: window_inner,
+            composition_target,
+            root_visual, modal_disabled_windows
+        } = create_window(options);
 
-        // if creating a modal window, disable all other windows
-        let modal_disabled_windows = if options.modal {
-            // If the owner is set, disable only the owner window.
-            // Otherwise, disable all other windows, and re-enable them when exiting the modal.
-            if let Some(ref owner) = options.owner {
-                owner.enable_input(false);
-                vec![owner.clone()]
-            } else {
-                todo!("modal windows without an owner are not yet supported");
-            }
-        } else {
-            vec![]
-        };
-        eprintln!("modal_disabled_windows: {:?}", modal_disabled_windows);
-
-        // Create the window.
-        let mut builder = winit::window::WindowBuilder::new()
-            .with_title(options.title)
-            // no_redirection_bitmap is OK since we're using DirectComposition for all rendering
-            .with_no_redirection_bitmap(true)
-            .with_decorations(options.decorations)
-            .with_visible(options.visible)
-            .with_inner_size(winit::dpi::LogicalSize::new(options.size.width, options.size.height));
-
-        if options.no_focus {
-            builder = builder.with_no_focus();
-            builder = builder.with_active(false);
-        }
-        if let Some(p) = options.position {
-            builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
-        }
-        if let Some(ref owner) = options.owner {
-            builder = builder.with_owner_window(owner.hwnd().0 as isize);
-        }
-
-        // create the winit window
-        let window_inner = with_event_loop_window_target(|event_loop| builder.build(&event_loop).unwrap());
-
-        // Create a DirectComposition target for the window.
-        // SAFETY: the HWND handle is valid
-        let composition_target = unsafe {
-            let hwnd = get_hwnd(window_inner.window_handle().unwrap().as_raw());
-            app_backend()
-                .composition_device
-                .CreateTargetForHwnd(hwnd, false)
-                .unwrap()
-        };
-
-        // Create the root visual and attach it to the composition target.
-        // SAFETY: FFI call
-        let root_visual = unsafe { app_backend().composition_device.CreateVisual().unwrap() };
-
-        // SAFETY: FFI call
-        unsafe { composition_target.SetRoot(&root_visual).unwrap() };
-
-        let state = Rc::new(WindowState {
+        let state = Rc::new_cyclic(|weak |WindowState {
             inner: window_inner,
             composition_target,
             root_visual,
             layer_map: Default::default(),
             modal_disabled_windows,
+            handler: RefCell::new(None), //Box::new(make_handler(PlatformWindowHandle{state: weak.clone()})),
         });
 
         // add to the global list
@@ -252,6 +235,11 @@ impl PlatformWindowHandle {
         PlatformWindowHandle {
             state: Rc::downgrade(&state),
         }
+    }
+    
+    pub fn set_handler(&self, handler: Box<dyn WindowHandler>) {
+        let state = self.state();
+        *state.handler.borrow_mut() = Some(handler);
     }
 
     fn state(&self) -> Rc<WindowState> {
@@ -455,4 +443,30 @@ fn affine_to_d2d_matrix_4x4(affine: &Affine) -> D2D_MATRIX_4X4_F {
             },
         },
     }
+}
+
+//--------------------------------------------------------------------------------------------------
+
+/// Handles a window event.
+pub(super) fn handle_window_event(id: WindowId, event: winit::event::WindowEvent) {
+    let window = find_window_by_id(id);
+    if let Some(window) = window {
+        if let Some(handler) = window.handler.borrow().as_ref() {
+            handler.event(&event);
+        }
+    } else {
+        warn!("Window event for unknown window: {:?}", event);
+    }
+}
+
+/// Requests a redraw of all windows.
+///
+/// This is called internally as a result of a composition clock tick.
+pub(super) fn redraw_windows() {
+    ALL_WINDOWS.with(|windows| {
+        for window in windows.borrow().iter() {
+            // This will loop back into the event loop, but that's fine.
+            window.inner.request_redraw();
+        }
+    });
 }

@@ -1,17 +1,19 @@
 use crate::event::maintain_subscription_map;
-use crate::{app_backend, init_application, teardown_application};
+use crate::platform::{run_event_loop, wake_event_loop, EventLoopWakeReason, TimerToken};
+use crate::{app_backend, init_application, platform, teardown_application};
 use anyhow::Context;
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
 use futures::task::LocalSpawnExt;
 use scoped_tls::scoped_thread_local;
+use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::future::{poll_fn, Future};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::OnceLock;
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
@@ -20,48 +22,12 @@ use winit::event::{Event, StartCause};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use winit::window::WindowId;
 
-/// Event loop user event.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ExtEvent {
-    /// Triggers an UI update
-    DispatchCallbacks,
-    /// Compositor clock tick
-    CompositorClockTick,
-    Redraw,
-}
-
-static REDRAW_REQUESTED: AtomicBool = AtomicBool::new(false);
-static EVENT_LOOP_PROXY: OnceLock<EventLoopProxy<ExtEvent>> = OnceLock::new();
-
-/// Call to wake the event loop.
-pub fn wake_event_loop(reason: ExtEvent) {
-    if reason == ExtEvent::CompositorClockTick {
-        // don't queue multiple compositor clock ticks
-        if REDRAW_REQUESTED.swap(true, Relaxed) {
-            return;
-        }
-    }
-    EVENT_LOOP_PROXY.get().unwrap().send_event(reason).unwrap()
-}
-
-scoped_thread_local!(static EVENT_LOOP_WINDOW_TARGET: EventLoopWindowTarget<ExtEvent>);
-
-/// Accesses the current "event loop window target", which is used to create winit [winit::window::Window]s.
-pub fn with_event_loop_window_target<T>(f: impl FnOnce(&EventLoopWindowTarget<ExtEvent>) -> T) -> T {
-    EVENT_LOOP_WINDOW_TARGET.with(|event_loop| f(&event_loop))
-}
-
-struct Timer {
-    waker: Waker,
-    deadline: Instant,
-}
+//--------------------------------------------------------------------------------------------------
 
 struct AppState {
-    windows: RefCell<HashMap<WindowId, Weak<dyn WindowHandler>>>,
     spawner: LocalSpawner,
-    timers: RefCell<SmallVec<Timer, 4>>,
-    queued_callbacks: RefCell<Vec<Box<dyn FnOnce()>>>,
-    render_start_time: Cell<Option<Instant>>,
+    /// Pending callbacks.
+    callbacks: RefCell<SlotMap<CallbackToken, Callback>>,
 }
 
 impl AppState {
@@ -69,26 +35,12 @@ impl AppState {
         APP_STATE.with(|state| {
             state
                 .set(Self {
-                    windows: Default::default(),
                     spawner,
-                    timers: Default::default(),
-                    queued_callbacks: Default::default(),
-                    render_start_time: Cell::new(None),
+                    callbacks: Default::default(),
                 })
                 .ok()
                 .unwrap();
         });
-    }
-
-    /// Returns the earliest deadline of all timers, or None if there are no timers.
-    fn next_timer_deadline(&self) -> Option<Instant> {
-        // the minimum of all timers + the render start time
-        self.timers
-            .borrow()
-            .iter()
-            .map(|t| t.deadline)
-            .chain(self.render_start_time.get().into_iter())
-            .min()
     }
 
     fn with<R>(f: impl FnOnce(&AppState) -> R) -> R {
@@ -98,6 +50,117 @@ impl AppState {
 
 thread_local! {
     static APP_STATE: OnceCell<AppState> = OnceCell::new();
+}
+
+//--------------------------------------------------------------------------------------------------
+
+slotmap::new_key_type! {
+    /// A token representing a callback.
+    pub struct CallbackToken;
+}
+
+impl CallbackToken {
+    pub fn cancel(self) {
+        cancel_callback(self);
+    }
+}
+
+struct Callback {
+    deadline: Option<Instant>,
+    timer: Option<TimerToken>,
+    func: Box<dyn FnOnce()>,
+}
+
+/// Executes pending callbacks.
+///
+/// Returns the time at which the next callback is scheduled to run.
+pub fn run_pending_callbacks() -> Option<Instant> {
+    AppState::with(|state| {
+        loop {
+            let now = Instant::now();
+            let mut next_deadline = None;
+
+            // Collect tasks ready to run.
+            // Don't borrow `callbacks` because it may be modified by a callback.
+            let ready_tasks = state
+                .callbacks
+                .borrow()
+                .iter()
+                .filter_map(|(token, callback)| {
+                    if let Some(deadline) = callback.deadline {
+                        if deadline <= now {
+                            Some(token)
+                        } else {
+                            if let Some(ref mut next_deadline) = next_deadline {
+                                *next_deadline = deadline.min(*next_deadline);
+                            } else {
+                                next_deadline = Some(deadline);
+                            }
+                            None
+                        }
+                    } else {
+                        Some(token)
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if ready_tasks.is_empty() {
+                // nothing to execute at this time
+                break next_deadline;
+            }
+
+            // Run the ready tasks.
+            for token in ready_tasks {
+                let callback = state.callbacks.borrow_mut().remove(token).unwrap();
+                (callback.func)();
+            }
+        }
+    })
+}
+
+/// Runs a closure at a certain point in the future on the main thread.
+///
+/// Returns a cancellation token that can be used to cancel the timer.
+fn schedule_callback(at: Option<Instant>, f: impl FnOnce() + 'static) -> CallbackToken {
+    let token = AppState::with(|state| {
+        let timer = if let Some(at) = at {
+            // this will wake the event loop at the specified time
+            Some(TimerToken::new(at))
+        } else {
+            None
+        };
+
+        state.callbacks.borrow_mut().insert(Callback {
+            deadline: at,
+            timer,
+            func: Box::new(f),
+        })
+    });
+    wake_event_loop(EventLoopWakeReason::DispatchCallbacks);
+    token
+}
+
+/// Cancels a previously scheduled callback.
+fn cancel_callback(token: CallbackToken) {
+    AppState::with(|state| {
+        let cb = state.callbacks.borrow_mut().remove(token);
+        if let Some(cb) = cb {
+            if let Some(timer) = cb.timer {
+                // cancel the timer if there's one
+                timer.cancel();
+            }
+        }
+    });
+}
+
+/// Runs a closure at a certain point in the future on the main thread.
+pub fn run_after(after: Duration, f: impl FnOnce() + 'static) -> CallbackToken {
+    schedule_callback(Some(Instant::now() + after), f)
+}
+
+/// Registers a closure to run during the next iteration of the event loop, and wakes the event loop.
+pub fn run_queued(f: impl FnOnce() + 'static) -> CallbackToken {
+    schedule_callback(None, f)
 }
 
 /// Spawns a task on the main-thread executor.
@@ -114,55 +177,12 @@ pub fn spawn(fut: impl Future<Output = ()> + 'static) -> AbortHandle {
     })
 }
 
-/// Registers a closure to run during the next iteration of the event loop, and wakes the event loop.
-pub fn run_queued(f: impl FnOnce() + 'static) {
-    AppState::with(|state| {
-        state.queued_callbacks.borrow_mut().push(Box::new(f));
-    });
-    wake_event_loop(ExtEvent::DispatchCallbacks);
+/// Called by the platform event loop on every event.
+pub(crate) fn do_application_tick() {
+    maintain_subscription_map();
 }
 
-/// Registers a closure to run at a certain point in the future.
-///
-/// Returns a cancellation token that can be used to cancel the timer.
-pub fn run_after(after: Duration, f: impl FnOnce() + 'static) -> AbortHandle {
-    let deadline = Instant::now() + after;
-
-    // using async tasks is not strictly necessary but it's a way to exercise the async machinery
-    spawn(async move {
-        wait_until(deadline).await;
-        run_queued(f);
-    })
-}
-
-/// Handler for window events.
-pub trait WindowHandler {
-    /// Called by the event loop when a window event is received that targets this window.
-    fn event(&self, event: &winit::event::WindowEvent);
-
-    /// Redraws the window.
-    fn redraw(&self);
-
-    fn request_redraw(&self);
-}
-
-/// Registers a winit window with the application, and retrieves the events for the window.
-///
-/// # Return value
-///
-/// An async receiver used to receive events for this window.
-pub fn register_window(window_id: WindowId, handler: Rc<dyn WindowHandler>) {
-    AppState::with(|state| {
-        state.windows.borrow_mut().insert(window_id, Rc::downgrade(&handler));
-    });
-}
-
-pub fn quit() {
-    with_event_loop_window_target(|event_loop| {
-        event_loop.exit();
-    });
-}
-
+/*
 pub async fn wait_until(deadline: Instant) {
     let mut registered = false;
     poll_fn(move |cx| {
@@ -188,23 +208,13 @@ pub async fn wait_until(deadline: Instant) {
 pub async fn wait_for(duration: Duration) {
     let deadline = Instant::now() + duration;
     wait_until(deadline).await;
-}
+}*/
 
 /// Runs the application event loop.
-pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow::Error> {
+pub fn run(initial_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow::Error> {
     set_thread_name!("UI thread");
-    let event_loop: EventLoop<ExtEvent> = EventLoopBuilder::with_user_event()
-        .build()
-        .context("failed to create the event loop")?;
-
-    EVENT_LOOP_PROXY
-        .set(event_loop.create_proxy())
-        .expect("run was called twice");
 
     init_application();
-
-    event_loop.set_control_flow(ControlFlow::Wait);
-    let _event_loop_start_time = Instant::now();
 
     // single-threaded executor for futures
     let mut local_pool = LocalPool::new();
@@ -212,139 +222,13 @@ pub fn run(root_future: impl Future<Output = ()> + 'static) -> Result<(), anyhow
     // initialize main-thread-local app state
     AppState::init(local_pool.spawner());
 
-    // Before the event loop starts, spawn the root future, and poll it
-    // so that the initial windows are created.
-    // This is necessary because if no windows are created no messages will be sent and
-    // the closure passed to `run` will never be called.
-    EVENT_LOOP_WINDOW_TARGET.set(&event_loop, || {
-        spawn(root_future);
-        local_pool.run_until_stalled();
-    });
-
-    // start the compositor clock; this will periodically wake the event loop with
-    // CompositorClockTick events
-    app_backend().start_compositor_clock();
-
-    event_loop.run(move |event, elwt| {
-        EVENT_LOOP_WINDOW_TARGET.set(elwt, || {
-            //let event_time = Instant::now().duration_since(event_loop_start_time);
-            AppState::with(|state| {
-                match event {
-                    // TIMERS //////////////////////////////////////////////////////////////////
-                    Event::NewEvents(cause) => {
-                        match cause {
-                            StartCause::ResumeTimeReached { .. }
-                            | StartCause::WaitCancelled { .. }
-                            | StartCause::Poll => {
-                                // wake all expired timers
-                                let timers = &mut *state.timers.borrow_mut();
-                                timers.sort_by_key(|t| t.deadline);
-
-                                let now = Instant::now();
-
-                                while let Some(timer) = timers.first() {
-                                    if timer.deadline <= now {
-                                        let timer = timers.remove(0);
-                                        timer.waker.wake();
-                                    } else {
-                                        break;
-                                    }
-                                }
-
-                                // see if we need to redraw
-                                if let Some(render_time) = state.render_start_time.get() {
-                                    if render_time <= now {
-                                        // REDRAW //////////////////////////////////////////////
-                                        for window in state.windows.borrow().values() {
-                                            if let Some(window) = window.upgrade() {
-                                                // This will loop back into the event loop, 
-                                                // but that's fine.
-                                                window.request_redraw();
-                                            }
-                                        }
-                                        state.render_start_time.set(None);
-                                        // accept new redraw requests
-                                        REDRAW_REQUESTED.store(false, Relaxed);
-                                    }
-                                }
-                            }
-                            StartCause::Init => {}
-                        }
-                    }
-
-                    // USER WAKEUP /////////////////////////////////////////////////////////////
-                    Event::UserEvent(ExtEvent::DispatchCallbacks) => {
-                        // run queued callbacks, repeat until no new callbacks are added
-                        while !state.queued_callbacks.borrow_mut().is_empty() {
-                            let mut queued_callbacks = state.queued_callbacks.take();
-                            for callback in queued_callbacks.drain(..) {
-                                callback();
-                            }
-                        }
-                    }
-
-                    // COMPOSITOR WAKEUP ///////////////////////////////////////////////////////
-                    Event::UserEvent(ExtEvent::CompositorClockTick) => {
-                        // VBlank interrupt received. We now have a deadline of one vblank
-                        // interval to render the next frame.
-                        //
-                        // To minimize input latency, we should keep receiving input events and
-                        // begin redraw at the last possible moment, ensuring that the time
-                        // it takes to render the frame won't exceed the deadline.
-                        //
-                        // Thus, the optimal time for starting the redraw is
-                        // NEXT_VBLANK_TIME - RENDER_TIME where RENDER_TIME is the time it takes
-                        // to render a frame. We can't know RENDER_TIME in advance,
-                        // but we can estimate it based on previous frames.
-                        //
-                        // Note that these calculations depend on the event loop receiving the
-                        // CompositorClockTick event on time, without delay.
-
-                        // TODO: actually measure the time it takes to render a frame
-                        let input_delay = Duration::from_millis(10);
-
-                        // wait a bit before redrawing to allow for more input events,
-                        // then redraw everything
-                        state.render_start_time.set(Some(Instant::now() + input_delay));
-                    }
-
-                    
-                    // WINDOW EVENTS ///////////////////////////////////////////////////////////
-                    Event::WindowEvent {
-                        window_id,
-                        event: window_event,
-                    } => {
-                        // Don't hold a borrow of `state.windows` across the handler since
-                        // the handler may create new windows.
-                        let handler = state.windows.borrow().get(&window_id).cloned();
-                        if let Some(handler) = handler {
-                            if let Some(handler) = handler.upgrade() {
-                                handler.event(&window_event)
-                            } else {
-                                // remove the window if the handler has been dropped
-                                state.windows.borrow_mut().remove(&window_id);
-                            }
-                        }
-                    }
-                    _ => {}
-                };
-
-                // run tasks that were possibly unblocked as a result of propagating events
-                local_pool.run_until_stalled();
-
-                // perform various cleanup tasks
-                maintain_subscription_map();
-
-                // set control flow to wait until next timer expires, or wait until next
-                // event if there are no timers
-                match state.next_timer_deadline() {
-                    Some(deadline) => elwt.set_control_flow(ControlFlow::WaitUntil(deadline)),
-                    None => elwt.set_control_flow(ControlFlow::Wait),
-                };
-            });
-        });
-    })?;
+    run_event_loop(local_pool, initial_future)?;
 
     teardown_application();
+
     Ok(())
+}
+
+pub fn quit() {
+    platform::quit();
 }
