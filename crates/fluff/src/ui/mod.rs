@@ -6,7 +6,7 @@ use kyute::event::subscribe_global;
 use kyute::{ElementBuilder, IntoElementAny, Window, WindowOptions};
 use std::rc::Rc;
 use windows::core::HSTRING;
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OKCANCEL, MB_TASKMODAL};
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_APPLMODAL, MB_ICONINFORMATION, MB_OKCANCEL, MB_TASKMODAL};
 use kyute::application::spawn;
 
 mod progress_dialog;
@@ -40,26 +40,27 @@ pub fn root_frame(app_model: Rc<AppModel>) -> impl IntoElementAny {
 
     subscribe_global::<MenuEntryActivated<MainMenuEntry>>({
         let app_model = app_model.clone();
-        move |MenuEntryActivated(entry)| {
+        move |MenuEntryActivated { id, window }| {
             eprintln!("Load Alembic cache clicked");
 
-            match entry {
+            match id {
                 LoadAlembicCache => {
                     //app_model.load_alembic_cache();
 
                     // display a modal here? but how? we don't have the handle to the window
-                    /*unsafe {
+                    unsafe {
                         MessageBoxW(
-                            None,
+                            window.hwnd(),
                             &HSTRING::from("Load Alembic cache clicked"),
                             &HSTRING::from("Fluff"),
-                            MB_OKCANCEL | MB_ICONINFORMATION | MB_TASKMODAL,
+                            MB_OKCANCEL | MB_ICONINFORMATION | MB_APPLMODAL,
                         );
-                    }*/
-                    
+                    }
+                    let window = window.clone();
                     spawn(async {
                         let window = Window::new(&WindowOptions {
                             modal: true,
+                            owner: Some(window),
                             ..Default::default()
                         }, Frame::new());
                         window.close_requested().await;

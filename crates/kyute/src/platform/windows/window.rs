@@ -69,20 +69,21 @@ impl PlatformWindowHandle {
     /// Internally this calls `EnableWindow` on the HWND of the window.
     pub fn enable_input(&self, enabled: bool) {
         unsafe {
-            EnableWindow(self.hwnd(), enabled).unwrap();
+            let _ = EnableWindow(self.hwnd(), enabled);
         }
     }
     
     /// Closes the window.
     pub fn close(&self) {
         if let Some(state) = self.state.upgrade() {
-            assert_eq!(Rc::strong_count(&state), 2);
             // remove the window from the global list
             ALL_WINDOWS.with_borrow_mut(|windows| {
                 windows.retain(|w| !Rc::ptr_eq(w, &state));
             });
-            // here the last reference should drop
-            // and the window will be closed
+            // Here the last reference should drop, and the window will be closed.
+            //
+            // If this is called as a result of a window event,
+            // the window will be closed when exiting from `handle_window_event`.
         }
     }
 }
@@ -135,6 +136,8 @@ impl Monitor {
         Size::new(size.width, size.height)
     }
 }
+
+//--------------------------------------------------------------------------------------------------
 
 struct CreateWindowResult {
     window: winit::window::Window,
@@ -218,13 +221,13 @@ impl PlatformWindowHandle {
             root_visual, modal_disabled_windows
         } = create_window(options);
 
-        let state = Rc::new_cyclic(|weak |WindowState {
+        let state = Rc::new(WindowState {
             inner: window_inner,
             composition_target,
             root_visual,
             layer_map: Default::default(),
             modal_disabled_windows,
-            handler: RefCell::new(None), //Box::new(make_handler(PlatformWindowHandle{state: weak.clone()})),
+            handler: RefCell::new(None),
         });
 
         // add to the global list
@@ -236,7 +239,8 @@ impl PlatformWindowHandle {
             state: Rc::downgrade(&state),
         }
     }
-    
+
+    /// Sets the handler of the window.
     pub fn set_handler(&self, handler: Box<dyn WindowHandler>) {
         let state = self.state();
         *state.handler.borrow_mut() = Some(handler);

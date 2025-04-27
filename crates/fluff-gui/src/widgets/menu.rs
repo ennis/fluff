@@ -19,8 +19,13 @@ use tracing::warn;
 use kyute::platform::PlatformWindowHandle;
 
 /// Event emitted when a menu entry is activated.
-#[derive(Debug, Clone, Copy)]
-pub struct MenuEntryActivated<ID>(pub ID);
+#[derive(Debug, Clone)]
+pub struct MenuEntryActivated<ID> {
+    /// The owner window of the menu.
+    pub window: PlatformWindowHandle,
+    /// The ID of the activated entry.
+    pub id: ID,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct InternalMenuEntryActivated {
@@ -500,7 +505,8 @@ impl Element for MenuBase {
                 let pos = event.position;
                 if let Some((item, _bounds)) = self.entry_at_position(bounds, pos) {
                     emit_global(InternalMenuEntryActivated { index: item });
-                    cx.mark_needs_paint();
+                    // close the menu
+                    cx.get_platform_window().close();
                 }
             }
             Event::KeyDown(event) => match event.key {
@@ -795,7 +801,9 @@ impl<ID: 'static + Clone> MenuBar<ID> {
                 }
 
                 if let Some(id) = this.borrow().index_to_id.get(index) {
-                    emit_global(MenuEntryActivated(id.clone()));
+                        emit_global(MenuEntryActivated{id: id.clone(),
+                        window: owner.clone(),
+                    });
                 } else {
                     warn!("menu entry index {index} invalid for menu bar");
                 }

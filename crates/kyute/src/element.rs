@@ -150,6 +150,8 @@ impl<'a> TreeCtx<'a> {
     }
     
     /// Returns the parent platform window of this element.
+    ///
+    /// TODO remove the `get_` prefix?
     pub fn get_platform_window(&self) -> PlatformWindowHandle {
         self.get_window().platform_window().unwrap()
     }

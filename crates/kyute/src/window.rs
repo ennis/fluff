@@ -208,6 +208,12 @@ pub(crate) struct WindowInner {
     needs_layout: Cell<bool>,
 }
 
+impl Drop for Window {
+    fn drop(&mut self) {
+        self.shared.window.close()
+    }
+}
+
 impl WindowInner {
     fn set_pointer_capture(&self, element: WeakElementAny) {
         //if let Some(element) = element.upgrade() {
@@ -633,7 +639,7 @@ impl WindowInner {
                 self.needs_layout.set(true);
             }
             WindowEvent::Focused(focused) => {
-                eprintln!("[window@{:?}] Focused: {:?}", self.window.id(), focused);
+                //eprintln!("[window@{:?}] Focused: {:?}", self.window.id(), focused);
                 self.emit(FocusChanged(*focused));
                 // FIXME: this should be a global event instead
                 self.emit(PopupCancelled);
