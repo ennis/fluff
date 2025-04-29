@@ -106,6 +106,16 @@ pub(super) struct WindowState {
     handler: RefCell<Option<Box<dyn WindowHandler>>>,
 }
 
+
+impl Drop for WindowState {
+    fn drop(&mut self) {
+        // re-enable all disabled windows
+        for handle in &self.modal_disabled_windows {
+            handle.enable_input(true);
+        }
+    }
+}
+
 thread_local! {
     /// All windows in the main thread.
     ///
