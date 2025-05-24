@@ -1,12 +1,15 @@
+use crate::app_backend;
 use crate::compositor::LayerID;
 use crate::platform::windows::draw_surface::DrawSurface;
-use crate::{app_backend, WindowOptions};
-use kurbo::{Affine, Point, Size};
+use crate::platform::windows::event_loop::with_event_loop_window_target;
+use crate::platform::{WindowHandler, WindowKind, WindowOptions};
+use kurbo::{Affine, Point, Rect, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slotmap::SecondaryMap;
 use std::cell::{Ref, RefCell};
 use std::ffi::c_void;
 use std::fmt;
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use tracing::warn;
@@ -17,14 +20,13 @@ use windows::Win32::Graphics::DirectComposition::{
     IDCompositionTarget, IDCompositionVisual, IDCompositionVisual2, IDCompositionVisual3,
 };
 use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoA, HMONITOR, MONITORINFO};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows::Win32::UI::WindowsAndMessaging::EnumThreadWindows;
 use winit::monitor::MonitorHandle;
-use winit::platform::windows::WindowBuilderExtWindows;
-use winit::window::WindowId;
-use crate::platform::WindowHandler;
-use crate::platform::windows::event_loop::with_event_loop_window_target;
+use winit::platform::windows::{MonitorHandleExtWindows, WindowBuilderExtWindows};
+use winit::window::{WindowButtons, WindowId};
 
 // Some bullshit to get the HWND from winit
 fn get_hwnd(handle: RawWindowHandle) -> HWND {
@@ -72,7 +74,7 @@ impl PlatformWindowHandle {
             let _ = EnableWindow(self.hwnd(), enabled);
         }
     }
-    
+
     /// Closes the window.
     pub fn close(&self) {
         if let Some(state) = self.state.upgrade() {
@@ -106,7 +108,6 @@ pub(super) struct WindowState {
     handler: RefCell<Option<Box<dyn WindowHandler>>>,
 }
 
-
 impl Drop for WindowState {
     fn drop(&mut self) {
         // re-enable all disabled windows
@@ -124,13 +125,7 @@ thread_local! {
 }
 
 pub(super) fn find_window_by_id(id: WindowId) -> Option<Rc<WindowState>> {
-    ALL_WINDOWS.with(|windows| {
-        windows
-            .borrow()
-            .iter()
-            .find(|w| w.inner.id() == id)
-            .cloned()
-    })
+    ALL_WINDOWS.with(|windows| windows.borrow().iter().find(|w| w.inner.id() == id).cloned())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -145,6 +140,28 @@ impl Monitor {
         let size = self.0.size().to_logical(self.0.scale_factor());
         Size::new(size.width, size.height)
     }
+
+    /// Returns the work area of the monitor, i.e. the area available for windows, excluding taskbars and other system UI.
+    pub fn work_area(&self) -> Rect {
+        let hmonitor = self.0.hmonitor();
+        let hmonitor = HMONITOR(hmonitor as *mut c_void);
+        unsafe {
+            let mut monitor_info = MONITORINFO {
+                cbSize: size_of::<MONITORINFO>() as u32,
+                rcMonitor: Default::default(),
+                rcWork: Default::default(),
+                dwFlags: 0,
+            };
+            GetMonitorInfoA(hmonitor, &mut monitor_info).unwrap();
+            let sf = self.0.scale_factor();
+            Rect {
+                x0: monitor_info.rcWork.left as f64 / sf,
+                y0: monitor_info.rcWork.top as f64 / sf,
+                x1: monitor_info.rcWork.right as f64 / sf,
+                y1: monitor_info.rcWork.bottom as f64 / sf,
+            }
+        }
+    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -157,11 +174,82 @@ struct CreateWindowResult {
 }
 
 fn create_window(options: &WindowOptions) -> CreateWindowResult {
+
+    let size = options.size.unwrap_or(Size::new(800.0, 600.0));
+
+    let modal;
+    let owner;
+    let no_focus;
+
+    match options.kind {
+        WindowKind::Application => {
+            modal = false;
+            owner = None;
+            no_focus = false;
+        }
+        WindowKind::Menu(ref o) => {
+            modal = false;
+            owner = o.clone();
+            no_focus = true;
+        }
+        WindowKind::Modal(ref o) => {
+            modal = true;
+            owner = o.clone();
+            no_focus = false;
+        }
+        WindowKind::Tooltip => {
+            modal = false;
+            owner = None;
+            no_focus = true;
+        }
+    }
+
+    // position the window
+    let mut position = None;
+    if let Some(p) = options.position {
+        // If a position is explicitly set, use it.
+        position = Some(p);
+    } else if options.center {
+        match owner {
+            Some(ref owner) => {
+                let ref_rect = owner.bounds();
+
+                let mut pos = Point::new(
+                    ref_rect.x0 + (ref_rect.width() - size.width) / 2.0,
+                    ref_rect.y0 + (ref_rect.height() - size.height) / 2.0,
+                );
+
+                // When centering, ensure the window is within the work area of the monitor.
+                // If there's not enough space, the window will be positioned in the top-left corner
+                // of the work area but will be clipped.
+                let monitor = owner.monitor();
+                let work_area = monitor.work_area();
+                if pos.x + size.width > work_area.x1 {
+                    pos.x = work_area.x1 - size.width;
+                }
+                if pos.x < work_area.x0 {
+                    pos.x = work_area.x0;
+                }
+                if pos.y + size.height > work_area.y1 {
+                    pos.y = work_area.y1 - size.height;
+                }
+                if pos.y < work_area.y0 {
+                    pos.y = work_area.y0;
+                }
+
+                position = Some(pos);
+            }
+            None => {
+                // TODO: center relative to the primary monitor
+            }
+        }
+    };
+
     // if creating a modal window, disable all other windows
-    let modal_disabled_windows = if options.modal {
+    let modal_disabled_windows = if modal {
         // If the owner is set, disable only the owner window.
         // Otherwise, disable all other windows, and re-enable them when exiting the modal.
-        if let Some(ref owner) = options.owner {
+        if let Some(ref owner) = owner {
             owner.enable_input(false);
             vec![owner.clone()]
         } else {
@@ -172,6 +260,14 @@ fn create_window(options: &WindowOptions) -> CreateWindowResult {
     };
     eprintln!("modal_disabled_windows: {:?}", modal_disabled_windows);
 
+    let mut enabled_buttons = WindowButtons::CLOSE;
+    if !modal {
+        enabled_buttons |= WindowButtons::MINIMIZE;
+        if options.resizable {
+            enabled_buttons |= WindowButtons::MAXIMIZE;
+        }
+    }
+
     // Create the window.
     let mut builder = winit::window::WindowBuilder::new()
         .with_title(options.title)
@@ -179,16 +275,18 @@ fn create_window(options: &WindowOptions) -> CreateWindowResult {
         .with_no_redirection_bitmap(true)
         .with_decorations(options.decorations)
         .with_visible(options.visible)
-        .with_inner_size(winit::dpi::LogicalSize::new(options.size.width, options.size.height));
+        .with_enabled_buttons(enabled_buttons)
+        .with_resizable(options.resizable)
+        .with_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
 
-    if options.no_focus {
+    if no_focus {
         builder = builder.with_no_focus();
         builder = builder.with_active(false);
     }
-    if let Some(p) = options.position {
+    if let Some(p) = position {
         builder = builder.with_position(winit::dpi::LogicalPosition::new(p.x, p.y));
     }
-    if let Some(ref owner) = options.owner {
+    if let Some(ref owner) = owner {
         builder = builder.with_owner_window(owner.hwnd().0 as isize);
     }
 
@@ -222,13 +320,13 @@ fn create_window(options: &WindowOptions) -> CreateWindowResult {
 
 impl PlatformWindowHandle {
     /// Creates a new window.
-    pub fn new(options: &WindowOptions) -> PlatformWindowHandle
-    {
+    pub fn new(options: &WindowOptions) -> PlatformWindowHandle {
         // TODO check that we're not creating a window outside the main thread
         let CreateWindowResult {
             window: window_inner,
             composition_target,
-            root_visual, modal_disabled_windows
+            root_visual,
+            modal_disabled_windows,
         } = create_window(options);
 
         let state = Rc::new(WindowState {
@@ -294,6 +392,13 @@ impl PlatformWindowHandle {
         let pos = self.state().inner.inner_position().unwrap();
         let pos = pos.to_logical(self.scale_factor());
         Point::new(pos.x, pos.y)
+    }
+
+    /// Returns the window bounds (client area and decorations) in logical coordinates.
+    pub fn bounds(&self) -> Rect {
+        let size = self.state().inner.outer_size().to_logical::<f64>(self.scale_factor());
+        let pos = self.state().inner.outer_position().unwrap().to_logical::<f64>(self.scale_factor());
+        Rect::new(pos.x, pos.y, pos.x + size.width, pos.y + size.height)
     }
 
     /// Returns whether the window is still open.

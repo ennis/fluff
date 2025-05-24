@@ -11,12 +11,12 @@ use kyute::kurbo::{Insets, Vec2};
 use kyute::event::{emit_global, subscribe_global, wait_event_global};
 use kyute::text::TextLayout;
 use kyute::window::{FocusChanged, PopupPlacement, WindowHandle, place_popup};
-use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, WindowOptions, select, text};
+use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, select, text};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 use tracing::warn;
-use kyute::platform::PlatformWindowHandle;
+use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
 
 /// Event emitted when a menu entry is activated.
 #[derive(Debug, Clone)]
@@ -87,13 +87,11 @@ fn open_anchored_popup<T: Element>(
 
     let window = Window::new(
         &WindowOptions {
-            size,
-            owner: Some(owner.clone()),
-            decorations: false,
+            size: Some(size),
             visible: true,
             background: STATIC_BACKGROUND,
             position: Some(position),
-            no_focus: true,
+            kind: WindowKind::Menu(Some(owner.clone())),
             ..Default::default()
         },
         content,

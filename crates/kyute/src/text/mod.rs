@@ -126,9 +126,19 @@ impl TextLayout {
     }
 }
 
-impl<'a, const N: usize> From<&'a [TextRun<'a>; N]> for TextLayout {
-    fn from(runs: &'a [TextRun; N]) -> Self {
-        TextLayout::new(&TextStyle::default(), runs)
+pub trait IntoTextLayout {
+    fn into_text_layout(self, default_style: &TextStyle) -> TextLayout;
+}
+
+impl IntoTextLayout for TextLayout {
+    fn into_text_layout(self, _default_style: &TextStyle) -> TextLayout {
+        self
+    }
+}
+
+impl<'a, const N: usize> IntoTextLayout for &'a [TextRun<'a>; N] {
+    fn into_text_layout(self, default_style: &TextStyle) -> TextLayout {
+        TextLayout::new(default_style, &self[..])
     }
 }
 

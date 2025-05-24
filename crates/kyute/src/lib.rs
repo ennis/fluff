@@ -33,7 +33,7 @@ pub use event::EventSource;
 pub use notifier::Notifier;
 pub use paint_ctx::PaintCtx;
 pub use skia_safe;
-pub use window::{Window, WindowOptions};
+pub use window::{Window};
 
 pub use futures::future::AbortHandle;
 pub use tokio::select;

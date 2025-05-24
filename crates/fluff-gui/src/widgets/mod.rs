@@ -12,6 +12,7 @@ pub mod scroll;
 pub mod slider;
 pub mod spinner;
 pub mod uniform_grid;
+pub mod dialog_buttons;
 
 /// Standard line height for widgets
 pub const WIDGET_LINE_HEIGHT: f64 = 23.;
@@ -38,7 +39,7 @@ pub const WIDGET_FONT_SIZE: f64 = 12.;
 pub const WIDGET_FONT_FAMILY: &str = "Inter";
 
 /// Default font style for input widgets.
-pub const TEXT_STYLE: TextStyle = TextStyle {
+pub const TEXT_STYLE: &TextStyle = &TextStyle {
     font_family: Cow::Borrowed("Inter"),
     font_size: 12.0,
     font_weight: FontWeight::NORMAL,
@@ -49,7 +50,7 @@ pub const TEXT_STYLE: TextStyle = TextStyle {
 };
 
 /// Default font style for input widgets.
-pub const DISPLAY_TEXT_STYLE: TextStyle = TextStyle {
+pub const DISPLAY_TEXT_STYLE: &TextStyle = &TextStyle {
     font_family: Cow::Borrowed("Inter"),
     font_size: 12.0,
     font_weight: FontWeight::NORMAL,

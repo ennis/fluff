@@ -107,9 +107,16 @@ impl Flex {
     /// Adds a child element to the flex layout.
     #[must_use]
     pub fn child(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
+        self.add_child(child);
+        self
+    }
+    
+    pub fn add_child(
+        self: &mut ElementBuilder<Self>,
+        child: impl IntoElementAny,
+    ) {
         let weak_any = self.weak_any();
         self.children.push(FlexChild::new(child.into_element_any(weak_any)));
-        self
     }
 
     /// Adds a child element to the flex layout with additional layout options.

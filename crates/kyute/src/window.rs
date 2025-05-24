@@ -29,8 +29,8 @@ use crate::input_event::{
 };
 use crate::layout::{LayoutInput, SizeConstraint};
 use crate::paint_ctx::paint_root_element;
-use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler};
-use crate::{application, double_click_time, platform, Color, EventSource};
+use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler, WindowOptions};
+use crate::{application, double_click_time, platform, Color, Element, ElementBuilder, EventSource};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -851,60 +851,41 @@ impl WindowHandle {
     }
 }
 
-pub enum WindowKind {
-    /// A normal window.
-    Application,
-    /// Menu window (context menus, drop downs, etc.).
-    Menu { owner: Option<PlatformWindowHandle> },
-    /// Modal dialog window.
-    Modal { owner: Option<PlatformWindowHandle> },
-    /// Tooltip
-    Tooltip,
-}
-
-/// Describes the options for creating a new window.
-pub struct WindowOptions<'a> {
-    /// Initial title of the window.
-    pub title: &'a str,
-    /// Initial size of the window, in device-independent pixels (logical size).
-    pub size: Size,
-    /// Owner window handle.
-    pub owner: Option<PlatformWindowHandle>,
-    /// Whether the window should have decorations (title bar, close button, etc).
-    pub decorations: bool,
-    /// Whether the window should be initially visible.
-    pub visible: bool,
-    /// Background color of the window.
-    pub background: Color,
-    /// Initial position of the window, in device-independent pixels.
-    pub position: Option<Point>,
-    /// If true, the window will not take focus when shown and when the user clicks on it.
-    ///
-    /// This is typically used for context menus.
-    pub no_focus: bool,
-    /// Whether to make this window modal (disables interaction on all other windows).
-    pub modal: bool,
-}
-
-impl<'a> Default for WindowOptions<'a> {
-    fn default() -> Self {
-        Self {
-            title: "",
-            size: Size::new(800.0, 600.0),
-            owner: None,
-            decorations: true,
-            visible: true,
-            background: Color::from_hex("#151515"),
-            position: None,
-            no_focus: false,
-            modal: false,
-        }
-    }
-}
 
 impl Window {
-    pub fn new(options: &WindowOptions, root: impl IntoElementAny) -> Self {
-        let platform_window = PlatformWindowHandle::new(options);
+    pub fn new(options: &WindowOptions, root: ElementBuilder<impl Element>) -> Self {
+
+        let actual_size = if let Some(size) = options.size {
+            size
+        } else {
+            // measure the root element
+            let mut size = root.measure(&LayoutInput {
+                parent_width: None,
+                parent_height: None,
+                // FIXME: SizeConstraint::Available(0) doesn't work (returns zero-sized),
+                //        but should (return the minimum size)
+                width: SizeConstraint::Unspecified,
+                height: SizeConstraint::Unspecified,
+            });
+
+            eprintln!("actual size: {:?}", size);
+            if !size.width.is_finite() {
+                warn!("Window width is not finite, using default size");
+                size.width = 800.0;
+            }
+            if !size.height.is_finite() {
+                warn!("Window height is not finite, using default size");
+                size.height = 600.0;
+            }
+            size
+        };
+
+        let options = WindowOptions {
+            size: Some(actual_size),
+            ..options.clone()
+        };
+
+        let platform_window = PlatformWindowHandle::new(&options);
         let emitter_handle = EmitterHandle::new();
         let emitter_key = emitter_handle.key();
 

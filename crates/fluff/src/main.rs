@@ -1,17 +1,10 @@
-use egui::{FontFamily, FontId, TextStyle, ViewportBuilder, ViewportId};
-use egui_winit::create_window;
-use glam::{dvec2, DVec2};
-use std::fs;
-use std::time::{Duration, Instant};
+use egui::{FontFamily, FontId, TextStyle};
 
-use graal::vk;
-use winit::event::{Event, MouseScrollDelta, WindowEvent};
-use winit::event_loop::EventLoop;
-use winit::raw_window_handle::{HasRawWindowHandle, HasWindowHandle};
-use fluff_gui::colors;
-use kyute::{application, select, Size, Window, WindowOptions};
-use crate::app::App;
 use crate::data::AppModel;
+use fluff_gui::colors;
+use kyute::{application, select, Size, Window};
+use winit::raw_window_handle::{HasRawWindowHandle, HasWindowHandle};
+use kyute::platform::WindowOptions;
 
 mod aabb;
 mod animation;
@@ -64,7 +57,7 @@ fn main() {
         let main_window = Window::new(
             &WindowOptions {
                 title: "Hello, world!",
-                size: Size::new(800.0, 600.0),
+                size: Some(Size::new(800.0, 600.0)),
                 background: colors::STATIC_BACKGROUND,
                 ..Default::default()
             },

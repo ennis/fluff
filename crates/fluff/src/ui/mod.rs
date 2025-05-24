@@ -1,13 +1,18 @@
 use crate::data::AppModel;
+use fluff_gui::widgets::dialog_buttons::{dialog_body, message_dialog, DialogButtons, DialogResult};
 use fluff_gui::widgets::menu::MenuItem::{Entry, Separator, Submenu};
 use fluff_gui::widgets::menu::{MenuBar, MenuEntryActivated};
+use kyute::application::spawn;
 use kyute::elements::{Flex, Frame};
 use kyute::event::subscribe_global;
-use kyute::{ElementBuilder, IntoElementAny, Window, WindowOptions};
+use kyute::platform::{WindowKind, WindowOptions};
+use kyute::text::FontStyle::Italic;
+use kyute::{text, Element, ElementBuilder, IntoElementAny, Window};
 use std::rc::Rc;
 use windows::core::HSTRING;
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_APPLMODAL, MB_ICONINFORMATION, MB_OKCANCEL, MB_TASKMODAL};
-use kyute::application::spawn;
+use windows::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, MB_APPLMODAL, MB_ICONINFORMATION, MB_OKCANCEL, MB_TASKMODAL,
+};
 
 mod progress_dialog;
 mod timeline;
@@ -21,7 +26,7 @@ pub enum MainMenuEntry {
 }
 
 /// The root element of the UI.
-pub fn root_frame(app_model: Rc<AppModel>) -> impl IntoElementAny {
+pub fn root_frame(app_model: Rc<AppModel>) -> ElementBuilder<impl Element> {
     use crate::ui::MainMenuEntry::*;
 
     // Main menu bar
@@ -29,7 +34,7 @@ pub fn root_frame(app_model: Rc<AppModel>) -> impl IntoElementAny {
         Submenu(
             "File",
             &[
-                Entry("Load Alembic cache...", LoadAlembicCache),
+                Entry("Load Alembic Cache...", LoadAlembicCache),
                 Entry("Save", Save),
                 Separator,
                 Entry("Exit", Exit),
@@ -41,31 +46,28 @@ pub fn root_frame(app_model: Rc<AppModel>) -> impl IntoElementAny {
     subscribe_global::<MenuEntryActivated<MainMenuEntry>>({
         let app_model = app_model.clone();
         move |MenuEntryActivated { id, window }| {
-            eprintln!("Load Alembic cache clicked");
-
             match id {
                 LoadAlembicCache => {
-                    //app_model.load_alembic_cache();
-
-                    // display a modal here? but how? we don't have the handle to the window
-                    unsafe {
-                        MessageBoxW(
-                            window.hwnd(),
-                            &HSTRING::from("Load Alembic cache clicked"),
-                            &HSTRING::from("Fluff"),
-                            MB_OKCANCEL | MB_ICONINFORMATION | MB_APPLMODAL,
-                        );
-                    }
                     let window = window.clone();
-                    spawn(async {
-                        let window = Window::new(&WindowOptions {
-                            modal: true,
-                            owner: Some(window),
-                            ..Default::default()
-                        }, Frame::new());
-                        window.close_requested().await;
-                    });
                     
+                    spawn(async {
+                        let result = message_dialog(
+                            "Load Alembic Cache",
+                            text!["Loading alembic cache..."],
+                            DialogButtons::OK | DialogButtons::CANCEL | DialogButtons::APPLY,
+                            Some(window),
+                        )
+                        .await;
+
+                        match result {
+                            DialogResult::Closed => {
+                                eprintln!("Closed dialog");
+                            }
+                            DialogResult::Button(button) => {
+                                eprintln!("Button clicked: {:?}", button);
+                            }
+                        }
+                    });
                 }
                 Save => {
                     //app_model.save();

@@ -189,10 +189,31 @@ impl Frame {
         self
     }
 
+    /// Specifies the padding (along the right side) around the content placed inside the frame.
+    #[must_use]
+    pub fn padding_right(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+        self.padding.x1 = value.into();
+        self
+    }
+
     /// Specifies the padding (along the left side) around the content placed inside the frame.
     #[must_use]
     pub fn padding_left(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
         self.padding.x0 = value.into();
+        self
+    }
+
+    /// Specifies the padding around the content placed inside the frame.
+    #[must_use]
+    pub fn padding_top(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+        self.padding.y0 = value.into();
+        self
+    }
+
+    /// Specifies the padding around the content placed inside the frame.
+    #[must_use]
+    pub fn padding_bottom(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+        self.padding.y1 = value.into();
         self
     }
 

@@ -206,6 +206,8 @@ pub enum LayoutMode {
 pub enum SizeConstraint {
     /// The element has the specified available space to layout itself.
     /// If 0, the element should return its minimum size, if infinite, it should return its maximum size.
+    ///
+    /// FIXME: make sure that all layout code properly handles `Available(zero)`
     Available(f64),
     /// Requests the element ideal size.
     Unspecified,

@@ -6,7 +6,7 @@ use crate::drawing::ToSkia;
 use crate::element::{Element, ElementBuilder, HitTestCtx, TreeCtx};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::text::{TextLayout, TextRun, TextStyle};
+use crate::text::{IntoTextLayout, TextLayout, TextRun, TextStyle};
 use crate::PaintCtx;
 
 /// A run of styled text.
@@ -26,8 +26,8 @@ impl Text {
     ///
     /// let text = Text::new(text![FontSize(20.0) "Hello, " { FontWeight(FontWeight::BOLD) "world!" }]);
     /// ```
-    pub fn new(text: impl Into<TextLayout>) -> ElementBuilder<Text> {
-        let paragraph = text.into().inner;
+    pub fn new(text: impl IntoTextLayout) -> ElementBuilder<Text> {
+        let paragraph = text.into_text_layout(&TextStyle::default()).inner;
         ElementBuilder::new(Text { paragraph })
     }
 
@@ -45,7 +45,9 @@ impl Element for Text {
         let p = &mut self.paragraph;
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         p.layout(space);
-        Size::new(p.longest_line() as f64, p.height() as f64)
+        let size = Size::new(p.longest_line() as f64, p.height() as f64);
+        eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.width);
+        size
     }
 
     fn layout(&mut self, _tree: &TreeCtx, size: Size) -> LayoutOutput {
@@ -65,7 +67,8 @@ impl Element for Text {
     }
 
     fn paint(&mut self, _cx: &TreeCtx, ctx: &mut PaintCtx) {
-        self.paragraph.paint(ctx.canvas(), Point::ZERO.to_skia());
+        let position = ctx.bounds.origin().to_skia();
+        self.paragraph.paint(ctx.canvas(), position);
     }
 
     fn event(&mut self, _cx: &TreeCtx, _event: &mut Event) {}
