@@ -12,7 +12,7 @@ pub mod scroll;
 pub mod slider;
 pub mod spinner;
 pub mod uniform_grid;
-pub mod dialog_buttons;
+pub mod dialog;
 
 /// Standard line height for widgets
 pub const WIDGET_LINE_HEIGHT: f64 = 23.;

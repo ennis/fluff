@@ -1,14 +1,12 @@
-use crate::widgets::TEXT_STYLE;
 use crate::widgets::button::Button;
+use crate::widgets::TEXT_STYLE;
 use bitflags::bitflags;
-use kyute::application::spawn;
 use kyute::elements::{ClickedEvent, Flex, Frame, Text};
-use kyute::event::{EmitterKey, wait_event};
+use kyute::event::{wait_event, EmitterKey};
 use kyute::layout::SizeValue;
 use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
-use kyute::text::FontStyle::Italic;
-use kyute::text::{IntoTextLayout, TextLayout, TextStyle};
-use kyute::{Color, Element, ElementBuilder, EventSource, Window, select, text};
+use kyute::text::IntoTextLayout;
+use kyute::{select, Color, Element, ElementBuilder, EventSource, Window};
 
 bitflags! {
     /// Flags for the dialog buttons.
@@ -80,7 +78,7 @@ pub fn dialog_body(message: impl IntoTextLayout, buttons: DialogButtons) -> Elem
     vbox
 }
 
-/// Spawns a standard message box dialog with the given message and buttons.
+/// Spawns a standard message dialog with the given message and buttons.
 ///
 /// Returns the button that was pressed.
 pub async fn message_dialog(
@@ -97,6 +95,7 @@ pub async fn message_dialog(
             title,
             kind: WindowKind::Modal(modal_owner_window),
             resizable: false,
+            center: true,
             ..Default::default()
         },
         body,

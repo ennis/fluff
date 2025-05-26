@@ -45,18 +45,28 @@ impl Element for Text {
         let p = &mut self.paragraph;
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         p.layout(space);
-        let size = Size::new(p.longest_line() as f64, p.height() as f64);
+
+        let mut size = Size::new(p.longest_line() as f64, p.height() as f64);
+
+        // Round up the size to the nearest enclosing logical rect.
+        //
+        // This avoids accidents where the caller of `measure` truncates
+        // the size to an integer, and then calls `layout` with the truncated size
+        // (which can lead to a relayout of the text with additional line breaks).
+        size = size.ceil();
+
         eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.width);
         size
     }
 
     fn layout(&mut self, _tree: &TreeCtx, size: Size) -> LayoutOutput {
         let _span = trace_span!("Text::layout").entered();
+        eprintln!("Text::layout: {:?}", size);
         let p = &mut self.paragraph;
         p.layout(size.width as f32);
         let output = LayoutOutput {
-            width: p.longest_line() as f64,
-            height: p.height() as f64,
+            width: size.width,
+            height: size.height,
             baseline: Some(p.alphabetic_baseline() as f64),
         };
         output

@@ -1562,3 +1562,30 @@ What would other languages do?
 
 Conclusion: not worth the hassle to have unique ownership semantics to `Layer`. 
 Go with option (C) and don't think about it anymore. 
+
+
+# TODO
+- Fix issue with layout in `Text` with flex containers when `measure` doesn't return the same size?
+  - The issue: 
+    - Measurement is performed first to determine the size of the window
+       - During the measure phase, the text returns a width of 650.4 under unspecified constraints (infinite width available)
+       - The window is then created with a width of *650* because of *truncation somewhere* (**issue 1**)
+    - During the layout phase, the text is *measured again* by the flex layout container, this time with 
+      a width constraint of 650. This causes the text layout to split the text into two lines, and the height measurement
+      is now bigger than the initial measurement before creating the window 
+    - Because of the taller text, the contents now overflow the window.
+    - During painting, we first clear the background of the window. This implicitly allocates a DrawSurface with the size of the window.
+    - When we paint an overflowing element, the DrawSurface is not big enough to display the text, 
+      which causes a new DrawSurface (and a new compositor layer) to be allocated with the size of the text (**issue 2**).
+      - Currently, compositor layers are opaque, so all the content painted before the overflowing element is lost (**issue 3**).
+  - Solutions:
+    - Issue 1: when sizing a window to contents, round the size to the next larger integer value.
+       - or, alternatively, automatically round all sizes returned by `measure` to the smallest enclosing pixel-aligned rectangle
+         - no
+    - (OK) Issue 2: we shouldn't attempt to create a compositor layer that exceeds the bounds of the parent window. 
+               This should be enforced by `CompositionBuilder`
+    - Issue 3: compositor layers should have alpha
+       - TODO: this has implications on input latency 
+
+- Need to be able to inspect the layout tree. 
+   - Either dump to terminal or view it in a separate window.

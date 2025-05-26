@@ -2,6 +2,7 @@ use crate::application::run_queued;
 use crate::event::{EmitterHandle, EmitterKey, EventEmitter, EventSource};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
+use crate::platform::PlatformWindowHandle;
 use crate::window::WindowHandle;
 use crate::PaintCtx;
 use bitflags::bitflags;
@@ -15,7 +16,6 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
 use typed_arena::Arena;
-use crate::platform::PlatformWindowHandle;
 
 pub mod prelude {
     pub use crate::element::{
@@ -133,6 +133,8 @@ impl HitTestCtx {
 pub struct TreeCtx<'a> {
     pub parent: Option<&'a TreeCtx<'a>>,
     pub this: &'a ElementCtx,
+    // Pixel scale factor of the parent window.
+    //scale_factor: f64,
 }
 
 impl<'a> TreeCtx<'a> {
@@ -148,7 +150,12 @@ impl<'a> TreeCtx<'a> {
             self.this.window.clone()
         }
     }
-    
+
+    ///// Returns the pixel scale factor of the parent window.
+    //pub fn scale_factor(&self) -> f64 {
+    //    self.scale_factor
+    //}
+
     /// Returns the parent platform window of this element.
     ///
     /// TODO remove the `get_` prefix?
@@ -179,7 +186,7 @@ impl<'a> TreeCtx<'a> {
             parent.this.change_flags.set(parent_flags | flags);
             parent.propagate_dirty_flags();
         } else {
-            // no parent, this is the root element and it should have a window
+            // no parent, this is the root element, and it should have a window
             if flags.contains(ChangeFlags::LAYOUT) {
                 self.window.mark_needs_layout();
             } else if flags.contains(ChangeFlags::PAINT) {
@@ -211,6 +218,7 @@ impl<'a> TreeCtx<'a> {
         TreeCtx {
             parent: Some(self),
             this: &child.0.ctx,
+            //scale_factor: self.scale_factor,
         }
     }
 }
@@ -287,8 +295,8 @@ pub trait Element: Any {
     ///
     /// Implementations should also hit-test their children recursively by calling `ElementRc::hit_test`
     /// (unless the element explicitly filters out pointer events for its children).
-    /// 
-    /// The default implementation checks whether the point is inside the layout bounds of this 
+    ///
+    /// The default implementation checks whether the point is inside the layout bounds of this
     /// element. You should reimplement this method if your element has children, so that they
     /// can be hit-tested as well.
     ///
@@ -347,7 +355,6 @@ pub(crate) struct ElementWithCtx<T: ?Sized> {
     pub(crate) ctx: ElementCtx,
     element: RefCell<T>,
 }
-
 
 impl<T: Element> ElementWithCtx<T> {
     fn new(element: T) -> UniqueRc<ElementWithCtx<T>> {
@@ -619,21 +626,26 @@ impl ElementAny {
         self.0.ctx.offset.get()
     }
 
-    fn measure_inner(&self, parent: Option<&TreeCtx>, layout_input: &LayoutInput) -> Size {
+    pub fn measure(&self, parent: &TreeCtx, layout_input: &LayoutInput) -> Size {
         let ref mut inner = *self.borrow_mut();
-        let child_tree = TreeCtx {
-            parent,
-            this: &self.0.ctx,
-        };
-        inner.measure(&child_tree, layout_input)
-    }
-
-    pub fn measure(&self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
-        self.measure_inner(Some(tree), layout_input)
+        inner.measure(
+            &TreeCtx {
+                parent: Some(parent),
+                this: &self.0.ctx,
+            },
+            layout_input,
+        )
     }
 
     pub fn measure_root(&self, layout_input: &LayoutInput) -> Size {
-        self.measure_inner(None, layout_input)
+        let ref mut inner = *self.borrow_mut();
+        inner.measure(
+            &TreeCtx {
+                parent: None,
+                this: &self.0.ctx,
+            },
+            layout_input,
+        )
     }
 
     /// Invokes layout on this element and its children, recursively.
@@ -983,7 +995,7 @@ impl<T: Element> ElementBuilder<T> {
     }
 
     /// Runs the specified function when an event source emits an event.
-    pub fn connect<Event, Source>(&self, source: &Source, mut f: impl FnMut(&mut T, &TreeCtx, &Event) + 'static) 
+    pub fn connect<Event, Source>(&self, source: &Source, mut f: impl FnMut(&mut T, &TreeCtx, &Event) + 'static)
     where
         Event: 'static,
         Source: EventSource + EventEmitter<Event>,

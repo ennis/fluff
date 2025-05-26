@@ -204,19 +204,24 @@ pub struct CompositionBuilder {
     bounds: Rect,
     /// Current position in the stack.
     sp: usize,
+    /// Client area of the parent window.
+    ///
+    /// All picture layers are clipped to this area.
+    window_area: Rect,
 }
 
 impl CompositionBuilder {
     /// Creates a new CompositionBuilder, optionally reusing parts of a previous composition.
     ///
     /// TODO: add a way to only recompose a subtree of the previous composition
-    pub fn new(scale_factor: f64, init_bounds: Rect, previous: Option<Composition>) -> CompositionBuilder {
+    pub fn new(scale_factor: f64, window_area: Rect, previous: Option<Composition>) -> CompositionBuilder {
         let mut ctx = CompositionBuilder {
             comp: previous.unwrap_or_default(),
             picture_recorder: None,
             picture_recorder_bounds: Rect::ZERO,
-            bounds: init_bounds,
+            bounds: window_area,
             sp: 0,
+            window_area,
         };
         ctx.comp.scale_factor = scale_factor;
         ctx.comp.rev += 1;
@@ -230,7 +235,11 @@ impl CompositionBuilder {
 
     /// Sets the current drawing bounds in window coordinates.
     pub fn set_bounds(&mut self, bounds: Rect) {
-        if !self.picture_recorder_bounds.contains_rect(bounds) {
+        
+        // clip bounds to the window area, we don't support drawing outside the window area
+        let clipped_bounds = bounds.intersect(self.window_area);
+        
+        if !self.picture_recorder_bounds.contains_rect(clipped_bounds) {
             // If the new bounds are larger than the current picture recorder,
             // finish the current picture recorder and start a new one with the larger bounds.
             // It's up to the caller to avoid calling set_bounds in a way that would cause
@@ -239,7 +248,7 @@ impl CompositionBuilder {
         }
 
         // This will affect the bounds of the next created picture recorder.
-        self.bounds = bounds;
+        self.bounds = clipped_bounds;
     }
 
     fn insert_layer(&mut self, layer: Layer) -> LayerID {

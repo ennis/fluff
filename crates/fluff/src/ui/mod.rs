@@ -1,5 +1,5 @@
 use crate::data::AppModel;
-use fluff_gui::widgets::dialog_buttons::{dialog_body, message_dialog, DialogButtons, DialogResult};
+use fluff_gui::widgets::dialog::{dialog_body, message_dialog, DialogButtons, DialogResult};
 use fluff_gui::widgets::menu::MenuItem::{Entry, Separator, Submenu};
 use fluff_gui::widgets::menu::{MenuBar, MenuEntryActivated};
 use kyute::application::spawn;
@@ -49,12 +49,12 @@ pub fn root_frame(app_model: Rc<AppModel>) -> ElementBuilder<impl Element> {
             match id {
                 LoadAlembicCache => {
                     let window = window.clone();
-                    
+
                     spawn(async {
                         let result = message_dialog(
                             "Load Alembic Cache",
-                            text!["Loading alembic cache..."],
-                            DialogButtons::OK | DialogButtons::CANCEL | DialogButtons::APPLY,
+                            text!["Loading alembic cache, please wait wait wait wait wait wait wait wait wait wait wait wait wait wait wait wait wait"],
+                            DialogButtons::OK | DialogButtons::CANCEL,
                             Some(window),
                         )
                         .await;

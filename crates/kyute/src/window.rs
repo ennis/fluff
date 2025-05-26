@@ -868,7 +868,7 @@ impl Window {
                 height: SizeConstraint::Unspecified,
             });
 
-            eprintln!("actual size: {:?}", size);
+            eprintln!("window actual size: {:?}", size);
             if !size.width.is_finite() {
                 warn!("Window width is not finite, using default size");
                 size.width = 800.0;

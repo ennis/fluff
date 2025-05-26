@@ -174,9 +174,9 @@ struct CreateWindowResult {
 }
 
 fn create_window(options: &WindowOptions) -> CreateWindowResult {
-
+    
     let size = options.size.unwrap_or(Size::new(800.0, 600.0));
-
+    
     let modal;
     let owner;
     let no_focus;
@@ -267,6 +267,10 @@ fn create_window(options: &WindowOptions) -> CreateWindowResult {
             enabled_buttons |= WindowButtons::MAXIMIZE;
         }
     }
+    
+    // Round up the size to the nearest physical pixel.
+    // FIXME: we don't know the DPI here if we don't know the monitor on which 
+    //        the window will be created.
 
     // Create the window.
     let mut builder = winit::window::WindowBuilder::new()
