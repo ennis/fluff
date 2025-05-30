@@ -94,7 +94,7 @@ where
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _ectx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         // unsubscribe from previous dependencies as we are calling the draw function
         // again and building a new set of dependencies.
         //self.draw_subscription.unsubscribe();

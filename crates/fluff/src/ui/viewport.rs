@@ -75,7 +75,7 @@ impl Element for Viewport {
         true
     }
 
-    fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
 
         let device = gpu::device();
         

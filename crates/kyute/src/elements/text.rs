@@ -75,7 +75,7 @@ impl Element for Text {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _cx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         let position = ctx.bounds.origin().to_skia();
         self.paragraph.paint(ctx.canvas(), position);
     }

@@ -408,9 +408,8 @@ pub trait Element: Any {
     ///        Unfortunately, rust memory semantics don't make it easy.
     ///        Storing the context in `ElemBox` wouldn't work because we want it to be shareable,
     ///        but `&mut ElemBox<Self>` would give exclusive access to it (barring stuff like UnsafePinned).
-    /// TODO: remove tctx, it's integrated in PaintCtx now
     #[allow(unused_variables)]
-    fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx);
+    fn paint(&mut self, ctx: &mut PaintCtx);
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
@@ -522,7 +521,7 @@ impl Default for WeakElementAny {
                 unimplemented!()
             }
 
-            fn paint(&mut self, _ectx: &TreeCtx, _ctx: &mut PaintCtx) {
+            fn paint(&mut self, _ctx: &mut PaintCtx) {
                 unimplemented!()
             }
         }

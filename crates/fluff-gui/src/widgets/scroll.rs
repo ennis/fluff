@@ -170,8 +170,8 @@ impl Element for ScrollBarBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
-        let bounds = ectx.bounds();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds;
 
         // paint scrollbar background
         ctx.fill_rect(bounds, SCROLL_BAR_BACKGROUND);

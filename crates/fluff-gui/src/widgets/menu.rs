@@ -397,8 +397,8 @@ impl Element for MenuBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
-        let bounds = cx.bounds();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds;
         let mut y = self.insets.y0;
 
         // menu border
@@ -851,8 +851,8 @@ impl<ID: 'static + Clone> Element for MenuBar<ID> {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
-        let bounds = ectx.bounds();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds;
         for entry in self.entries.iter_mut() {
             let text_offset = point(bounds.x0 + entry.title_offset.x, bounds.y0 + entry.title_offset.y);
             ctx.draw_text_layout(text_offset, &entry.title);

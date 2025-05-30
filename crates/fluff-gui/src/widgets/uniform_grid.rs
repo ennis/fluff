@@ -84,7 +84,7 @@ impl Element for UniformGrid {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, _cx: &TreeCtx, painter: &mut PaintCtx) {
+    fn paint(&mut self, painter: &mut PaintCtx) {
         for element in &mut self.elements {
             painter.paint_child(element);
             //element.paint(cx, painter);

@@ -265,7 +265,7 @@ impl Element for SpinnerBase {
     }
 
     fn layout(&mut self, _cx: &TreeCtx, size: Size)  {
-        // measure the baseline 
+        // measure the baseline
         let baseline = self.text_edit.measure(&LayoutInput {
             width: SizeConstraint::Available(size.width),
             height: SizeConstraint::Available(size.height),
@@ -279,8 +279,8 @@ impl Element for SpinnerBase {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ecx: &TreeCtx, ctx: &mut PaintCtx) {
-        let bounds = ecx.bounds();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds;
         let rrect = bounds.to_rounded_rect(0.);
 
         // paint background
@@ -291,7 +291,7 @@ impl Element for SpinnerBase {
         // contents
         self.text_edit.paint(ctx, bounds);
 
-        if ecx.has_focus() {
+        if ctx.tree.has_focus() {
             // draw the focus ring
             ctx.draw_border(rrect, 1., BorderPosition::Inside, DISPLAY_TEXT.darken(0.2));
         }

@@ -175,8 +175,8 @@ impl Element for Slider {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ectx: &TreeCtx, ctx: &mut PaintCtx) {
-        self.base.paint(ctx, ectx.bounds());
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        self.base.paint(ctx, ctx.bounds);
     }
 
     fn event(&mut self, cx: &TreeCtx, event: &mut Event) {

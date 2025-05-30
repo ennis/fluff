@@ -448,10 +448,10 @@ impl Element for Frame {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, ecx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         self.resolve_style();
 
-        let rect = ecx.bounds();
+        let rect = ctx.bounds;
         let s = &self.resolved_style;
 
         let border_radius = s.border_radius;

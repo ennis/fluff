@@ -8,6 +8,8 @@ use skia_safe::PaintStyle;
 use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 
 /// Paint context.
+/// 
+/// TODO deref to `TreeCtx`
 pub struct PaintCtx<'a> {
     pub tree: &'a TreeCtx<'a>,
     pub scale_factor: f64,
@@ -31,7 +33,7 @@ pub fn paint_root_element(element: &ElementAny, composition_builder: &mut Compos
         tree.change_flags.set(f);
 
         let mut ctx = PaintCtx::new(tree, composition_builder);
-        element.borrow_mut().paint(tree, &mut ctx);
+        element.borrow_mut().paint(&mut ctx);
     })
 }
 
@@ -79,7 +81,7 @@ impl<'a> PaintCtx<'a> {
         tree.this.change_flags.set(f);
 
         // paint the child element
-        element.borrow_mut().paint(&tree, &mut child_ctx);
+        element.borrow_mut().paint(&mut child_ctx);
 
         // restore the previous bounds
         self.comp_builder.set_bounds(self.bounds);

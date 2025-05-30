@@ -66,7 +66,7 @@ impl Element for CustomSwapChainElement {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, tctx: &TreeCtx, ctx: &mut PaintCtx) {
+    fn paint(&mut self, ctx: &mut PaintCtx) {
         // by the time we get here, `layout` has been called and the swap chain has been created
         // so we can unwrap safely
         let swap_chain = self.swap_chain.as_ref().unwrap();

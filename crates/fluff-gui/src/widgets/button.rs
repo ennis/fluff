@@ -64,8 +64,8 @@ impl Element for Button {
         ctx.bounds.contains(point)
     }
 
-    fn paint(&mut self, cx: &TreeCtx, ctx: &mut PaintCtx) {
-        let mut rect = cx.bounds();
+    fn paint(&mut self, ctx: &mut PaintCtx) {
+        let mut rect = ctx.bounds;
         rect.y1 -= 1.;
         let rect = rect.to_rounded_rect(BUTTON_RADIUS);
 
@@ -94,7 +94,7 @@ impl Element for Button {
         let pos = self
             .label
             .rect_with_baseline()
-            .place_into((cx.bounds(), BUTTON_BASELINE), BASELINE_CENTER);
+            .place_into((ctx.bounds, BUTTON_BASELINE), BASELINE_CENTER);
         ctx.draw_text_layout(pos, &self.label);
     }
 
