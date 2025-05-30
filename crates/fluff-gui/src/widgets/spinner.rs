@@ -2,7 +2,7 @@ use crate::colors::DISPLAY_TEXT;
 use crate::widgets::menu::ContextMenuExt;
 use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::{BorderPosition, PlacementExt, RIGHT_CENTER, vec2};
-use kyute::element::TreeCtx;
+use kyute::element::{Measurement, TreeCtx};
 use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::input_event::{Key, PointerButton, ScrollDelta};
@@ -255,21 +255,24 @@ impl SpinnerBase {
 }
 
 impl Element for SpinnerBase {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let width = layout_input.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
-        Size { width, height }
-    }
-
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
-        let baseline = self.text_edit.layout(size).baseline.unwrap_or(0.);
-        self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
-
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
+        Measurement {
+            size: Size { width, height },
             baseline: Some(WIDGET_BASELINE),
         }
+    }
+
+    fn layout(&mut self, _cx: &TreeCtx, size: Size)  {
+        // measure the baseline 
+        let baseline = self.text_edit.measure(&LayoutInput {
+            width: SizeConstraint::Available(size.width),
+            height: SizeConstraint::Available(size.height),
+            parent_width: None,
+            parent_height: None,
+        }).baseline.unwrap_or(0.);
+        self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

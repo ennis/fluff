@@ -7,7 +7,8 @@ use fluff_gui::widgets::spinner::{SpinnerBase, SpinnerOptions};
 use fluff_gui::widgets::uniform_grid::UniformGrid;
 use kyute::drawing::rgb;
 use kyute::elements::{Flex, Frame};
-use kyute::{IntoElementAny, Size, Window, WindowOptions, application, select};
+use kyute::{IntoElementAny, Size, Window, application, select};
+use kyute::platform::WindowOptions;
 
 fn random_colored_square() -> impl IntoElementAny {
     let color = rgb(rand::random(), rand::random(), rand::random());
@@ -87,7 +88,7 @@ fn main() {
         let main_window = Window::new(
             &WindowOptions {
                 title: "Hello, world!",
-                size: Size::new(800.0, 600.0),
+                size: Some(Size::new(800.0, 600.0)),
                 background: colors::STATIC_BACKGROUND,
                 ..Default::default()
             },

@@ -3,7 +3,7 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementBuilder, HitTestCtx, TreeCtx};
+use crate::element::{Element, ElementBuilder, HitTestCtx, Measurement, TreeCtx};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{IntoTextLayout, TextLayout, TextRun, TextStyle};
@@ -39,7 +39,7 @@ impl Text {
 }
 
 impl Element for Text {
-    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
@@ -56,20 +56,19 @@ impl Element for Text {
         size = size.ceil();
 
         eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.width);
-        size
+        
+        let baseline = p.alphabetic_baseline()  as f64;
+        Measurement {
+            size,
+            baseline: Some(baseline),
+        }
     }
 
-    fn layout(&mut self, _tree: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _tree: &TreeCtx, size: Size) {
         let _span = trace_span!("Text::layout").entered();
         eprintln!("Text::layout: {:?}", size);
         let p = &mut self.paragraph;
         p.layout(size.width as f32);
-        let output = LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: Some(p.alphabetic_baseline() as f64),
-        };
-        output
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

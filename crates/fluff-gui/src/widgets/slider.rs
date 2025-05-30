@@ -1,7 +1,7 @@
 use crate::colors;
 use crate::widgets::{INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
-use kyute::element::{ElementBuilder, HitTestCtx, TreeCtx, WeakElement};
+use kyute::element::{ElementBuilder, HitTestCtx, Measurement, TreeCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
 use kyute::input_event::ScrollDelta;
 use kyute::kurbo::{Line, PathEl, Vec2};
@@ -99,19 +99,15 @@ impl SliderBase {
         }
     }
 
-    pub fn measure(&self, available: &LayoutInput) -> Size {
+    pub fn measure(&self, available: &LayoutInput) -> Measurement {
         let width = available.width.available().unwrap_or(INPUT_WIDTH);
         let height = WIDGET_LINE_HEIGHT;
-        Size { width, height }
+        Measurement {size:
+        Size { width, height }, baseline: Some(WIDGET_BASELINE) }
     }
 
-    pub fn layout(&mut self, size: Size) -> LayoutOutput {
+    pub fn layout(&mut self, size: Size) {
         self.width = size.width;
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: Some(WIDGET_BASELINE),
-        }
     }
 
     // Sets the position of the slider in window coordinates.
@@ -167,11 +163,11 @@ impl Slider {
 }
 
 impl Element for Slider {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         self.base.measure(layout_input)
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
         self.base.layout(size)
     }
 

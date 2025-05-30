@@ -5,7 +5,7 @@ use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT
 use kyute::application::{run_after, spawn, CallbackToken};
 use kyute::drawing::{BorderPosition, Image, point, vec2};
 use kyute::element::prelude::*;
-use kyute::element::{TreeCtx, WeakElement};
+use kyute::element::{Measurement, TreeCtx, WeakElement};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::event::{emit_global, subscribe_global, wait_event_global};
@@ -82,7 +82,7 @@ fn open_anchored_popup<T: Element>(
     popup_placement: PopupPlacement,
 ) -> Window {
     // create popup window
-    let size = content.measure(&LayoutInput::default());
+    let size = content.measure(&LayoutInput::default()).size;
     let position = place_popup(Some(owner.monitor()), size, anchor_rect, popup_placement);
 
     let window = Window::new(
@@ -353,7 +353,7 @@ const MENU_SUBMENU_ARROW_SPACE: f64 = 16.0;
 const SUBMENU_CLOSE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl Element for MenuBase {
-    fn measure(&mut self, _cx: &TreeCtx, _input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, _input: &LayoutInput) -> Measurement {
         // minimum menu width
         let mut width = 100.0f64;
         let mut height = 0.0f64;
@@ -375,13 +375,14 @@ impl Element for MenuBase {
 
         eprintln!("MenuBase::measure: width={}, height={}", width, height);
 
+        // no need to measure the baseline for menus
         Size {
             width: width + self.insets.x_value(),
             height: height + self.insets.y_value(),
-        }
+        }.into()
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
         for item in self.items.iter_mut() {
             match item {
                 InternalMenuItem::Entry { label, .. } => {
@@ -389,11 +390,6 @@ impl Element for MenuBase {
                 }
                 InternalMenuItem::Separator => {}
             }
-        }
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
         }
     }
 
@@ -827,13 +823,14 @@ impl<ID: 'static + Clone> MenuBar<ID> {
 }
 
 impl<ID: 'static + Clone> Element for MenuBar<ID> {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let width = layout_input.width.available().unwrap_or_default();
         let height = 24.0;
-        Size { width, height }
+        Measurement {size:
+        Size { width, height }, baseline: Some(MENU_BAR_BASELINE)}
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
         let mut x = MENU_BAR_LEFT_PADDING;
         for entry in self.entries.iter_mut() {
             entry.title.layout(f64::INFINITY);
@@ -847,11 +844,6 @@ impl<ID: 'static + Clone> Element for MenuBar<ID> {
             entry.title_offset.x = x + MENU_BAR_ITEM_PADDING;
             entry.title_offset.y = MENU_BAR_BASELINE - entry.title.baseline();
             x += width;
-        }
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: Some(MENU_BAR_BASELINE),
         }
     }
 

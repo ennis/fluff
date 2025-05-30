@@ -1,8 +1,6 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{
-    Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, TreeCtx, 
-};
+use crate::element::{Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, Measurement, TreeCtx};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::input_event::Event;
@@ -294,11 +292,11 @@ impl Frame {
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
         height_constraint: SizeConstraint,
-    ) -> Size {
+    ) -> Measurement {
         let width = width_constraint.deflate(self.padding.x_value());
         let height = height_constraint.deflate(self.padding.y_value());
 
-        let size = if let Some(content) = &self.content {
+        let mut measurement = if let Some(content) = &self.content {
             content.measure(
                 ctx,
                 &LayoutInput {
@@ -309,10 +307,12 @@ impl Frame {
                 },
             )
         } else {
-            Size::ZERO
+            Measurement::default()
         };
 
-        size + self.padding.size()
+        measurement.size += self.padding.size();
+        measurement.baseline.map(|b| b + self.padding.y0);
+        measurement
     }
 
     /// Measures a box element sized according to the specified constraints.
@@ -323,7 +323,7 @@ impl Frame {
         parent_height: Option<f64>,
         width_constraint: SizeConstraint,
         height_constraint: SizeConstraint,
-    ) -> Size {
+    ) -> Measurement {
         let _span = trace_span!(
             "Frame::measure_inner",
             ?width_constraint,
@@ -350,20 +350,18 @@ impl Frame {
                     };
                     Some(
                         self.measure_content(ctx, parent_width, parent_height, cstr, height_constraint)
-                            .width,
+                            .size.width,
                     )
                 }
                 _ => None,
             }
         };
 
-        //
-
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
             self.measure_content(ctx, parent_width, parent_height, width_constraint, height_constraint)
-                .width
+                .size.width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
         let max_width = eval_width(self.max_width).unwrap_or(f64::INFINITY);
@@ -386,7 +384,7 @@ impl Frame {
                     };
                     Some(
                         self.measure_content(ctx, parent_width, parent_height, updated_width_constraint, cstr)
-                            .height,
+                            .size.height,
                     )
                 }
                 _ => None,
@@ -395,14 +393,23 @@ impl Frame {
 
         let mut height = eval_height(self.height).unwrap_or_else(|| {
             self.measure_content(ctx, parent_width, parent_height, width_constraint, height_constraint)
-                .height
+                .size.height
         });
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
         let max_height = eval_height(self.max_height).unwrap_or(f64::INFINITY);
 
         height = height.clamp(min_height, max_height);
 
-        Size { width, height }
+        // one final call to measure_content to measure the baseline under the final constraints
+        let final_measure =
+            self.measure_content(
+                ctx,
+                parent_width,
+                parent_height,
+                updated_width_constraint,
+                SizeConstraint::Available(height),
+            );
+        final_measure
     }
 }
 
@@ -411,7 +418,7 @@ impl Element for Frame {
         self.content.clone().into_iter().collect()
     }
 
-    fn measure(&mut self, ctx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, ctx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
         let output = self.measure_inner(
@@ -424,22 +431,14 @@ impl Element for Frame {
         output
     }
 
-    fn layout(&mut self, ctx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, ctx: &TreeCtx, size: Size)  {
         let _span = trace_span!("Frame::layout").entered();
         let content_area = size - self.padding.size();
 
-        let mut output = if let Some(ref content) = self.content {
-            let output = content.layout(ctx, content_area);
+        if let Some(ref content) = self.content {
+            content.layout(ctx, content_area);
             content.set_offset(Vec2::new(self.padding.x0, self.padding.y0));
-            output
-        } else {
-            LayoutOutput::default()
-        };
-
-        output.width = size.width;
-        output.height = size.height;
-        output.baseline = output.baseline.map(|b| b + self.padding.y0);
-        output
+        }
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

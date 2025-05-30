@@ -1,6 +1,6 @@
 //! Immediate drawing widget.
 use crate::element::prelude::*;
-use crate::element::TreeCtx;
+use crate::element::{Measurement, TreeCtx};
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::{Event, PaintCtx};
 use kurbo::{Point, Size};
@@ -15,11 +15,11 @@ use kurbo::{Point, Size};
 /// The host element must propagate the events
 pub trait Visual {
     /// Layouts this element.
-    fn layout(&mut self, input: &LayoutInput) -> Size {
+    fn layout(&mut self, input: &LayoutInput) -> Measurement {
         Size::new(
             input.width.available().unwrap_or_default(),
             input.height.available().unwrap_or_default(),
-        )
+        ).into()
     }
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
@@ -77,22 +77,17 @@ impl<V> Element for Draw<V>
 where
     V: Visual + 'static,
 {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         self.visual.layout(layout_input)
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
         self.visual.layout(&LayoutInput {
             width: size.width.into(),
             height: size.height.into(),
             parent_width: size.width.into(),
             parent_height: size.height.into(),
         });
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: Some(self.baseline),
-        }
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
@@ -117,7 +112,6 @@ where
     }
 
     fn event(&mut self, _ectx: &TreeCtx, _event: &mut Event) {
-        // TODO
         //self.visual.event(&mut self.ctx, event);
     }
 }

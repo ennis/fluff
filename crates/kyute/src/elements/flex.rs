@@ -1,4 +1,4 @@
-use crate::element::{ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, TreeCtx, WeakElementAny};
+use crate::element::{ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, Measurement, TreeCtx, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
 use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
 use crate::{Element, PaintCtx};
@@ -198,7 +198,7 @@ impl Element for Flex {
         self.children.iter().map(|child| child.element.clone()).collect()
     }
 
-    fn measure(&mut self, cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("Flex::measure", ?layout_input).entered();
 
         let output = flex_layout(
@@ -217,21 +217,22 @@ impl Element for Flex {
             &self.children,
         );
 
-        Size {
-            width: output.width,
-            height: output.height,
+        Measurement {
+            size: Size::new(output.width, output.height),
+            baseline: output.baseline,
         }
     }
 
-    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
-        let mut output = flex_layout(
+    fn layout(&mut self, cx: &TreeCtx, size: Size)  {
+        flex_layout(
             LayoutMode::Place,
             cx,
             &FlexLayoutParams {
                 direction: self.direction,
                 width_constraint: SizeConstraint::Available(size.width),
                 height_constraint: SizeConstraint::Available(size.height),
-                // TODO parent width is unknown, so we can't use it for percentage calculations
+                // FIXME Parent width is unknown here, so we can't use it for percentage calculations.
+                //       This is bad because it will produce a different size than in `measure`!
                 parent_width: None,
                 parent_height: None,
                 gap: self.gap,
@@ -240,10 +241,6 @@ impl Element for Flex {
             },
             &self.children[..],
         );
-
-        output.width = size.width;
-        output.height = size.height;
-        output
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

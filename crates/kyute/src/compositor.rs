@@ -398,11 +398,6 @@ impl CompositionBuilder {
     }
 
     /// Adds a native swap chain layer.
-    ///
-    /// TODO: make that not windows-specific (use a generic type)
-    ///       nothing in the implementation of the function is windows-specific, only the
-    ///       swap chain type
-    #[cfg(windows)]
     pub fn add_swap_chain(&mut self, window_pos: Point, swap_chain: NativeSwapChain) {
         self.finish_record_and_push_picture_layer();
 

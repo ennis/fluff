@@ -1,7 +1,7 @@
 //! Container that places its items in a uniform grid.
 
 use kyute::drawing::vec2;
-use kyute::element::{ElementAny, ElementBuilder, HitTestCtx, TreeCtx, WeakElement};
+use kyute::element::{ElementAny, ElementBuilder, HitTestCtx, Measurement, TreeCtx, WeakElement};
 use kyute::layout::{LayoutInput, LayoutOutput};
 use kyute::{Element, IntoElementAny, PaintCtx, Point, Size};
 
@@ -51,21 +51,22 @@ impl UniformGrid {
 }
 
 impl Element for UniformGrid {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+        // FIXME: compute the baseline
         if let Some(available) = layout_input.width.available() {
             let (rows, columns) = self.row_column_count(available);
             let width = columns as f64 * self.cell_size.width + (columns - 1) as f64 * self.h_gap;
             let height = rows as f64 * self.cell_size.height + (rows - 1) as f64 * self.v_gap;
-            Size::new(width, height)
+            Size::new(width, height).into()
         } else {
             let n = self.elements.len() as f64;
             let width = n * self.cell_size.width + (n - 1.) * self.h_gap;
             let height = self.cell_size.height;
-            Size::new(width, height)
+            Size::new(width, height).into()
         }
     }
 
-    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, cx: &TreeCtx, size: Size) {
         let (_rows, columns) = self.row_column_count(size.width);
 
         for i in 0..self.elements.len() {
@@ -76,12 +77,6 @@ impl Element for UniformGrid {
             let child_size = Size::new(self.cell_size.width, self.cell_size.height);
             self.elements[i].layout(cx, child_size);
             self.elements[i].set_offset(vec2(x, y));
-        }
-
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
         }
     }
 

@@ -2,7 +2,7 @@ use crate::colors;
 use crate::widgets::TEXT_STYLE;
 use kyute::drawing::{BASELINE_CENTER, Image, PlacementExt, vec2};
 use kyute::element::prelude::*;
-use kyute::element::{TreeCtx, WeakElement};
+use kyute::element::{Measurement, TreeCtx, WeakElement};
 use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
@@ -43,23 +43,21 @@ impl EventSource for Button {
 }*/
 
 impl Element for Button {
-    fn measure(&mut self, cx: &TreeCtx, input: &LayoutInput) -> Size {
+    fn measure(&mut self, cx: &TreeCtx, input: &LayoutInput) -> Measurement {
         // layout label with available space, but don't go below the minimum width
         self.label
             .layout(input.width.available().unwrap_or_default().max(BUTTON_MIN_WIDTH));
         let label_width = self.label.size().width + 20.;
         let w = label_width.max(BUTTON_MIN_WIDTH);
         let h = BUTTON_HEIGHT;
-        Size::new(w, h)
+        Measurement {
+            size: Size::new(w, h),
+            baseline: Some(BUTTON_BASELINE),
+        }
     }
 
-    fn layout(&mut self, cx: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, cx: &TreeCtx, size: Size) {
         self.label.layout(size.width - 20.);
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
-        }
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

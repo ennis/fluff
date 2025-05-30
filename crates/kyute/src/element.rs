@@ -1,7 +1,7 @@
 use crate::application::run_queued;
 use crate::event::{EmitterHandle, EmitterKey, EventEmitter, EventSource};
 use crate::input_event::Event;
-use crate::layout::{LayoutInput, LayoutOutput};
+use crate::layout::{Axis, LayoutInput, LayoutOutput};
 use crate::platform::PlatformWindowHandle;
 use crate::window::WindowHandle;
 use crate::PaintCtx;
@@ -231,6 +231,83 @@ impl<'a> Deref for TreeCtx<'a> {
     }
 }
 
+/// Result of `Element::measure`.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub struct Measurement {
+    pub size: Size,
+    pub baseline: Option<f64>,
+}
+
+impl fmt::Debug for Measurement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:.2}×{:.2}", self.size.width, self.size.height)?;
+        if let Some(baseline) = self.baseline {
+            write!(f, " baseline={:.2}", baseline)?;
+        }
+        Ok(())
+    }
+}
+
+impl Measurement {
+    pub const NULL: Measurement = Measurement {
+        size: Size::ZERO,
+        baseline: None,
+    };
+
+    pub fn from_main_cross_sizes(axis: Axis, main: f64, cross: f64, baseline: Option<f64>) -> Self {
+        match axis {
+            Axis::Horizontal => Measurement {
+                size: Size {
+                    width: main,
+                    height: cross,
+                },
+                baseline,
+            },
+            Axis::Vertical => Measurement {
+                size: Size {
+                    width: cross,
+                    height: main,
+                },
+                baseline,
+            },
+        }
+    }
+
+    pub fn size(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.size.width,
+            Axis::Vertical => self.size.height,
+        }
+    }
+
+    pub fn main_cross(&self, axis: Axis) -> (f64, f64) {
+        match axis {
+            Axis::Horizontal => (self.size.width, self.size.height),
+            Axis::Vertical => (self.size.height, self.size.width),
+        }
+    }
+
+    pub fn set_axis(&mut self, axis: Axis, size: f64) {
+        match axis {
+            Axis::Horizontal => self.size.width = size,
+            Axis::Vertical => self.size.height = size,
+        }
+    }
+
+    pub fn axis(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.size.width,
+            Axis::Vertical => self.size.height,
+        }
+    }
+}
+
+impl From<Size> for Measurement {
+    fn from(size: Size) -> Self {
+        Measurement { size, baseline: None }
+    }
+}
+
 /// Methods of elements in the element tree.
 pub trait Element: Any {
     /// Returns the list of children of this element.
@@ -260,14 +337,12 @@ pub trait Element: Any {
     /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
     /// in ElementCtx.
     ///
-    /// FIXME: this should return a baseline
-    ///
     /// FIXME: this is not practical, there's no way for the element to fill its parent space.
     ///        for flex layouts, returning input.width.available() is broken because it will
     ///        use up all the space regardless of other elements in the flex, leading to overflow.
     ///        Basically, elements by themselves can NEVER be flexible, they can only be flexible
     ///        by wrapping them in FlexItem.
-    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size;
+    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement;
 
     /// Specifies the size of the element, and lays out its children.
     ///
@@ -278,16 +353,8 @@ pub trait Element: Any {
     ///
     /// NOTE: implementations shouldn't add/remove children, or otherwise change the dirty flags
     /// in ElementCtx.
-    ///
-    /// FIXME: LayoutOutput is useless here, it should always return the size passed in argument
     #[allow(unused_variables)]
-    fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
-        }
-    }
+    fn layout(&mut self, tree: &TreeCtx, size: Size) {}
 
     /// Called to perform hit-testing on this element and its children, recursively.
     ///
@@ -443,11 +510,11 @@ impl Default for WeakElementAny {
         // this is never instantiated, so it's fine
         struct Dummy;
         impl Element for Dummy {
-            fn measure(&mut self, _tree: &TreeCtx, _layout_input: &LayoutInput) -> Size {
+            fn measure(&mut self, _tree: &TreeCtx, _layout_input: &LayoutInput) -> Measurement {
                 unimplemented!()
             }
 
-            fn layout(&mut self, _tree: &TreeCtx, _size: Size) -> LayoutOutput {
+            fn layout(&mut self, _tree: &TreeCtx, _size: Size) {
                 unimplemented!()
             }
 
@@ -544,6 +611,11 @@ impl<T: ?Sized> ElementRc<T> {
     pub fn parent(&self) -> Option<ElementAny> {
         self.0.ctx.parent.upgrade()
     }
+
+    /// Returns the change flags of this element.
+    pub fn change_flags(&self) -> ChangeFlags {
+        self.0.ctx.change_flags.get()
+    }
 }
 
 pub type ElementAny = ElementRc<dyn Element>;
@@ -626,7 +698,7 @@ impl ElementAny {
         self.0.ctx.offset.get()
     }
 
-    pub fn measure(&self, parent: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    pub fn measure(&self, parent: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         let ref mut inner = *self.borrow_mut();
         inner.measure(
             &TreeCtx {
@@ -637,7 +709,7 @@ impl ElementAny {
         )
     }
 
-    pub fn measure_root(&self, layout_input: &LayoutInput) -> Size {
+    pub fn measure_root(&self, layout_input: &LayoutInput) -> Measurement {
         let ref mut inner = *self.borrow_mut();
         inner.measure(
             &TreeCtx {
@@ -649,7 +721,7 @@ impl ElementAny {
     }
 
     /// Invokes layout on this element and its children, recursively.
-    fn layout_inner(&self, parent: Option<&TreeCtx>, size: Size) -> LayoutOutput {
+    fn layout_inner(&self, parent: Option<&TreeCtx>, size: Size) {
         let ctx = &self.0.ctx;
         let child_tree = TreeCtx { parent, this: ctx };
         let ref mut inner = *self.borrow_mut();
@@ -658,23 +730,22 @@ impl ElementAny {
             height: size.height,
             baseline: None,
         });
-        let output = inner.layout(&child_tree, size);
+        inner.layout(&child_tree, size);
         ctx.geometry.set(LayoutOutput {
             width: size.width,
             height: size.height,
-            baseline: output.baseline,
+            baseline: None,
         });
         let mut f = ctx.change_flags.get();
         f.remove(ChangeFlags::LAYOUT);
         ctx.change_flags.set(f);
-        output
     }
 
-    pub fn layout(&self, tree: &TreeCtx, size: Size) -> LayoutOutput {
+    pub fn layout(&self, tree: &TreeCtx, size: Size) {
         self.layout_inner(Some(tree), size)
     }
 
-    pub fn layout_root(&self, size: Size) -> LayoutOutput {
+    pub fn layout_root(&self, size: Size) {
         self.layout_inner(None, size)
     }
 
@@ -819,6 +890,7 @@ pub struct ElementCtx {
     /// Transform from local to window coordinates.
     pub(crate) window_position: Cell<Point>,
     /// Layout: geometry (size and baseline) of this element.
+    /// FIXME: this doesn't store the baseline anymore
     geometry: Cell<LayoutOutput>,
     /// Name of the element.
     name: String,
@@ -985,7 +1057,7 @@ impl<T: Element> ElementBuilder<T> {
     }
 
     /// Measures the element with the specified layout input.
-    pub fn measure(&self, layout_input: &LayoutInput) -> Size {
+    pub fn measure(&self, layout_input: &LayoutInput) -> Measurement {
         let ref mut inner = *self.0.element.borrow_mut();
         let child_tree = TreeCtx {
             parent: None,

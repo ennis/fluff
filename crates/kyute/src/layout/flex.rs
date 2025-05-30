@@ -1,4 +1,4 @@
-use crate::element::{ElementAny, TreeCtx};
+use crate::element::{ElementAny, Measurement, TreeCtx};
 use crate::layout::{
     Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue,
 };
@@ -264,7 +264,8 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     let mut max_child_cross_size: f64 = 0.0; // maximum cross size among children
     let mut max_baseline: f64 = 0.0; // max baseline position among children with baseline positioning
     let mut max_below_baseline: f64 = 0.0; // among children with baseline positioning, the maximum distance from the baseline to the bottom edge
-    let mut child_layouts = vec![LayoutOutput::NULL; child_count];
+    //let mut child_layouts = vec![Measurement::NULL; child_count];
+    let mut baselines = vec![0.0; child_count]; // baseline positions of children, if applicable
 
     for (i, child) in children.iter().enumerate() {
         // re-measure item cross size if necessary
@@ -299,14 +300,21 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
 
         if child.cross_axis_alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
-            let layout = child.element.layout(
+            let s = Size::from_main_cross(main_axis, measures[i].main, measures[i].cross);
+            let layout = child.element.measure(
                 ctx,
-                Size::from_main_cross(main_axis, measures[i].main, measures[i].cross),
+                // TODO verify this, I'm not sure about the size constraints here
+                &LayoutInput {
+                    width: SizeConstraint::Available(s.width),
+                    height: SizeConstraint::Available(s.height),
+                    parent_width: None,
+                    parent_height: None,
+                },
             );
             let baseline = layout.baseline.unwrap_or(0.0);
             max_baseline = max_baseline.max(baseline);
             max_below_baseline = max_below_baseline.max(measures[i].cross - baseline);
-            child_layouts[i] = layout;
+            baselines[i] = baseline;
         }
     }
 
@@ -326,9 +334,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     // ====== Layout children
     // ======
     for (i, child) in children.iter().enumerate() {
-        // TODO don't layout again if we already have the layout (the child may be already laid out
-        // due to baseline alignment)
-        child_layouts[i] = child.element.layout(
+        child.element.layout(
             ctx,
             Size::from_main_cross(main_axis, measures[i].main, measures[i].cross),
         );
@@ -346,17 +352,13 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     // ======
     let mut offset_main = margins[0].size;
     for (i, child) in children.iter().enumerate() {
-        let cross_child_size = child_layouts[i].size(cross_axis);
+        let cross_child_size = measures[i].cross;
 
-        /*let alignment = match cross_axis {
-            Axis::Horizontal => child.horizontal_alignment, // child.get(layout::HorizontalAlignment).unwrap_or_default(),
-            Axis::Vertical => child.vertical_alignment, // child.get(layout::VerticalAlignment).unwrap_or_default(),
-        };*/
         let alignment = child.cross_axis_alignment;
 
         let offset_cross = match alignment {
             Alignment::Relative(p) => p * (cross_size - cross_child_size),
-            Alignment::FirstBaseline => max_baseline - child_layouts[i].baseline.unwrap_or(0.0),
+            Alignment::FirstBaseline => max_baseline - baselines[i],
             Alignment::LastBaseline => {
                 // TODO last baseline
                 0.0
@@ -382,7 +384,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
         offset_main += measures[i].main + margins[i + 1].size;
     }
 
-    // TODO baseline may be wrong here?
+    // TODO verify that baseline is correct
     LayoutOutput::from_main_cross_sizes(main_axis, main_size, cross_size, Some(max_baseline))
 }
 

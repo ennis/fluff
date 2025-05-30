@@ -2,13 +2,14 @@
 use graal::ClearColorValue;
 use kurbo::{Line, Point, Size};
 use kyute::compositor::ColorType;
-use kyute::element::{HitTestCtx, TreeCtx};
+use kyute::element::{HitTestCtx, Measurement, TreeCtx};
 use kyute::elements::Frame;
-use kyute::layout::{LayoutInput, LayoutOutput};
+use kyute::layout::{LayoutInput};
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
-use kyute::{application, Element, PaintCtx, Window, WindowOptions};
+use kyute::{application, Element, PaintCtx, Window};
 use kyute_common::Color;
 use tokio::select;
+use kyute::platform::WindowOptions;
 
 struct CustomSwapChainElement {
     device: graal::RcDevice,
@@ -26,17 +27,24 @@ impl CustomSwapChainElement {
 }
 
 impl Element for CustomSwapChainElement {
-    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         // use the available space
         Size::new(
             layout_input.width.available().unwrap_or_default(),
             layout_input.height.available().unwrap_or_default(),
-        )
+        ).into()
     }
 
-    fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
+    fn layout(&mut self, tree: &TreeCtx, size: Size) {
+        
+        
         // convert to real pixels
         // FIXME: get the scale factor. It's not available currently in the layout context.
+        
+        // TODO: We can't convert to real pixels during layout since we don't know the scale factor.
+        //       At the moment, the scale factor (DPI) is only known during painting. 
+        //       Either perform layout while knowing the target DPI, or move the creation of the
+        //       swap chain to the paint method.
         let width = size.width as u32;
         let height = size.height as u32;
 
@@ -50,12 +58,6 @@ impl Element for CustomSwapChainElement {
                 graal::ImageUsage::TRANSFER_DST | graal::ImageUsage::TRANSFER_SRC,
             );
             self.swap_chain = Some(swap_chain);
-        }
-
-        LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
         }
     }
 
@@ -141,7 +143,7 @@ fn main() {
         let main_window = Window::new(
             &WindowOptions {
                 title: "System Compositor Example",
-                size: Size::new(800.0, 600.0),
+                size: Some(Size::new(800.0, 600.0)),
                 background: Color::from_hex("413e13"),
                 ..Default::default()
             },

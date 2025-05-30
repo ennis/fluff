@@ -656,12 +656,13 @@ impl WindowInner {
         let scale_factor = self.window.scale_factor();
         let client_area = self.window.client_area_size();
 
+        // If the window is minimized or zero-sized, don't paint anything.
         if client_area.width == 0.0 || client_area.height == 0.0 {
             return;
         }
 
-        // TODO: a more principled way to determine if we need to redraw
-        let root_change_flags = self.root.0.ctx.change_flags.get();
+        // If the root element doesn't need to be painted or laid out, skip the painting.
+        let root_change_flags = self.root.change_flags();
         if !root_change_flags.contains(ChangeFlags::PAINT)
             && !root_change_flags.contains(ChangeFlags::LAYOUT)
             && !self.needs_layout.get()
@@ -669,15 +670,16 @@ impl WindowInner {
             return;
         }
 
+        // Layout the root element if necessary
+        // (i.e. if the root element layout is dirty or if the window size has changed).
         if self.needs_layout.replace(false) || root_change_flags.contains(ChangeFlags::LAYOUT) {
-            // perform layout if necessary
             let size = self.root.measure_root(&LayoutInput {
                 parent_width: Some(client_area.width),
                 parent_height: Some(client_area.height),
                 width: SizeConstraint::Available(client_area.width),
                 height: SizeConstraint::Available(client_area.height),
             });
-            let _geom = self.root.layout_root(size);
+            let _geom = self.root.layout_root(size.size);
         }
 
         {
@@ -866,7 +868,7 @@ impl Window {
                 //        but should (return the minimum size)
                 width: SizeConstraint::Unspecified,
                 height: SizeConstraint::Unspecified,
-            });
+            }).size;
 
             eprintln!("window actual size: {:?}", size);
             if !size.width.is_finite() {

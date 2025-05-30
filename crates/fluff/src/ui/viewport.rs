@@ -2,7 +2,7 @@
 use crate::data::viewport::ViewportEvent;
 use crate::gpu;
 use kyute::compositor::ColorType;
-use kyute::element::{ElementBuilder, HitTestCtx, TreeCtx};
+use kyute::element::{ElementBuilder, HitTestCtx, Measurement, TreeCtx};
 use kyute::layout::{LayoutInput, LayoutOutput};
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
 use kyute::{Element, Event, PaintCtx, Point, Size};
@@ -47,16 +47,15 @@ impl Viewport {
 }
 
 impl Element for Viewport {
-    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Size {
+    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         // take all the available space
         Size::new(
             layout_input.width.available().unwrap_or(DEFAULT_SIZE.width),
             layout_input.height.available().unwrap_or(DEFAULT_SIZE.height),
-        )
+        ).into()
     }
 
-    fn layout(&mut self, tree: &TreeCtx, size: Size) -> LayoutOutput {
-
+    fn layout(&mut self, tree: &TreeCtx, size: Size)  {
         // Create the swap chain
         // TODO scale factor
         let width = size.width as u32;
@@ -69,9 +68,6 @@ impl Element for Viewport {
             graal::ImageUsage::TRANSFER_DST | graal::ImageUsage::TRANSFER_SRC,
         );
         self.swap_chain = Some(swap_chain);
-
-        //self.layer.resize(size);
-        LayoutOutput::from(size)
     }
 
     fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {

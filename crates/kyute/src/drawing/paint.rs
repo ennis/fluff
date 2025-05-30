@@ -78,19 +78,6 @@ macro_rules! shader_paint {
     };
 }
 
-/*
-fn compare_runtime_effects(left: &sk::RuntimeEffect, right: &sk::RuntimeEffect) -> bool {
-    // FIXME: skia_safe doesn't let us access the native pointer for some reason,
-    // so force our way though
-    //left.native() as *const _ == right.native() as *const _
-    unsafe {
-        let ptr_a: *const c_void = mem::transmute_copy(left);
-        let ptr_b: *const c_void = mem::transmute_copy(right);
-        ptr_a == ptr_b
-    }
-}
-*/
-
 /// Paint.
 #[derive(Clone, Debug)]
 //#[serde(tag = "type")]
@@ -101,12 +88,10 @@ pub enum Paint {
     LinearGradient(LinearGradient),
     //#[serde(rename = "image")]
     Image {
-        // FIXME: can't deserialize here
         image: Image,
         repeat_x: RepeatMode,
         repeat_y: RepeatMode,
     },
-    // TODO: shader effects
     Shader {
         // GOD FCKING DAMMIT MAKE THIS THREAD-SAFE ALREADY
         effect: sk::RuntimeEffect,

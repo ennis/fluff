@@ -8,7 +8,7 @@ use tracing::{trace_span, warn};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::HitTestCtx;
+use crate::element::{HitTestCtx, Measurement};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
@@ -508,7 +508,7 @@ impl TextEditBase {
     /// Sets the current text.
     pub fn set_text(&mut self, text: impl Into<String>) {
         // TODO we could compare the previous and new text
-        // to relayout only affected lines.
+        //      to relayout only affected lines.
         self.text = text.into();
         // clamp selection to the new text length
         self.selection = self.selection.clamp(0..self.text.len());
@@ -618,23 +618,20 @@ impl TextEditEventResult {
 }
 
 impl TextEditBase {
-    pub fn measure(&mut self, layout_input: &LayoutInput) -> Size {
+    pub fn measure(&mut self, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("TextEdit::measure").entered();
 
         let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
         self.paragraph.layout(space);
-        Size::new(self.paragraph.longest_line() as f64, self.paragraph.height() as f64)
+        Measurement {
+            size: Size::new(self.paragraph.longest_line() as f64, self.paragraph.height() as f64),
+            baseline: Some(self.paragraph.alphabetic_baseline() as f64),
+        }
     }
 
-    pub fn layout(&mut self, size: Size) -> LayoutOutput {
+    pub fn layout(&mut self, size: Size)  {
         self.paragraph.layout(size.width as f32);
-        let output = LayoutOutput {
-            width: self.paragraph.longest_line() as f64,
-            height: self.paragraph.height() as f64,
-            baseline: Some(self.paragraph.alphabetic_baseline() as f64),
-        };
         self.size = size;
-        output
     }
 
     pub fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
