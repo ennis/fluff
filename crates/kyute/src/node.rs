@@ -114,15 +114,15 @@ impl<'a> NodeCtx<'a> {
         self.propagate_dirty_flags();
     }
 
-    /// Creates a `TreeCtx` for a child element of the current element.
+    /// Creates a `NodeCtx` for a child element of the current element.
     pub(crate) fn with_child<'b>(&'b self, child: &'b RcDynNode) -> NodeCtx<'b> {
         assert!(
-            child.0.ctx.parent == self.this.weak_this,
+            child.0.data.parent == self.this.weak_this,
             "element is not a child of the current element"
         );
         NodeCtx {
             parent: Some(self),
-            this: &child.0.ctx,
+            this: &child.0.data,
             //scale_factor: self.scale_factor,
         }
     }
@@ -140,7 +140,7 @@ impl<'a> Deref for NodeCtx<'a> {
 ///
 /// This is always allocated on the heap and accessed through reference-counted pointers ([`RcNode`]).
 struct Node<T: ?Sized> {
-    ctx: NodeData,
+    data: NodeData,
     // Yes it's a big fat Rc<RefCell>, deal with it.
     element: RefCell<T>,
 }
@@ -148,11 +148,11 @@ struct Node<T: ?Sized> {
 impl<T: Element> Node<T> {
     fn new(element: T) -> UniqueRc<Node<T>> {
         let mut rc = UniqueRc::new(Node {
-            ctx: NodeData::new(),
+            data: NodeData::new(),
             element: RefCell::new(element),
         });
         let weak = UniqueRc::downgrade(&rc);
-        rc.ctx.weak_this = WeakNode(weak.clone());
+        rc.data.weak_this = WeakNode(weak.clone());
         //rc.ctx.weak_this_any = weak.clone();
         rc
     }
@@ -163,12 +163,12 @@ impl<T: Element> Node<T> {
         // because the resulting weak pointer can't be upgraded anyway.
         let weak: Weak<Node<T>> = unsafe { mem::transmute(UniqueRc::downgrade(&urc)) };
         urc.write(Node {
-            ctx: NodeData::new(),
+            data: NodeData::new(),
             element: RefCell::new(f(WeakNode(weak.clone()))),
         });
         // SAFETY: the value is now initialized
         let mut urc: UniqueRc<Node<T>> = unsafe { mem::transmute(urc) };
-        urc.ctx.weak_this = WeakNode(weak.clone());
+        urc.data.weak_this = WeakNode(weak.clone());
         //urc.ctx.weak_this_any = weak;
         urc
     }
@@ -283,14 +283,14 @@ impl PartialOrd for WeakDynNode {
     }
 }
 
-/// A reference-counted pointer to a _node_ (an instance of an [`Element`] and its associated [node data](NodeData))
-/// in the UI tree.
+/// Pointers to UI nodes.
 ///
-/// This represents a strong reference to a node in the UI tree.
+/// A reference-counted pointer to a UI _node_, which holds an instance of an [`Element`] and its
+/// associated [node data](NodeData).
 ///
 // NOTE: the wrapper is here for a reason: it implements by-reference Eq/Ord/Hash.
 // We can't do that with a typedef.
-pub struct RcNode<T: ?Sized>(pub(crate) Rc<Node<T>>);
+pub struct RcNode<T: ?Sized>(Rc<Node<T>>);
 
 impl<T: ?Sized> Clone for RcNode<T> {
     fn clone(&self) -> Self {
@@ -329,8 +329,8 @@ impl<T: ?Sized + Element> RcNode<T> {
 // Methods that only access the node data
 impl<T: ?Sized> RcNode<T> {
     /// Returns the data associated to this node.
-    pub fn ctx(&self) -> &NodeData {
-        &self.0.ctx
+    pub fn data(&self) -> &NodeData {
+        &self.0.data
     }
 
     /// Returns whether this element has a parent.
@@ -340,24 +340,24 @@ impl<T: ?Sized> RcNode<T> {
 
     /// Returns the parent of this element, if it has one.
     pub fn parent(&self) -> Option<RcDynNode> {
-        self.0.ctx.parent.upgrade()
+        self.0.data.parent.upgrade()
     }
 
     /// Returns the change flags of this element.
     pub fn change_flags(&self) -> ChangeFlags {
-        self.0.ctx.change_flags.get()
+        self.0.data.change_flags.get()
     }
 
     /// Returns the bounds of this element in logical window coordinates.
     pub fn bounds(&self) -> Rect {
-        self.0.ctx.bounds()
+        self.0.data.bounds()
     }
 
     /// Sets the focused flag on this element.
     ///
     /// This is only called by `set_keyboard_focus` and should not be called directly.
     pub fn set_focused(&self, focused: bool) {
-        self.0.ctx.focused.set(focused);
+        self.0.data.focused.set(focused);
     }
 }
 
@@ -433,12 +433,12 @@ impl RcDynNode {
         while let Some(parent) = current.parent() {
             current = parent;
         }
-        current.0.ctx.window.clone()
+        current.0.data.window.clone()
     }
 
     /// Returns the transform of this element.
     pub fn offset(&self) -> Vec2 {
-        self.0.ctx.offset.get()
+        self.0.data.offset.get()
     }
 
     pub fn measure(&self, parent: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
@@ -446,7 +446,7 @@ impl RcDynNode {
         inner.measure(
             &NodeCtx {
                 parent: Some(parent),
-                this: &self.0.ctx,
+                this: &self.0.data,
             },
             layout_input,
         )
@@ -457,7 +457,7 @@ impl RcDynNode {
         inner.measure(
             &NodeCtx {
                 parent: None,
-                this: &self.0.ctx,
+                this: &self.0.data,
             },
             layout_input,
         )
@@ -465,7 +465,7 @@ impl RcDynNode {
 
     /// Invokes layout on this element and its children, recursively.
     fn layout_inner(&self, parent: Option<&NodeCtx>, size: Size) {
-        let ctx = &self.0.ctx;
+        let ctx = &self.0.data;
         let child_tree = NodeCtx { parent, this: ctx };
         let ref mut inner = *self.borrow_mut();
         ctx.geometry.set(LayoutOutput {
@@ -500,7 +500,7 @@ impl RcDynNode {
     /// Hit-tests this element and its children.
     pub fn hit_test(&self, ctx: &mut HitTestCtx, point: Point) -> bool {
         let ref mut inner = *self.borrow_mut();
-        let this_ctx = &self.0.ctx;
+        let this_ctx = &self.0.data;
         let old_bounds = ctx.bounds;
         ctx.bounds = this_ctx.bounds();
         //let new_origin = ctx.bounds.origin() + this_ctx.offset.get();
@@ -535,18 +535,18 @@ impl RcDynNode {
     }
 
     pub fn add_offset(&self, offset: Vec2) {
-        self.0.ctx.add_offset(offset);
+        self.0.data.add_offset(offset);
     }
 
     pub fn set_offset(&self, offset: Vec2) {
-        self.0.ctx.set_offset(offset);
+        self.0.data.set_offset(offset);
     }
 }
 
 /// Types that can be converted into a UI node.
 ///
 /// This is implemented for any type that implements the `Element` trait,
-/// and also ``
+/// and also `NodeBuilder`.
 pub trait IntoNode {
     /// The element type of the created node.
     type Element: Element;
@@ -557,6 +557,7 @@ pub trait IntoNode {
     /// Builds an `ElementAny` with the specified parent window.
     fn into_root_node(self, parent_window: WindowHandle) -> RcNode<Self::Element>;
 
+    /// Builds a type-erased UI node with the specified parent.
     fn into_dyn_node(self, parent: WeakDynNode) -> RcDynNode
     where
         Self: Sized,
@@ -582,13 +583,13 @@ where
 
     fn into_node(self, parent: WeakDynNode) -> RcNode<Self> {
         let mut urc = Node::new(self);
-        urc.ctx.parent = parent;
+        urc.data.parent = parent;
         RcNode(UniqueRc::into_rc(urc))
     }
 
     fn into_root_node(self, parent_window: WindowHandle) -> RcNode<Self::Element> {
         let mut urc = Node::new(self);
-        urc.ctx.window = parent_window;
+        urc.data.window = parent_window;
         RcNode(UniqueRc::into_rc(urc))
     }
 }
@@ -754,7 +755,7 @@ impl<T: Default + Element> Default for NodeBuilder<T> {
 
 impl<T: Element> EventSource for NodeBuilder<T> {
     fn emitter_key(&self) -> EmitterKey {
-        self.0.ctx.emitter_handle.key()
+        self.0.data.emitter_handle.key()
     }
 }
 
@@ -783,13 +784,13 @@ impl<T: Element> NodeBuilder<T> {
     }
 
     pub fn set_focus(self) -> Self {
-        self.0.ctx.set_focus();
+        self.0.data.set_focus();
         self
     }
 
     /// Assigns a name to the element, for debugging purposes.
     pub fn debug_name(mut self, name: impl Into<String>) -> Self {
-        self.0.ctx.name = name.into();
+        self.0.data.name = name.into();
         self
     }
 
@@ -798,7 +799,7 @@ impl<T: Element> NodeBuilder<T> {
         let ref mut inner = *self.0.element.borrow_mut();
         let child_tree = NodeCtx {
             parent: None,
-            this: &self.0.ctx,
+            this: &self.0.data,
         };
         inner.measure(&child_tree, layout_input)
     }
@@ -926,12 +927,12 @@ impl<T: Element> IntoNode for NodeBuilder<T> {
     type Element = T;
 
     fn into_node(mut self, parent: WeakDynNode) -> RcNode<T> {
-        self.0.ctx.parent = parent;
+        self.0.data.parent = parent;
         RcNode(UniqueRc::into_rc(self.0))
     }
 
     fn into_root_node(mut self, parent_window: WindowHandle) -> RcNode<Self::Element> {
-        self.0.ctx.window = parent_window;
+        self.0.data.window = parent_window;
         RcNode(UniqueRc::into_rc(self.0))
     }
 
@@ -987,7 +988,7 @@ pub(crate) fn with_tree_ctx<T: Element + ?Sized, R>(
     for e in ancestors.iter() {
         tree = Some(&*arena.alloc(NodeCtx {
             parent: tree,
-            this: &e.0.ctx,
+            this: &e.0.data,
         }));
     }
 
@@ -999,7 +1000,7 @@ pub(crate) fn with_tree_ctx<T: Element + ?Sized, R>(
     // (see https://stackoverflow.com/questions/57398118/why-cant-sized-trait-be-cast-to-dyn-trait)
     let tree = NodeCtx {
         parent: tree,
-        this: &target.0.ctx,
+        this: &target.0.data,
     };
 
     f(target, &tree)
