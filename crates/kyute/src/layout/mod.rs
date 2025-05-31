@@ -276,10 +276,6 @@ pub struct LayoutInput {
     pub width: SizeConstraint,
     /// The sizing constraint in the vertical axis.
     pub height: SizeConstraint,
-    /// The size of the parent container in the horizontal axis, if known.
-    pub parent_width: Option<f64>,
-    /// The size of the parent container in the vertical axis, if known.
-    pub parent_height: Option<f64>,
 }
 
 impl Default for LayoutInput {
@@ -287,8 +283,6 @@ impl Default for LayoutInput {
         LayoutInput {
             width: SizeConstraint::Unspecified,
             height: SizeConstraint::Unspecified,
-            parent_width: None,
-            parent_height: None,
         }
     }
 }
@@ -304,21 +298,15 @@ impl LayoutInput {
         main_axis: Axis,
         main: SizeConstraint,
         cross: SizeConstraint,
-        parent_main: Option<f64>,
-        parent_cross: Option<f64>,
     ) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
                 width: main,
                 height: cross,
-                parent_width: parent_main,
-                parent_height: parent_cross,
             },
             Axis::Vertical => LayoutInput {
                 width: cross,
                 height: main,
-                parent_width: parent_cross,
-                parent_height: parent_main,
             },
         }
     }

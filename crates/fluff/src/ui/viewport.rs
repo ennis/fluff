@@ -3,7 +3,7 @@ use crate::data::viewport::ViewportEvent;
 use crate::gpu;
 use kyute::compositor::ColorType;
 use kyute::element::{ElementBuilder, HitTestCtx, Measurement, TreeCtx};
-use kyute::layout::{LayoutInput, LayoutOutput};
+use kyute::layout::LayoutInput;
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
 use kyute::{Element, Event, PaintCtx, Point, Size};
 use std::rc::Rc;

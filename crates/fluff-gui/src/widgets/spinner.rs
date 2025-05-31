@@ -269,8 +269,6 @@ impl Element for SpinnerBase {
         let baseline = self.text_edit.measure(&LayoutInput {
             width: SizeConstraint::Available(size.width),
             height: SizeConstraint::Available(size.height),
-            parent_width: None,
-            parent_height: None,
         }).baseline.unwrap_or(0.);
         self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
     }

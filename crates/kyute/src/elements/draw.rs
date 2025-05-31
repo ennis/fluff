@@ -85,8 +85,6 @@ where
         self.visual.layout(&LayoutInput {
             width: size.width.into(),
             height: size.height.into(),
-            parent_width: size.width.into(),
-            parent_height: size.height.into(),
         });
     }
 

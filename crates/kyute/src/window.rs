@@ -674,8 +674,6 @@ impl WindowInner {
         // (i.e. if the root element layout is dirty or if the window size has changed).
         if self.needs_layout.replace(false) || root_change_flags.contains(ChangeFlags::LAYOUT) {
             let size = self.root.measure_root(&LayoutInput {
-                parent_width: Some(client_area.width),
-                parent_height: Some(client_area.height),
                 width: SizeConstraint::Available(client_area.width),
                 height: SizeConstraint::Available(client_area.height),
             });
@@ -862,8 +860,6 @@ impl Window {
         } else {
             // measure the root element
             let mut size = root.measure(&LayoutInput {
-                parent_width: None,
-                parent_height: None,
                 // FIXME: SizeConstraint::Available(0) doesn't work (returns zero-sized),
                 //        but should (return the minimum size)
                 width: SizeConstraint::Unspecified,

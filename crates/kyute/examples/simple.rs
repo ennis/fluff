@@ -5,11 +5,12 @@ use kyute::elements::button::button;
 use kyute::elements::text_edit::TextEditBase;
 use kyute::elements::{Flex, Frame};
 use kyute::text::TextStyle;
-use kyute::{application, text, Color, Window, WindowOptions};
+use kyute::{application, text, Color, Window};
 use tokio::select;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 use tracing_tree::HierarchicalLayer;
+use kyute::platform::WindowOptions;
 
 pub const TEST_IMAGE: StaticImage = StaticImage::new(include_bytes!("../../../data/ui/align_center.png"));
 

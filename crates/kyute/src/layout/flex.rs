@@ -20,8 +20,6 @@ pub struct FlexLayoutParams {
     pub direction: Axis,
     pub width_constraint: SizeConstraint,
     pub height_constraint: SizeConstraint,
-    pub parent_width: Option<f64>,
-    pub parent_height: Option<f64>,
     /// Default gap between children.
     pub gap: SizeValue,
     /// Initial gap before the first child (padding).
@@ -55,9 +53,9 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     let cross_axis = main_axis.cross();
     let child_count = children.len();
 
-    let (main_size_constraint, cross_size_constraint, parent_main, parent_cross) = match p.direction {
-        Axis::Horizontal => (p.width_constraint, p.height_constraint, p.parent_width, p.parent_height),
-        Axis::Vertical => (p.height_constraint, p.width_constraint, p.parent_height, p.parent_width),
+    let (main_size_constraint, cross_size_constraint) = match p.direction {
+        Axis::Horizontal => (p.width_constraint, p.height_constraint),
+        Axis::Vertical => (p.height_constraint, p.width_constraint),
     };
 
     // ======
@@ -106,8 +104,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                     main_axis,
                     main_size_constraint,
                     cross_size_constraint,
-                    parent_main,
-                    parent_cross,
                 ),
             )
             .main_cross(main_axis);
@@ -120,8 +116,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                     main_axis,
                     SizeConstraint::MAX,
                     cross_size_constraint,
-                    parent_main,
-                    parent_cross,
                 ),
             )
             .axis(main_axis);
@@ -178,8 +172,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                         main_axis,
                         SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
                         cross_size_constraint,
-                        parent_main,
-                        parent_cross,
                     ),
                 )
                 .main_cross(main_axis);
@@ -282,8 +274,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                         main_axis,
                         measures[i].main.into(),
                         cross_size_constraint,
-                        parent_main,
-                        parent_cross,
                     ),
                 )
                 .axis(cross_axis);
@@ -307,8 +297,6 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                 &LayoutInput {
                     width: SizeConstraint::Available(s.width),
                     height: SizeConstraint::Available(s.height),
-                    parent_width: None,
-                    parent_height: None,
                 },
             );
             let baseline = layout.baseline.unwrap_or(0.0);

@@ -208,8 +208,6 @@ impl Element for Flex {
                 direction: self.direction,
                 width_constraint: layout_input.width,
                 height_constraint: layout_input.height,
-                parent_width: layout_input.parent_width,
-                parent_height: layout_input.parent_height,
                 gap: self.gap,
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,
@@ -231,10 +229,6 @@ impl Element for Flex {
                 direction: self.direction,
                 width_constraint: SizeConstraint::Available(size.width),
                 height_constraint: SizeConstraint::Available(size.height),
-                // FIXME Parent width is unknown here, so we can't use it for percentage calculations.
-                //       This is bad because it will produce a different size than in `measure`!
-                parent_width: None,
-                parent_height: None,
                 gap: self.gap,
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,
