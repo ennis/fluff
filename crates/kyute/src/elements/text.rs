@@ -43,7 +43,7 @@ impl Element for Text {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
-        let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
+        let space = layout_input.available.width as f32;
         p.layout(space);
 
         let mut size = Size::new(p.longest_line() as f64, p.height() as f64);
@@ -55,7 +55,7 @@ impl Element for Text {
         // (which can lead to a relayout of the text with additional line breaks).
         size = size.ceil();
 
-        eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.width);
+        eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.available.width);
         
         let baseline = p.alphabetic_baseline()  as f64;
         Measurement {

@@ -46,7 +46,7 @@ impl Element for Button {
     fn measure(&mut self, cx: &TreeCtx, input: &LayoutInput) -> Measurement {
         // layout label with available space, but don't go below the minimum width
         self.label
-            .layout(input.width.available().unwrap_or_default().max(BUTTON_MIN_WIDTH));
+            .layout(input.available.width.max(BUTTON_MIN_WIDTH));
         let label_width = self.label.size().width + 20.;
         let w = label_width.max(BUTTON_MIN_WIDTH);
         let h = BUTTON_HEIGHT;
@@ -136,17 +136,6 @@ impl Element for Button {
     }
 }
 
-struct ButtonVisual {
-    icon: Option<Image>,
-    label: Option<TextLayout>,
-    offset: Vec2,
-}
-
-impl ButtonVisual {
-    fn measure(&mut self, layout_input: &LayoutInput) -> Size {
-        todo!()
-    }
-}
 
 /*
 /// A group of buttons sharing the same visual.

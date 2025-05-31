@@ -4,7 +4,7 @@ use crate::element::{Element, ElementAny, ElementBuilder, HitTestCtx, IntoElemen
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
 use crate::input_event::Event;
-use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
+use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeValue};
 use crate::event::EventSource;
 use crate::{drawing, Color, PaintCtx};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
@@ -288,18 +288,16 @@ impl Frame {
     fn measure_content(
         &self,
         ctx: &TreeCtx,
-        width_constraint: SizeConstraint,
-        height_constraint: SizeConstraint,
-    ) -> Measurement {
-        let width = width_constraint.deflate(self.padding.x_value());
-        let height = height_constraint.deflate(self.padding.y_value());
+        available: Size,
+    ) -> Measurement
+    {
+        let deflated = available - self.padding.size();
 
         let mut measurement = if let Some(content) = &self.content {
             content.measure(
                 ctx,
                 &LayoutInput {
-                    width,
-                    height,
+                    available: deflated
                 },
             )
         } else {
@@ -315,13 +313,11 @@ impl Frame {
     fn measure_inner(
         &self,
         ctx: &TreeCtx,
-        width_constraint: SizeConstraint,
-        height_constraint: SizeConstraint,
+        available: Size,
     ) -> Measurement {
         let _span = trace_span!(
             "Frame::measure_inner",
-            ?width_constraint,
-            ?height_constraint,
+            ?available,
         )
         .entered();
 
@@ -330,23 +326,24 @@ impl Frame {
             match size {
                 // Fixed size: use the specified size
                 SizeValue::Fixed(s) => Some(s),
-                // Percentage size: use a fraction of the available size
+                // Percentage size: use a fraction of the available size if it is finite
                 SizeValue::Percentage(percent) => {
-                    match width_constraint {
-                        SizeConstraint::Available(available) => Some(available * percent),
-                        _ => None,
+                    if available.width.is_finite() {
+                        Some(available.width * percent)
+                    } else {
+                        None
                     }
                 }
                 // MinContent or MaxContent: measure the content using a MIN or MAX constraint on the
                 // specified axis
                 SizeValue::MinContent | SizeValue::MaxContent => {
                     let cstr = match size {
-                        SizeValue::MinContent => SizeConstraint::MIN,
-                        SizeValue::MaxContent => SizeConstraint::MAX,
+                        SizeValue::MinContent => 0.0,
+                        SizeValue::MaxContent => f64::INFINITY,
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(ctx, cstr, height_constraint)
+                        self.measure_content(ctx, Size::new(cstr, available.height))
                             .size.width,
                     )
                 }
@@ -357,7 +354,7 @@ impl Frame {
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(ctx, width_constraint, height_constraint)
+            self.measure_content(ctx, available)
                 .size.width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
@@ -367,25 +364,26 @@ impl Frame {
         width = width.clamp(min_width, max_width);
 
         // updated width constraint due to clamping min/max width
-        let updated_width_constraint = SizeConstraint::Available(width);
+        let updated_width_constraint = width;
 
         let eval_height = |size: SizeValue| -> Option<f64> {
             match size {
                 SizeValue::Fixed(s) => Some(s),
                 SizeValue::Percentage(percent) => {
-                    match height_constraint {
-                        SizeConstraint::Available(available) => Some(available * percent),
-                        _ => None,
+                    if available.height.is_finite() {
+                        Some(available.height * percent)
+                    } else {
+                        None
                     }
                 }
                 SizeValue::MinContent | SizeValue::MaxContent => {
                     let cstr = match size {
-                        SizeValue::MinContent => SizeConstraint::MIN,
-                        SizeValue::MaxContent => SizeConstraint::MAX,
+                        SizeValue::MinContent => 0.0,
+                        SizeValue::MaxContent => f64::INFINITY,
                         _ => unreachable!(),
                     };
                     Some(
-                        self.measure_content(ctx, updated_width_constraint, cstr)
+                        self.measure_content(ctx, Size::new(width, cstr))
                             .size.height,
                     )
                 }
@@ -394,7 +392,7 @@ impl Frame {
         };
 
         let mut height = eval_height(self.height).unwrap_or_else(|| {
-            self.measure_content(ctx, width_constraint, height_constraint)
+            self.measure_content(ctx, available)
                 .size.height
         });
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
@@ -406,8 +404,10 @@ impl Frame {
         let final_measure =
             self.measure_content(
                 ctx,
-                updated_width_constraint,
-                SizeConstraint::Available(height),
+                Size::new(
+                    updated_width_constraint,
+                    height,
+                ),
             );
         final_measure
     }
@@ -423,8 +423,7 @@ impl Element for Frame {
         // TODO vertical direction layout
         let output = self.measure_inner(
             ctx,
-            layout_input.width,
-            layout_input.height,
+            layout_input.available,
         );
         output
     }

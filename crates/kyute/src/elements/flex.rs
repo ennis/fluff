@@ -1,6 +1,6 @@
 use crate::element::{ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, Measurement, TreeCtx, WeakElementAny};
 use crate::layout::flex::{flex_layout, FlexChild, FlexLayoutParams};
-use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue};
+use crate::layout::{Alignment, Axis, LayoutInput, LayoutMode, LayoutOutput, SizeValue};
 use crate::{Element, PaintCtx};
 use kurbo::{Point, Size};
 use tracing::trace_span;
@@ -206,8 +206,7 @@ impl Element for Flex {
             cx,
             &FlexLayoutParams {
                 direction: self.direction,
-                width_constraint: layout_input.width,
-                height_constraint: layout_input.height,
+                available: layout_input.available,
                 gap: self.gap,
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,
@@ -227,8 +226,9 @@ impl Element for Flex {
             cx,
             &FlexLayoutParams {
                 direction: self.direction,
-                width_constraint: SizeConstraint::Available(size.width),
-                height_constraint: SizeConstraint::Available(size.height),
+                // The size here is a hard constraint, not an upper bound,
+                // but this makes no difference for flex layout.
+                available: size,
                 gap: self.gap,
                 initial_gap: self.initial_gap,
                 final_gap: self.final_gap,

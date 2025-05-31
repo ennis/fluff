@@ -621,8 +621,7 @@ impl TextEditBase {
     pub fn measure(&mut self, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("TextEdit::measure").entered();
 
-        let space = layout_input.width.available().unwrap_or(f64::INFINITY) as f32;
-        self.paragraph.layout(space);
+        self.paragraph.layout(layout_input.available.width as f32);
         Measurement {
             size: Size::new(self.paragraph.longest_line() as f64, self.paragraph.height() as f64),
             baseline: Some(self.paragraph.alphabetic_baseline() as f64),

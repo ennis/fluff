@@ -6,7 +6,7 @@ mod cache;
 pub mod flex;
 //pub mod grid;
 
-pub use cache::{LayoutCache, LayoutCacheEntry};
+//pub use cache::{LayoutCache, LayoutCacheEntry};
 
 #[derive(Copy, Clone, PartialEq)]
 //#[cfg_attr(feature = "serializing", derive(serde::Deserialize))]
@@ -201,148 +201,70 @@ pub enum LayoutMode {
     Place,
 }
 
-/// Represents a sizing constraint passed down from a container to a child element during layout.
-#[derive(Copy, Clone, PartialEq)]
-pub enum SizeConstraint {
-    /// The element has the specified available space to layout itself.
-    /// If 0, the element should return its minimum size, if infinite, it should return its maximum size.
-    ///
-    /// FIXME: make sure that all layout code properly handles `Available(zero)`
-    Available(f64),
-    /// Requests the element ideal size.
-    Unspecified,
-}
-
-impl fmt::Debug for SizeConstraint {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            SizeConstraint::Available(size) => write!(f, "{:.2}", size),
-            SizeConstraint::Unspecified => write!(f, "unspecified"),
-        }
-    }
-}
-
-impl SizeConstraint {
-    /// Returns the available space if the constraint is `Available`, otherwise `None`.
-    pub fn available(self) -> Option<f64> {
-        if let SizeConstraint::Available(space) = self {
-            Some(space)
-        } else {
-            None
-        }
-    }
-
-    /// Resolves a percentage length to a concrete value if the provided sizing constraint is finite.
-    /// Otherwise, returns 0.
-    pub fn resolve_length(&self, length: LengthOrPercentage) -> f64 {
-        let reference = match self {
-            SizeConstraint::Available(size) if size.is_finite() => *size,
-            _ => 0.0,
-        };
-        length.resolve(reference)
-    }
-
-    pub fn resolve_percentage(&self, percentage: f64) -> f64 {
-        match self {
-            SizeConstraint::Available(size) if size.is_finite() => percentage * size,
-            _ => 0.0,
-        }
-    }
-
-    /// Reserves space if the constraint is `Exact`, or `Available`, then returns the constraint for the remaining space.
-    pub fn deflate(&self, space: f64) -> SizeConstraint {
-        match self {
-            SizeConstraint::Available(available) if available.is_finite() => {
-                SizeConstraint::Available((available - space).max(0.0))
-            }
-            _ => *self,
-        }
-    }
-
-    pub const MAX: SizeConstraint = SizeConstraint::Available(f64::INFINITY);
-    pub const MIN: SizeConstraint = SizeConstraint::Available(0.0);
-}
-
-impl From<f64> for SizeConstraint {
-    fn from(size: f64) -> Self {
-        SizeConstraint::Available(size)
-    }
-}
-
 /// Input parameters passed to the `measure` method of an element.
 #[derive(Copy, Clone, PartialEq)]
 pub struct LayoutInput {
-    /// The sizing constraint in the horizontal axis.
-    pub width: SizeConstraint,
-    /// The sizing constraint in the vertical axis.
-    pub height: SizeConstraint,
+    /// Available size.
+    pub available: Size,
 }
 
 impl Default for LayoutInput {
     fn default() -> Self {
         LayoutInput {
-            width: SizeConstraint::Unspecified,
-            height: SizeConstraint::Unspecified,
+            available: Size::new(f64::INFINITY, f64::INFINITY),
         }
     }
 }
 
 impl fmt::Debug for LayoutInput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}×{:?}", self.width, self.height)
+        write!(f, "{:?}×{:?}", self.available.width, self.available.height)
     }
 }
 
 impl LayoutInput {
     pub fn from_logical(
         main_axis: Axis,
-        main: SizeConstraint,
-        cross: SizeConstraint,
+        main: f64,
+        cross: f64,
     ) -> Self {
         match main_axis {
             Axis::Horizontal => LayoutInput {
-                width: main,
-                height: cross,
+                available: Size{width: main,
+                height: cross,}
             },
             Axis::Vertical => LayoutInput {
-                width: cross,
-                height: main,
+                available: Size{width: cross,
+                height: main,}
             },
         }
     }
 
-    pub fn with_axis_constraint(self, axis: Axis, constraint: SizeConstraint) -> Self {
+    pub fn with_axis_constraint(mut self, axis: Axis, constraint: f64) -> Self {
         match axis {
-            Axis::Horizontal => LayoutInput {
-                width: constraint,
-                ..self
-            },
-            Axis::Vertical => LayoutInput {
-                height: constraint,
-                ..self
-            },
+            Axis::Horizontal => self.available.width = constraint,
+            Axis::Vertical => self.available.height = constraint,
         }
+        self
     }
 
-    pub fn set_axis_constraint(&mut self, axis: Axis, constraint: SizeConstraint) {
+    pub fn set_axis_constraint(&mut self, axis: Axis, constraint: f64) {
         match axis {
-            Axis::Horizontal => self.width = constraint,
-            Axis::Vertical => self.height = constraint,
+            Axis::Horizontal => self.available.width = constraint,
+            Axis::Vertical => self.available.height = constraint,
         }
     }
 
+    /*
     pub fn resolve_length(&self, axis: Axis, length: LengthOrPercentage) -> f64 {
         match axis {
-            Axis::Horizontal => self.width.resolve_length(length),
-            Axis::Vertical => self.height.resolve_length(length),
+            Axis::Horizontal => self.size.width.resolve_length(length),
+            Axis::Vertical => self.size.height.resolve_length(length),
         }
-    }
+    }*/
 
-    pub fn main_cross(&self, main_axis: Axis) -> (SizeConstraint, SizeConstraint) {
-        match main_axis {
-            Axis::Horizontal => (self.width, self.height),
-            Axis::Vertical => (self.height, self.width),
-        }
+    pub fn main_cross(&self, main_axis: Axis) -> (f64, f64) {
+        self.available.main_cross(main_axis)
     }
 }
 

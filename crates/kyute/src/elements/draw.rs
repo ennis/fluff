@@ -16,10 +16,7 @@ use kurbo::{Point, Size};
 pub trait Visual {
     /// Layouts this element.
     fn layout(&mut self, input: &LayoutInput) -> Measurement {
-        Size::new(
-            input.width.available().unwrap_or_default(),
-            input.height.available().unwrap_or_default(),
-        ).into()
+        input.available.into()
     }
 
     /// Paints this element on a target surface using the specified `PaintCtx`.
@@ -83,8 +80,7 @@ where
 
     fn layout(&mut self, _cx: &TreeCtx, size: Size) {
         self.visual.layout(&LayoutInput {
-            width: size.width.into(),
-            height: size.height.into(),
+            available: size.into(),
         });
     }
 

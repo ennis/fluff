@@ -52,18 +52,11 @@ impl UniformGrid {
 
 impl Element for UniformGrid {
     fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
-        // FIXME: compute the baseline
-        if let Some(available) = layout_input.width.available() {
-            let (rows, columns) = self.row_column_count(available);
-            let width = columns as f64 * self.cell_size.width + (columns - 1) as f64 * self.h_gap;
-            let height = rows as f64 * self.cell_size.height + (rows - 1) as f64 * self.v_gap;
-            Size::new(width, height).into()
-        } else {
-            let n = self.elements.len() as f64;
-            let width = n * self.cell_size.width + (n - 1.) * self.h_gap;
-            let height = self.cell_size.height;
-            Size::new(width, height).into()
-        }
+        // TODO compute the baseline
+        let (rows, columns) = self.row_column_count(layout_input.available.width);
+        let width = columns as f64 * self.cell_size.width + (columns - 1) as f64 * self.h_gap;
+        let height = rows as f64 * self.cell_size.height + (rows - 1) as f64 * self.v_gap;
+        Size::new(width, height).into()
     }
 
     fn layout(&mut self, cx: &TreeCtx, size: Size) {

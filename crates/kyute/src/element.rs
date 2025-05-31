@@ -22,7 +22,7 @@ pub mod prelude {
         Element, ElementAny, ElementBuilder, ElementCtx, HitTestCtx, IntoElementAny, WeakElement, WeakElementAny,
     };
     pub use crate::input_event::Event;
-    pub use crate::layout::{LayoutInput, LayoutOutput, SizeConstraint, SizeValue};
+    pub use crate::layout::{LayoutInput, LayoutOutput, SizeValue};
     pub use crate::PaintCtx;
 }
 

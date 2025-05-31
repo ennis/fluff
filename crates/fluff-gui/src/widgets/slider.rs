@@ -99,8 +99,11 @@ impl SliderBase {
         }
     }
 
-    pub fn measure(&self, available: &LayoutInput) -> Measurement {
-        let width = available.width.available().unwrap_or(INPUT_WIDTH);
+    pub fn measure(&self, layout_input: &LayoutInput) -> Measurement {
+        let mut width = layout_input.available.width;
+        if !width.is_finite() || width < INPUT_WIDTH {
+            width = INPUT_WIDTH;
+        }
         let height = WIDGET_LINE_HEIGHT;
         Measurement {size:
         Size { width, height }, baseline: Some(WIDGET_BASELINE) }

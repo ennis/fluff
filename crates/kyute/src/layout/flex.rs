@@ -1,6 +1,6 @@
 use crate::element::{ElementAny, Measurement, TreeCtx};
 use crate::layout::{
-    Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeConstraint, SizeValue,
+    Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeValue,
 };
 use kurbo::{Size, Vec2};
 use tracing::{trace, warn};
@@ -18,8 +18,7 @@ pub enum CrossAxisAlignment {
 pub struct FlexLayoutParams {
     /// The direction of the main axis of the flex container (vertical or horizontal).
     pub direction: Axis,
-    pub width_constraint: SizeConstraint,
-    pub height_constraint: SizeConstraint,
+    pub available: Size,
     /// Default gap between children.
     pub gap: SizeValue,
     /// Initial gap before the first child (padding).
@@ -53,18 +52,14 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     let cross_axis = main_axis.cross();
     let child_count = children.len();
 
-    let (main_size_constraint, cross_size_constraint) = match p.direction {
-        Axis::Horizontal => (p.width_constraint, p.height_constraint),
-        Axis::Vertical => (p.height_constraint, p.width_constraint),
-    };
+    let (main_available, cross_available) = p.available.main_cross(p.direction);
 
     // ======
     // ====== Calculate the available space on the main axis ======
     // ======
     // If the parent provided an exact size, or available space, use that as the maximum size,
     // otherwise we can consider the maximum size to be infinite.
-    // MinContent/MaxContent has meaning only for the sizing of children with content.
-    let main_max = main_size_constraint.available().unwrap_or(f64::INFINITY);
+    let main_max = main_available;
 
     // ======
     // ====== Measure children & margins along the main axis and calculate the sum of flex factors ======
@@ -102,20 +97,20 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                 ctx,
                 &LayoutInput::from_logical(
                     main_axis,
-                    main_size_constraint,
-                    cross_size_constraint,
+                    main_available,
+                    cross_available,
                 ),
             )
             .main_cross(main_axis);
-        // also measure the max width so that we know how much it can grow
+        // also measure the max main-size so that we know how much it can grow
         let max_item_main = child
             .element
             .measure(
                 ctx,
                 &LayoutInput::from_logical(
                     main_axis,
-                    SizeConstraint::MAX,
-                    cross_size_constraint,
+                    f64::INFINITY,
+                    cross_available,
                 ),
             )
             .axis(main_axis);
@@ -170,8 +165,8 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                     ctx,
                     &LayoutInput::from_logical(
                         main_axis,
-                        SizeConstraint::Available((measures[i].main - shrink).max(0.0)),
-                        cross_size_constraint,
+                        (measures[i].main - shrink).max(0.0),
+                        cross_available,
                     ),
                 )
                 .main_cross(main_axis);
@@ -251,7 +246,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     // ======
 
     // Same as main_axis_max
-    let cross_max = cross_size_constraint.available().unwrap_or(f64::INFINITY);
+    let cross_max = cross_available;
 
     let mut max_child_cross_size: f64 = 0.0; // maximum cross size among children
     let mut max_baseline: f64 = 0.0; // max baseline position among children with baseline positioning
@@ -273,7 +268,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                     &LayoutInput::from_logical(
                         main_axis,
                         measures[i].main.into(),
-                        cross_size_constraint,
+                        cross_available,
                     ),
                 )
                 .axis(cross_axis);
@@ -295,8 +290,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
                 ctx,
                 // TODO verify this, I'm not sure about the size constraints here
                 &LayoutInput {
-                    width: SizeConstraint::Available(s.width),
-                    height: SizeConstraint::Available(s.height),
+                    available: s
                 },
             );
             let baseline = layout.baseline.unwrap_or(0.0);

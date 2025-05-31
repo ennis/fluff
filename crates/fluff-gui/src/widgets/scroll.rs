@@ -1,9 +1,9 @@
 //! Scroll views.
 
 use crate::colors::{SCROLL_BAR, SCROLL_BAR_BACKGROUND};
-use kyute::element::{Measurement, TreeCtx};
 use kyute::element::prelude::*;
-use kyute::layout::{Axis};
+use kyute::element::{Measurement, TreeCtx};
+use kyute::layout::Axis;
 use kyute::{Point, Rect, Size};
 //const SCROLL_BAR_WIDTH: f64 = 18.0;
 //const SCROLL_BAR_BUTTON_SIZE: f64 = 18.0;
@@ -152,9 +152,9 @@ impl ScrollBarBase {
 
 impl Element for ScrollBarBase {
     fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
-        let size=  match self.direction {
-            Axis::Vertical => Size::new(self.cross_size, layout_input.height.available().unwrap_or_default()),
-            Axis::Horizontal => Size::new(layout_input.width.available().unwrap_or_default(), self.cross_size),
+        let size = match self.direction {
+            Axis::Vertical => Size::new(self.cross_size, layout_input.available.height),
+            Axis::Horizontal => Size::new(layout_input.available.width, self.cross_size),
         };
         size.into()
     }

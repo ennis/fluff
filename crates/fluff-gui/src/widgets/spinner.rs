@@ -256,7 +256,10 @@ impl SpinnerBase {
 
 impl Element for SpinnerBase {
     fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
-        let width = layout_input.width.available().unwrap_or(INPUT_WIDTH);
+        let mut width = layout_input.available.width;
+        if !width.is_finite() || width < INPUT_WIDTH {
+            width = INPUT_WIDTH;
+        }
         let height = WIDGET_LINE_HEIGHT;
         Measurement {
             size: Size { width, height },
@@ -267,8 +270,7 @@ impl Element for SpinnerBase {
     fn layout(&mut self, _cx: &TreeCtx, size: Size)  {
         // measure the baseline
         let baseline = self.text_edit.measure(&LayoutInput {
-            width: SizeConstraint::Available(size.width),
-            height: SizeConstraint::Available(size.height),
+            available: size,
         }).baseline.unwrap_or(0.);
         self.text_edit.set_offset(vec2(PADDING.x, WIDGET_BASELINE - baseline));
     }

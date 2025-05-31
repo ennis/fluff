@@ -27,7 +27,7 @@ use crate::event::{wait_event, EmitterHandle, EmitterKey};
 use crate::input_event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
-use crate::layout::{LayoutInput, SizeConstraint};
+use crate::layout::{LayoutInput};
 use crate::paint_ctx::paint_root_element;
 use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler, WindowOptions};
 use crate::{application, double_click_time, platform, Color, Element, ElementBuilder, EventSource};
@@ -673,10 +673,7 @@ impl WindowInner {
         // Layout the root element if necessary
         // (i.e. if the root element layout is dirty or if the window size has changed).
         if self.needs_layout.replace(false) || root_change_flags.contains(ChangeFlags::LAYOUT) {
-            let size = self.root.measure_root(&LayoutInput {
-                width: SizeConstraint::Available(client_area.width),
-                height: SizeConstraint::Available(client_area.height),
-            });
+            let size = self.root.measure_root(&LayoutInput { available: client_area });
             let _geom = self.root.layout_root(size.size);
         }
 
@@ -851,20 +848,19 @@ impl WindowHandle {
     }
 }
 
-
 impl Window {
     pub fn new(options: &WindowOptions, root: ElementBuilder<impl Element>) -> Self {
-
         let actual_size = if let Some(size) = options.size {
             size
         } else {
             // measure the root element
-            let mut size = root.measure(&LayoutInput {
-                // FIXME: SizeConstraint::Available(0) doesn't work (returns zero-sized),
-                //        but should (return the minimum size)
-                width: SizeConstraint::Unspecified,
-                height: SizeConstraint::Unspecified,
-            }).size;
+            let mut size = root
+                .measure(&LayoutInput {
+                    // FIXME: 0.0 doesn't work (returns zero-sized),
+                    //        but should (return the minimum size)
+                    available: Size::new(f64::INFINITY, f64::INFINITY),
+                })
+                .size;
 
             eprintln!("window actual size: {:?}", size);
             if !size.width.is_finite() {

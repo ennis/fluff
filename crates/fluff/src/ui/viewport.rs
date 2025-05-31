@@ -49,10 +49,15 @@ impl Viewport {
 impl Element for Viewport {
     fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
         // take all the available space
-        Size::new(
-            layout_input.width.available().unwrap_or(DEFAULT_SIZE.width),
-            layout_input.height.available().unwrap_or(DEFAULT_SIZE.height),
-        ).into()
+        let mut width = layout_input.available.width;
+        if !width.is_finite() {
+            width = DEFAULT_SIZE.width;
+        }
+        let mut height = layout_input.available.height;
+        if !height.is_finite() {
+            height = DEFAULT_SIZE.height;
+        }
+        Size::new(width, height).into()
     }
 
     fn layout(&mut self, tree: &TreeCtx, size: Size)  {

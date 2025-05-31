@@ -2,13 +2,14 @@
 
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
-use kyute::application::{run_after, spawn, CallbackToken};
+use kyute::application::{CallbackToken, run_after, spawn};
 use kyute::drawing::{BorderPosition, Image, point, vec2};
 use kyute::element::prelude::*;
 use kyute::element::{Measurement, TreeCtx, WeakElement};
+use kyute::event::{emit_global, subscribe_global, wait_event_global};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
-use kyute::event::{emit_global, subscribe_global, wait_event_global};
+use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
 use kyute::text::TextLayout;
 use kyute::window::{FocusChanged, PopupPlacement, WindowHandle, place_popup};
 use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, select, text};
@@ -16,7 +17,6 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 use tracing::warn;
-use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
 
 /// Event emitted when a menu entry is activated.
 #[derive(Debug, Clone)]
@@ -100,7 +100,7 @@ fn open_anchored_popup<T: Element>(
     //let popup_parent = parent_menu.unwrap_or(parent_window);
     // not sure if this is necessary
     //popup_parent.set_popup(&window);
-    
+
     window
 }
 
@@ -379,7 +379,8 @@ impl Element for MenuBase {
         Size {
             width: width + self.insets.x_value(),
             height: height + self.insets.y_value(),
-        }.into()
+        }
+        .into()
     }
 
     fn layout(&mut self, _cx: &TreeCtx, size: Size) {
@@ -769,7 +770,6 @@ impl<ID: 'static + Clone> MenuBar<ID> {
 
     /// Opens the menu for the given entry index in the menu bar.
     fn open_menu(&mut self, cx: &TreeCtx, entry_index: usize) {
-
         let Some(nodes) = self.nodes.child_item_range(self.entries[entry_index].index) else {
             // no items in menu
             return;
@@ -795,7 +795,8 @@ impl<ID: 'static + Clone> MenuBar<ID> {
                 }
 
                 if let Some(id) = this.borrow().index_to_id.get(index) {
-                        emit_global(MenuEntryActivated{id: id.clone(),
+                    emit_global(MenuEntryActivated {
+                        id: id.clone(),
                         window: owner.clone(),
                     });
                 } else {
@@ -824,10 +825,13 @@ impl<ID: 'static + Clone> MenuBar<ID> {
 
 impl<ID: 'static + Clone> Element for MenuBar<ID> {
     fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
-        let width = layout_input.width.available().unwrap_or_default();
+        // FIXME: if the width is infinite, we should measure the size of the menu bar
+        let width = layout_input.available.width;
         let height = 24.0;
-        Measurement {size:
-        Size { width, height }, baseline: Some(MENU_BAR_BASELINE)}
+        Measurement {
+            size: Size { width, height },
+            baseline: Some(MENU_BAR_BASELINE),
+        }
     }
 
     fn layout(&mut self, _cx: &TreeCtx, size: Size) {
