@@ -7,7 +7,7 @@ use kyute::elements::{Flex, Frame};
 use kyute::event::subscribe_global;
 use kyute::platform::{WindowKind, WindowOptions};
 use kyute::text::FontStyle::Italic;
-use kyute::{text, Element, ElementBuilder, IntoElementAny, Window};
+use kyute::{text, Element, NodeBuilder, IntoNode, Window};
 use std::rc::Rc;
 use windows::core::HSTRING;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -26,7 +26,7 @@ pub enum MainMenuEntry {
 }
 
 /// The root element of the UI.
-pub fn root_frame(app_model: Rc<AppModel>) -> ElementBuilder<impl Element> {
+pub fn root_frame(app_model: Rc<AppModel>) -> NodeBuilder<impl Element> {
     use crate::ui::MainMenuEntry::*;
 
     // Main menu bar

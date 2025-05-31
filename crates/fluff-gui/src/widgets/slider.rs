@@ -1,12 +1,11 @@
 use crate::colors;
 use crate::widgets::{INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::point;
-use kyute::element::{ElementBuilder, HitTestCtx, Measurement, TreeCtx, WeakElement};
 use kyute::elements::ValueChangedEvent;
 use kyute::input_event::ScrollDelta;
 use kyute::kurbo::{Line, PathEl, Vec2};
 use kyute::layout::{LayoutInput, LayoutOutput};
-use kyute::{Element, Event, EventSource, PaintCtx, Point, Rect, Size};
+use kyute::{Element, Event, EventSource, HitTestCtx, Measurement, NodeBuilder, NodeCtx, PaintCtx, Point, Rect, Size};
 use std::ops::Range;
 
 pub struct SliderBase {
@@ -153,24 +152,24 @@ pub struct Slider {
 }
 
 impl Slider {
-    pub fn new(value: f64, range: Range<f64>) -> ElementBuilder<Self> {
-        ElementBuilder::new(Slider {
+    pub fn new(value: f64, range: Range<f64>) -> NodeBuilder<Self> {
+        NodeBuilder::new(Slider {
             base: SliderBase::new(value, range),
         })
     }
 
-    pub fn set_value(&mut self, cx: &TreeCtx, value: f64) {
+    pub fn set_value(&mut self, cx: &NodeCtx, value: f64) {
         self.base.set_value(value);
         cx.mark_needs_paint();
     }
 }
 
 impl Element for Slider {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         self.base.measure(layout_input)
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size) {
         self.base.layout(size)
     }
 
@@ -182,7 +181,7 @@ impl Element for Slider {
         self.base.paint(ctx, ctx.bounds);
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
         match event {
             Event::PointerDown(_) => {
                 cx.set_pointer_capture();

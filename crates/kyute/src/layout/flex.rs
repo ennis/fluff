@@ -1,9 +1,9 @@
-use crate::element::{ElementAny, Measurement, TreeCtx};
 use crate::layout::{
     Alignment, Axis, AxisSizeHelper, LayoutInput, LayoutMode, LayoutOutput, SizeValue,
 };
 use kurbo::{Size, Vec2};
 use tracing::{trace, warn};
+use crate::{NodeCtx, RcDynNode};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum CrossAxisAlignment {
@@ -27,18 +27,24 @@ pub struct FlexLayoutParams {
     pub final_gap: SizeValue,
 }
 
+/// Represents a child node of a flex container, with its flex factor and margins.
 pub struct FlexChild {
-    pub element: ElementAny,
+    /// Child node.
+    pub node: RcDynNode,
+    /// Flex factor.
     pub flex: f64,
+    /// Margin before the child along the main axis.
     pub margin_before: SizeValue,
+    /// Margin after the child along the main axis.
     pub margin_after: SizeValue,
+    /// How the node should be aligned along the cross axis.
     pub cross_axis_alignment: Alignment,
 }
 
 impl FlexChild {
-    pub fn new(element: ElementAny) -> Self {
+    pub fn new(element: RcDynNode) -> Self {
         FlexChild {
-            element,
+            node: element,
             flex: 0.0,
             margin_before: SizeValue::Fixed(0.0),
             margin_after: SizeValue::Fixed(0.0),
@@ -47,7 +53,7 @@ impl FlexChild {
     }
 }
 
-pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
+pub fn flex_layout(mode: LayoutMode, ctx: &NodeCtx, p: &FlexLayoutParams, children: &[FlexChild]) -> LayoutOutput {
     let main_axis = p.direction;
     let cross_axis = main_axis.cross();
     let child_count = children.len();
@@ -92,7 +98,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
         let flex = child.flex;
         // get the element's ideal size along the main axis, using the parent constraints for the size.
         let (item_main, item_cross) = child
-            .element
+            .node
             .measure(
                 ctx,
                 &LayoutInput::from_logical(
@@ -104,7 +110,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             .main_cross(main_axis);
         // also measure the max main-size so that we know how much it can grow
         let max_item_main = child
-            .element
+            .node
             .measure(
                 ctx,
                 &LayoutInput::from_logical(
@@ -160,7 +166,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             // try to distribute shrinkage equally among remaining children
             let shrink = still_to_reclaim / (child_count - i) as f64;
             let (item_main, item_cross) = children[i]
-                .element
+                .node
                 .measure(
                     ctx,
                     &LayoutInput::from_logical(
@@ -262,7 +268,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
             // even if the provided main size has grown, it may return the same main size.
             // Concrete example: text elements
             measures[i].cross = child
-                .element
+                .node
                 .measure(
                     ctx,
                     &LayoutInput::from_logical(
@@ -286,7 +292,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
         if child.cross_axis_alignment == Alignment::FirstBaseline {
             // calculate max_baseline & max_below_baseline contribution for items with baseline alignment
             let s = Size::from_main_cross(main_axis, measures[i].main, measures[i].cross);
-            let layout = child.element.measure(
+            let layout = child.node.measure(
                 ctx,
                 // TODO verify this, I'm not sure about the size constraints here
                 &LayoutInput {
@@ -316,7 +322,7 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
     // ====== Layout children
     // ======
     for (i, child) in children.iter().enumerate() {
-        child.element.layout(
+        child.node.layout(
             ctx,
             Size::from_main_cross(main_axis, measures[i].main, measures[i].cross),
         );
@@ -357,10 +363,10 @@ pub fn flex_layout(mode: LayoutMode, ctx: &TreeCtx, p: &FlexLayoutParams, childr
         // set child offset
         match main_axis {
             Axis::Horizontal => {
-                child.element.set_offset(Vec2::new(offset_main, offset_cross));
+                child.node.set_offset(Vec2::new(offset_main, offset_cross));
             }
             Axis::Vertical => {
-                child.element.set_offset(Vec2::new(offset_cross, offset_main));
+                child.node.set_offset(Vec2::new(offset_cross, offset_main));
             }
         }
         offset_main += measures[i].main + margins[i + 1].size;

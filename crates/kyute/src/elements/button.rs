@@ -1,14 +1,13 @@
 use kurbo::{Insets, Vec2};
 
 use crate::drawing::BoxShadow;
-use crate::element::ElementBuilder;
 use crate::element_state::ElementState;
 use crate::elements::flex::Flex;
 use crate::elements::frame::{Frame, FrameStyle, FrameStyleOverride};
 use crate::elements::HoveredEvent;
 use crate::layout::SizeValue;
 use crate::theme::DARK_THEME;
-use crate::{text, Color};
+use crate::{text, Color, NodeBuilder};
 
 fn button_style() -> FrameStyle {
     thread_local! {
@@ -48,7 +47,7 @@ fn button_style() -> FrameStyle {
     BUTTON_STYLE.with(|s| s.clone())
 }
 
-pub fn button(label: impl Into<String>) -> ElementBuilder<Frame> {
+pub fn button(label: impl Into<String>) -> NodeBuilder<Frame> {
     let label = label.into();
     let theme = &DARK_THEME;
 

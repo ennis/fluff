@@ -1,12 +1,11 @@
 //! Frame containers
 use crate::drawing::{BoxShadow, Paint, ToSkia};
-use crate::element::{Element, ElementAny, ElementBuilder, HitTestCtx, IntoElementAny, Measurement, TreeCtx};
 use crate::element_state::ElementState;
 use crate::elements::{ActivatedEvent, ClickedEvent, ElementStateChanged, HoveredEvent};
+use crate::event::EventSource;
 use crate::input_event::Event;
 use crate::layout::{Axis, LayoutInput, LayoutOutput, SizeValue};
-use crate::event::EventSource;
-use crate::{drawing, Color, PaintCtx};
+use crate::{drawing, Color, Element, HitTestCtx, IntoNode, Measurement, NodeBuilder, NodeCtx, PaintCtx, RcDynNode};
 use kurbo::{Insets, Point, RoundedRect, Size, Vec2};
 use skia_safe::PaintStyle;
 use tracing::trace_span;
@@ -93,13 +92,13 @@ pub struct Frame {
     state_affects_style: bool,
     resolved_style: FrameStyle,
 
-    content: Option<ElementAny>,
+    content: Option<RcDynNode>,
 }
 
 impl Frame {
     /// Creates a new `Frame` with the default styles.
-    pub fn new() -> ElementBuilder<Self> {
-        ElementBuilder::new(Frame {
+    pub fn new() -> NodeBuilder<Self> {
+        NodeBuilder::new(Frame {
             width: Default::default(),
             height: Default::default(),
             min_width: Default::default(),
@@ -119,7 +118,7 @@ impl Frame {
     /// Specifies a closure to be called when the frame is clicked.
     #[must_use]
     #[track_caller]
-    pub fn on_click(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
+    pub fn on_click(self: NodeBuilder<Self>, func: impl Fn() + 'static) -> NodeBuilder<Self> {
         self.subscribe::<ClickedEvent>(move |_| {
             func();
             true
@@ -130,7 +129,7 @@ impl Frame {
     /// Specifies a closure to be called when the frame is hovered.
     #[must_use]
     #[track_caller]
-    pub fn on_hover(self: ElementBuilder<Self>, func: impl Fn() + 'static) -> ElementBuilder<Self> {
+    pub fn on_hover(self: NodeBuilder<Self>, func: impl Fn() + 'static) -> NodeBuilder<Self> {
         self.subscribe::<HoveredEvent>(move |_| {
             func();
             false
@@ -140,125 +139,125 @@ impl Frame {
 
     /// Adds a child item to this frame.
     #[must_use]
-    pub fn content(mut self: ElementBuilder<Self>, child: impl IntoElementAny) -> ElementBuilder<Self> {
-        self.content = Some(child.into_element_any(self.weak().as_dyn()));
+    pub fn content(mut self: NodeBuilder<Self>, child: impl IntoNode) -> NodeBuilder<Self> {
+        self.content = Some(child.into_dyn_node(self.weak().as_dyn()));
         self
     }
 
     /// Sets the visual style of the frame.
     #[must_use]
-    pub fn style(mut self: ElementBuilder<Self>, style: FrameStyle) -> ElementBuilder<Self> {
+    pub fn style(mut self: NodeBuilder<Self>, style: FrameStyle) -> NodeBuilder<Self> {
         self.style = style;
         self
     }
 
     /// Specifies the size of all four borders around the frame.
     #[must_use]
-    pub fn border_width(mut self: ElementBuilder<Self>, width: f64) -> ElementBuilder<Self> {
+    pub fn border_width(mut self: NodeBuilder<Self>, width: f64) -> NodeBuilder<Self> {
         self.style.border_size = Insets::uniform(width);
         self
     }
 
     /// Specifies the border color.
     #[must_use]
-    pub fn border_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+    pub fn border_color(mut self: NodeBuilder<Self>, color: Color) -> NodeBuilder<Self> {
         self.style.border_color = color;
         self
     }
 
     /// Specifies the border radius.
     #[must_use]
-    pub fn border_radius(mut self: ElementBuilder<Self>, radius: f64) -> ElementBuilder<Self> {
+    pub fn border_radius(mut self: NodeBuilder<Self>, radius: f64) -> NodeBuilder<Self> {
         self.style.border_radius = radius;
         self
     }
 
     /// Specifies the background color.
     #[must_use]
-    pub fn background_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+    pub fn background_color(mut self: NodeBuilder<Self>, color: Color) -> NodeBuilder<Self> {
         self.style.background_color = color;
         self
     }
 
     /// Specifies the padding (along all four sides) around the content placed inside the frame.
     #[must_use]
-    pub fn padding(mut self: ElementBuilder<Self>, value: f64) -> ElementBuilder<Self> {
+    pub fn padding(mut self: NodeBuilder<Self>, value: f64) -> NodeBuilder<Self> {
         self.padding = Insets::uniform(value);
         self
     }
 
     /// Specifies the padding (along the right side) around the content placed inside the frame.
     #[must_use]
-    pub fn padding_right(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn padding_right(mut self: NodeBuilder<Self>, value: impl Into<f64>) -> NodeBuilder<Self> {
         self.padding.x1 = value.into();
         self
     }
 
     /// Specifies the padding (along the left side) around the content placed inside the frame.
     #[must_use]
-    pub fn padding_left(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn padding_left(mut self: NodeBuilder<Self>, value: impl Into<f64>) -> NodeBuilder<Self> {
         self.padding.x0 = value.into();
         self
     }
 
     /// Specifies the padding around the content placed inside the frame.
     #[must_use]
-    pub fn padding_top(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn padding_top(mut self: NodeBuilder<Self>, value: impl Into<f64>) -> NodeBuilder<Self> {
         self.padding.y0 = value.into();
         self
     }
 
     /// Specifies the padding around the content placed inside the frame.
     #[must_use]
-    pub fn padding_bottom(mut self: ElementBuilder<Self>, value: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn padding_bottom(mut self: NodeBuilder<Self>, value: impl Into<f64>) -> NodeBuilder<Self> {
         self.padding.y1 = value.into();
         self
     }
 
     /// Specifies the width of the frame.
     #[must_use]
-    pub fn width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn width(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.width = value.into();
         self
     }
 
     /// Specifies the height of the frame.
     #[must_use]
-    pub fn height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn height(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.height = value.into();
         self
     }
 
     /// Specifies the minimum width of the frame.
     #[must_use]
-    pub fn min_width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn min_width(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.min_width = value.into();
         self
     }
 
     /// Specifies the minimum height of the frame.
     #[must_use]
-    pub fn min_height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn min_height(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.min_height = value.into();
         self
     }
 
     /// Specifies the maximum width of the frame.
     #[must_use]
-    pub fn max_width(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn max_width(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.max_width = value.into();
         self
     }
 
     /// Specifies the maximum height of the frame.
     #[must_use]
-    pub fn max_height(mut self: ElementBuilder<Self>, value: impl Into<SizeValue>) -> ElementBuilder<Self> {
+    pub fn max_height(mut self: NodeBuilder<Self>, value: impl Into<SizeValue>) -> NodeBuilder<Self> {
         self.max_height = value.into();
         self
     }
 
     /// Sets the background color.
-    pub fn set_background_color(&mut self, cx: &TreeCtx, color: Color) {
+    pub fn set_background_color(&mut self, cx: &NodeCtx, color: Color) {
         self.style.background_color = color;
         self.style_changed = true;
         cx.mark_needs_paint();
@@ -285,21 +284,11 @@ impl Frame {
     /// * `parent_cross_sz` - parent cross axis size, if known
     /// * `main` - main axis size constraint (available space)
     /// * `cross` - cross axis size constraint (available space)
-    fn measure_content(
-        &self,
-        ctx: &TreeCtx,
-        available: Size,
-    ) -> Measurement
-    {
+    fn measure_content(&self, ctx: &NodeCtx, available: Size) -> Measurement {
         let deflated = available - self.padding.size();
 
         let mut measurement = if let Some(content) = &self.content {
-            content.measure(
-                ctx,
-                &LayoutInput {
-                    available: deflated
-                },
-            )
+            content.measure(ctx, &LayoutInput { available: deflated })
         } else {
             Measurement::default()
         };
@@ -310,16 +299,8 @@ impl Frame {
     }
 
     /// Measures a box element sized according to the specified constraints.
-    fn measure_inner(
-        &self,
-        ctx: &TreeCtx,
-        available: Size,
-    ) -> Measurement {
-        let _span = trace_span!(
-            "Frame::measure_inner",
-            ?available,
-        )
-        .entered();
+    fn measure_inner(&self, ctx: &NodeCtx, available: Size) -> Measurement {
+        let _span = trace_span!("Frame::measure_inner", ?available,).entered();
 
         //
         let eval_width = |size: SizeValue| -> Option<f64> {
@@ -342,10 +323,7 @@ impl Frame {
                         SizeValue::MaxContent => f64::INFINITY,
                         _ => unreachable!(),
                     };
-                    Some(
-                        self.measure_content(ctx, Size::new(cstr, available.height))
-                            .size.width,
-                    )
+                    Some(self.measure_content(ctx, Size::new(cstr, available.height)).size.width)
                 }
                 _ => None,
             }
@@ -354,8 +332,7 @@ impl Frame {
         let mut width = eval_width(self.width).unwrap_or_else(|| {
             // If the width is not specified, it is calculated from the contents, by propagating
             // the width constraint from above to the children.
-            self.measure_content(ctx, available)
-                .size.width
+            self.measure_content(ctx, available).size.width
         });
         let min_width = eval_width(self.min_width).unwrap_or(0.0);
         let max_width = eval_width(self.max_width).unwrap_or(f64::INFINITY);
@@ -382,53 +359,37 @@ impl Frame {
                         SizeValue::MaxContent => f64::INFINITY,
                         _ => unreachable!(),
                     };
-                    Some(
-                        self.measure_content(ctx, Size::new(width, cstr))
-                            .size.height,
-                    )
+                    Some(self.measure_content(ctx, Size::new(width, cstr)).size.height)
                 }
                 _ => None,
             }
         };
 
-        let mut height = eval_height(self.height).unwrap_or_else(|| {
-            self.measure_content(ctx, available)
-                .size.height
-        });
+        let mut height = eval_height(self.height).unwrap_or_else(|| self.measure_content(ctx, available).size.height);
         let min_height = eval_height(self.min_height).unwrap_or(0.0);
         let max_height = eval_height(self.max_height).unwrap_or(f64::INFINITY);
 
         height = height.clamp(min_height, max_height);
 
         // one final call to measure_content to measure the baseline under the final constraints
-        let final_measure =
-            self.measure_content(
-                ctx,
-                Size::new(
-                    updated_width_constraint,
-                    height,
-                ),
-            );
+        let final_measure = self.measure_content(ctx, Size::new(updated_width_constraint, height));
         final_measure
     }
 }
 
 impl Element for Frame {
-    fn children(&self) -> Vec<ElementAny> {
+    fn children(&self) -> Vec<RcDynNode> {
         self.content.clone().into_iter().collect()
     }
 
-    fn measure(&mut self, ctx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, ctx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("Frame::measure").entered();
         // TODO vertical direction layout
-        let output = self.measure_inner(
-            ctx,
-            layout_input.available,
-        );
+        let output = self.measure_inner(ctx, layout_input.available);
         output
     }
 
-    fn layout(&mut self, ctx: &TreeCtx, size: Size)  {
+    fn layout(&mut self, ctx: &NodeCtx, size: Size) {
         let _span = trace_span!("Frame::layout").entered();
         let content_area = size - self.padding.size();
 
@@ -488,8 +449,8 @@ impl Element for Frame {
         }
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
-        fn update_state(this: &mut Frame, cx: &TreeCtx, state: ElementState) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
+        fn update_state(this: &mut Frame, cx: &NodeCtx, state: ElementState) {
             this.state = state;
             cx.emit(ElementStateChanged(state));
             if this.state_affects_style {

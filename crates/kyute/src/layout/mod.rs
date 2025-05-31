@@ -350,3 +350,81 @@ impl Default for LayoutOutput {
         LayoutOutput::NULL
     }
 }
+
+
+/// Result of `Element::measure`.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub struct Measurement {
+    pub size: Size,
+    pub baseline: Option<f64>,
+}
+
+impl fmt::Debug for Measurement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:.2}×{:.2}", self.size.width, self.size.height)?;
+        if let Some(baseline) = self.baseline {
+            write!(f, " baseline={:.2}", baseline)?;
+        }
+        Ok(())
+    }
+}
+
+impl Measurement {
+    pub const NULL: Measurement = Measurement {
+        size: Size::ZERO,
+        baseline: None,
+    };
+
+    pub fn from_main_cross_sizes(axis: Axis, main: f64, cross: f64, baseline: Option<f64>) -> Self {
+        match axis {
+            Axis::Horizontal => Measurement {
+                size: Size {
+                    width: main,
+                    height: cross,
+                },
+                baseline,
+            },
+            Axis::Vertical => Measurement {
+                size: Size {
+                    width: cross,
+                    height: main,
+                },
+                baseline,
+            },
+        }
+    }
+
+    pub fn size(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.size.width,
+            Axis::Vertical => self.size.height,
+        }
+    }
+
+    pub fn main_cross(&self, axis: Axis) -> (f64, f64) {
+        match axis {
+            Axis::Horizontal => (self.size.width, self.size.height),
+            Axis::Vertical => (self.size.height, self.size.width),
+        }
+    }
+
+    pub fn set_axis(&mut self, axis: Axis, size: f64) {
+        match axis {
+            Axis::Horizontal => self.size.width = size,
+            Axis::Vertical => self.size.height = size,
+        }
+    }
+
+    pub fn axis(&self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.size.width,
+            Axis::Vertical => self.size.height,
+        }
+    }
+}
+
+impl From<Size> for Measurement {
+    fn from(size: Size) -> Self {
+        Measurement { size, baseline: None }
+    }
+}

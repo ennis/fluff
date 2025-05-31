@@ -1,6 +1,6 @@
 pub use kurbo::{self, Size};
 use kyute::drawing::StaticImage;
-use kyute::element::IntoElementAny;
+use kyute::element::IntoNode;
 use kyute::elements::button::button;
 use kyute::elements::text_edit::TextEditBase;
 use kyute::elements::{Flex, Frame};
@@ -14,7 +14,7 @@ use kyute::platform::WindowOptions;
 
 pub const TEST_IMAGE: StaticImage = StaticImage::new(include_bytes!("../../../data/ui/align_center.png"));
 
-fn myframe(content: impl IntoElementAny) -> impl IntoElementAny {
+fn myframe(content: impl IntoNode) -> impl IntoNode {
     Frame::new()
         .border_color(Color::from_hex("5f5637"))
         .border_radius(8.0)

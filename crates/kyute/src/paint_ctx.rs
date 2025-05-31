@@ -1,17 +1,17 @@
 use crate::compositor::CompositionBuilder;
 use crate::drawing::{round_to_device_pixel, round_to_device_pixel_center, BorderPosition, Image, Paint, ToSkia};
-use crate::element::{with_tree_ctx, ChangeFlags, ElementAny, TreeCtx};
 use crate::text::{TextLayout, TextRun, TextStyle};
-use crate::Color;
+use crate::{Color, NodeCtx, RcDynNode};
 use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Vec2};
 use skia_safe::PaintStyle;
 use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
+use crate::node::{with_tree_ctx, ChangeFlags};
 
 /// Paint context.
 /// 
 /// TODO deref to `TreeCtx`
 pub struct PaintCtx<'a> {
-    pub tree: &'a TreeCtx<'a>,
+    pub tree: &'a NodeCtx<'a>,
     pub scale_factor: f64,
     /// Bounds of the element being painted, relative to the current drawing surface.
     pub bounds: Rect,
@@ -26,7 +26,7 @@ pub struct PaintCtx<'a> {
     //surface: Option<DrawableSurface>,
 }
 
-pub fn paint_root_element(element: &ElementAny, composition_builder: &mut CompositionBuilder) {
+pub fn paint_root_element(element: &RcDynNode, composition_builder: &mut CompositionBuilder) {
     with_tree_ctx(element, |element, tree| {
         let mut f = tree.change_flags.get();
         f.remove(ChangeFlags::PAINT);
@@ -39,7 +39,7 @@ pub fn paint_root_element(element: &ElementAny, composition_builder: &mut Compos
 
 impl<'a> PaintCtx<'a> {
     /// Creates a new paint context.
-    pub(crate) fn new(ctx: &'a TreeCtx<'a>, comp_builder: &'a mut CompositionBuilder) -> PaintCtx<'a> {
+    pub(crate) fn new(ctx: &'a NodeCtx<'a>, comp_builder: &'a mut CompositionBuilder) -> PaintCtx<'a> {
         PaintCtx {
             tree: ctx,
             scale_factor: comp_builder.scale_factor(),
@@ -50,12 +50,12 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    pub fn paint_child(&mut self, element: &ElementAny) {
+    pub fn paint_child(&mut self, element: &RcDynNode) {
         self.paint_child_with_offset(element.offset(), element);
     }
 
     /// Paints a child element.
-    pub fn paint_child_with_offset(&mut self, offset: Vec2, element: &ElementAny) {
+    pub fn paint_child_with_offset(&mut self, offset: Vec2, element: &RcDynNode) {
         // create the child painting context
         let tree = self.tree.with_child(element);
 
@@ -63,12 +63,12 @@ impl<'a> PaintCtx<'a> {
         tree.this.window_position.set(self.bounds.origin() + tree.this.offset());
 
         // update current bounds on the composition builder
-        self.comp_builder.set_bounds(element.0.ctx.bounds());
+        self.comp_builder.set_bounds(element.bounds());
 
         let mut child_ctx = PaintCtx {
             tree: &tree,
             scale_factor: self.scale_factor,
-            bounds: element.0.ctx.bounds(),
+            bounds: element.bounds(),
             window_transform: self.window_transform * Affine::translate(offset),
             layer_transform: self.layer_transform * Affine::translate(offset),
             comp_builder: self.comp_builder,

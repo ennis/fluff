@@ -2,15 +2,13 @@ use crate::colors::DISPLAY_TEXT;
 use crate::widgets::menu::ContextMenuExt;
 use crate::widgets::{DISPLAY_TEXT_STYLE, INPUT_WIDTH, PaintExt, WIDGET_BASELINE, WIDGET_LINE_HEIGHT};
 use kyute::drawing::{BorderPosition, PlacementExt, RIGHT_CENTER, vec2};
-use kyute::element::{Measurement, TreeCtx};
-use kyute::element::prelude::*;
 use kyute::elements::{TextEditBase, ValueChangedEvent};
 use kyute::input_event::{Key, PointerButton, ScrollDelta};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::event::EventSource;
 use kyute::text::Selection;
-use kyute::{Color, Point, Rect, Size};
+use kyute::{Color, Element, Event, HitTestCtx, LayoutInput, Measurement, NodeBuilder, NodeCtx, PaintCtx, Point, Rect, Size, WeakNode};
 
 #[derive(Copy, Clone)]
 pub struct SpinnerUpButtonEvent;
@@ -92,7 +90,7 @@ impl<'a> Default for SpinnerOptions<'a> {
 
 /// Numeric spinner input widget.
 pub struct SpinnerBase {
-    weak: WeakElement<Self>,
+    weak: WeakNode<Self>,
     /// The value to display.
     value: f64,
     /// The value before editing began.
@@ -110,12 +108,12 @@ pub struct SpinnerBase {
 }
 
 impl SpinnerBase {
-    pub fn new(options: SpinnerOptions) -> ElementBuilder<Self> {
+    pub fn new(options: SpinnerOptions) -> NodeBuilder<Self> {
         let mut text_edit = TextEditBase::new();
         text_edit.set_text_style(DISPLAY_TEXT_STYLE.clone());
         text_edit.set_caret_color(DISPLAY_TEXT);
 
-        let mut spinner = ElementBuilder::new_cyclic(|weak| SpinnerBase {
+        let mut spinner = NodeBuilder::new_cyclic(|weak| SpinnerBase {
             weak,
             value: options.initial_value,
             value_before_editing: options.initial_value,
@@ -133,13 +131,13 @@ impl SpinnerBase {
     }
 
     /// Whether to paint the background of the spinner.
-    pub fn show_background(mut self: ElementBuilder<Self>, show: bool) -> ElementBuilder<Self> {
+    pub fn show_background(mut self: NodeBuilder<Self>, show: bool) -> NodeBuilder<Self> {
         self.show_background = show;
         self
     }
 
     /// Sets the text color of the spinner.
-    pub fn set_text_color(mut self: ElementBuilder<Self>, color: Color) -> ElementBuilder<Self> {
+    pub fn set_text_color(mut self: NodeBuilder<Self>, color: Color) -> NodeBuilder<Self> {
         self.text_edit.set_text_color(color);
         self
     }
@@ -147,13 +145,13 @@ impl SpinnerBase {
     /// Sets the unit of the spinner value.
     ///
     /// The unit is displayed after the value, e.g. "42.00 kg".
-    pub fn unit(mut self: ElementBuilder<Self>, unit: impl Into<String>) -> ElementBuilder<Self> {
+    pub fn unit(mut self: NodeBuilder<Self>, unit: impl Into<String>) -> NodeBuilder<Self> {
         self.unit = unit.into();
         self
     }
 
     /// Sets the current value of the spinner.
-    pub fn value(mut self: ElementBuilder<Self>, mut value: f64) -> ElementBuilder<Self> {
+    pub fn value(mut self: NodeBuilder<Self>, mut value: f64) -> NodeBuilder<Self> {
         // FIXME: deduplicate
         if self.clamp_to_integer {
             value = value.round();
@@ -165,7 +163,7 @@ impl SpinnerBase {
     }
 
     /// Sets the current value of the spinner.
-    pub fn set_value(&mut self, cx: &TreeCtx, mut value: f64) {
+    pub fn set_value(&mut self, cx: &NodeCtx, mut value: f64) {
         if self.clamp_to_integer {
             value = value.round();
         }
@@ -176,7 +174,7 @@ impl SpinnerBase {
 
     /////////////////////////////
 
-    fn update_text(&mut self, cx: &TreeCtx) {
+    fn update_text(&mut self, cx: &NodeCtx) {
         let str = self.format_value();
         self.text_edit.set_text(str);
         cx.mark_needs_layout();
@@ -211,7 +209,7 @@ impl SpinnerBase {
         true
     }
 
-    fn handle_scroll(&mut self, cx: &TreeCtx, scroll_delta_lines: f64) {
+    fn handle_scroll(&mut self, cx: &NodeCtx, scroll_delta_lines: f64) {
         if self.editing {
             let text = self.text_edit.text();
             if !text.parse::<f64>().is_ok() {
@@ -255,7 +253,7 @@ impl SpinnerBase {
 }
 
 impl Element for SpinnerBase {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         let mut width = layout_input.available.width;
         if !width.is_finite() || width < INPUT_WIDTH {
             width = INPUT_WIDTH;
@@ -267,7 +265,7 @@ impl Element for SpinnerBase {
         }
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size)  {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size)  {
         // measure the baseline
         let baseline = self.text_edit.measure(&LayoutInput {
             available: size,
@@ -301,7 +299,7 @@ impl Element for SpinnerBase {
         buttons.paint(ctx);
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
         let bounds = cx.bounds();
         let buttons = self.place_buttons(cx.bounds());
 

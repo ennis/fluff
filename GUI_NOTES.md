@@ -1593,3 +1593,8 @@ Go with option (C) and don't think about it anymore.
 - Fix initial position of modal windows 
   - They flash in the top-left corner of the screen before being moved to the correct position.
   - Not sure if this is a problem with winit or with us
+
+- Separate type for UI tree roots
+- Module reorg
+  - element.rs, node.rs, focus.rs into a common intermediate module
+- Remove recursive hit_test method

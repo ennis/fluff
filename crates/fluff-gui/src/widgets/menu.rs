@@ -1,18 +1,15 @@
 //! Context menu
-
 use crate::colors::{MENU_SEPARATOR, STATIC_BACKGROUND, STATIC_TEXT};
 use crate::widgets::{MENU_ITEM_BASELINE, MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT, TEXT_STYLE};
 use kyute::application::{CallbackToken, run_after, spawn};
 use kyute::drawing::{BorderPosition, Image, point, vec2};
-use kyute::element::prelude::*;
-use kyute::element::{Measurement, TreeCtx, WeakElement};
 use kyute::event::{emit_global, subscribe_global, wait_event_global};
 use kyute::kurbo::PathEl::{LineTo, MoveTo};
 use kyute::kurbo::{Insets, Vec2};
 use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
 use kyute::text::TextLayout;
 use kyute::window::{FocusChanged, PopupPlacement, WindowHandle, place_popup};
-use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, select, text};
+use kyute::{AbortHandle, Element, EventSource, Point, Rect, Size, Window, select, text, NodeBuilder, LayoutInput, WeakNode, NodeData, NodeCtx, Measurement, HitTestCtx, PaintCtx, Event};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -77,7 +74,7 @@ fn submenu_range(nodes: &[MenuItemNode], index: usize) -> Range<usize> {
 
 fn open_anchored_popup<T: Element>(
     owner: PlatformWindowHandle,
-    content: ElementBuilder<T>,
+    content: NodeBuilder<T>,
     anchor_rect: Rect,
     popup_placement: PopupPlacement,
 ) -> Window {
@@ -166,7 +163,7 @@ impl MenuItemNodeRange {
 }
 
 pub struct MenuBase {
-    weak_this: WeakElement<Self>,
+    weak_this: WeakNode<Self>,
     owner: PlatformWindowHandle,
     items: Vec<InternalMenuItem>,
     tree: MenuItemNodeRange,
@@ -196,7 +193,7 @@ fn format_menu_label(label: &str) -> (TextLayout, Option<char>) {
 }
 
 impl MenuBase {
-    fn new(owner: PlatformWindowHandle, tree: MenuItemNodeRange) -> ElementBuilder<Self> {
+    fn new(owner: PlatformWindowHandle, tree: MenuItemNodeRange) -> NodeBuilder<Self> {
         let mut items = Vec::new();
 
         for (index, item) in tree.iter() {
@@ -218,7 +215,7 @@ impl MenuBase {
             }
         }
 
-        ElementBuilder::new_cyclic(|weak_this| MenuBase {
+        NodeBuilder::new_cyclic(|weak_this| MenuBase {
             weak_this,
             owner,
             items,
@@ -241,7 +238,7 @@ impl MenuBase {
     ///  # Arguments
     /// * `rect` - The bounding rectangle of the parent menu item, in the coordinate space of
     ///            the monitor or the parent window (`self.parent_window`).
-    fn open_around(self: ElementBuilder<Self>, rect: Rect, popup_placement: PopupPlacement) -> Window {
+    fn open_around(self: NodeBuilder<Self>, rect: Rect, popup_placement: PopupPlacement) -> Window {
         // round size to device pixels
         //let scale_factor = self.parent_window.scale_factor();
         //let size = Size::new(
@@ -257,7 +254,7 @@ impl MenuBase {
     /// * `cx` - The element context.
     /// * `around` - The bounding rectangle of the parent menu item, in the coordinate space of the
     ///              parent window (`self.parent_window`).
-    fn open_submenu(&mut self, _cx: &ElementCtx, around: Rect, range: MenuItemNodeRange) {
+    fn open_submenu(&mut self, _cx: &NodeData, around: Rect, range: MenuItemNodeRange) {
         let submenu = MenuBase::new(self.owner.clone(), range).set_focus();
         let popup = submenu.open_around(around, PopupPlacement::RightThenLeft);
 
@@ -353,7 +350,7 @@ const MENU_SUBMENU_ARROW_SPACE: f64 = 16.0;
 const SUBMENU_CLOSE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl Element for MenuBase {
-    fn measure(&mut self, _cx: &TreeCtx, _input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, _input: &LayoutInput) -> Measurement {
         // minimum menu width
         let mut width = 100.0f64;
         let mut height = 0.0f64;
@@ -383,7 +380,7 @@ impl Element for MenuBase {
         .into()
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size) {
         for item in self.items.iter_mut() {
             match item {
                 InternalMenuItem::Entry { label, .. } => {
@@ -466,7 +463,7 @@ impl Element for MenuBase {
         }
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
         let bounds = cx.bounds();
         match event {
             Event::PointerMove(event) => {
@@ -653,7 +650,7 @@ pub trait ContextMenuExt {
     );
 }
 
-impl ContextMenuExt for TreeCtx<'_> {
+impl ContextMenuExt for NodeCtx<'_> {
     fn open_context_menu<ID: Clone + 'static>(
         &self,
         click_position: Point,
@@ -704,7 +701,7 @@ impl ContextMenuExt for TreeCtx<'_> {
 /// Emits a global event of type `InternalMenuEntryActivated` when an entry is activated.
 #[allow(dead_code)]
 pub struct MenuBar<ID> {
-    weak_this: WeakElement<Self>,
+    weak_this: WeakNode<Self>,
     entries: Vec<MenuBarEntry>,
     nodes: MenuItemNodeRange,
     index_to_id: BTreeMap<usize, ID>,
@@ -724,7 +721,7 @@ struct MenuBarEntry {
 }
 
 impl<ID: Clone + 'static> MenuBar<ID> {
-    pub fn new(items: &[MenuItem<ID>]) -> ElementBuilder<MenuBar<ID>> {
+    pub fn new(items: &[MenuItem<ID>]) -> NodeBuilder<MenuBar<ID>> {
         let (nodes, index_to_id) = flatten_menu(items);
         let mut entries = Vec::new();
         for (index, item_node) in nodes.iter() {
@@ -743,7 +740,7 @@ impl<ID: Clone + 'static> MenuBar<ID> {
             }
         }
 
-        ElementBuilder::new_cyclic(|weak_this| MenuBar {
+        NodeBuilder::new_cyclic(|weak_this| MenuBar {
             weak_this,
             entries,
             nodes,
@@ -769,7 +766,7 @@ impl<ID: 'static + Clone> MenuBar<ID> {
     }
 
     /// Opens the menu for the given entry index in the menu bar.
-    fn open_menu(&mut self, cx: &TreeCtx, entry_index: usize) {
+    fn open_menu(&mut self, cx: &NodeCtx, entry_index: usize) {
         let Some(nodes) = self.nodes.child_item_range(self.entries[entry_index].index) else {
             // no items in menu
             return;
@@ -824,7 +821,7 @@ impl<ID: 'static + Clone> MenuBar<ID> {
 }
 
 impl<ID: 'static + Clone> Element for MenuBar<ID> {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         // FIXME: if the width is infinite, we should measure the size of the menu bar
         let width = layout_input.available.width;
         let height = 24.0;
@@ -834,7 +831,7 @@ impl<ID: 'static + Clone> Element for MenuBar<ID> {
         }
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size) {
         let mut x = MENU_BAR_LEFT_PADDING;
         for entry in self.entries.iter_mut() {
             entry.title.layout(f64::INFINITY);
@@ -863,7 +860,7 @@ impl<ID: 'static + Clone> Element for MenuBar<ID> {
         }
     }
 
-    fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, ctx: &NodeCtx, event: &mut Event) {
         match event {
             Event::PointerDown(event) => {
                 let local_pos = event.position - ctx.bounds().origin();

@@ -8,11 +8,10 @@ use tracing::{trace_span, warn};
 use unicode_segmentation::GraphemeCursor;
 
 use crate::drawing::{FromSkia, Paint, ToSkia};
-use crate::element::{HitTestCtx, Measurement};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{get_font_collection, Selection, TextAlign, TextLayout, TextStyle};
-use crate::{Color, PaintCtx};
+use crate::{Color, HitTestCtx, Measurement, PaintCtx};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Movement {

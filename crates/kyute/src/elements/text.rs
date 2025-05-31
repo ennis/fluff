@@ -3,11 +3,10 @@ use skia_safe::textlayout;
 use tracing::trace_span;
 
 use crate::drawing::ToSkia;
-use crate::element::{Element, ElementBuilder, HitTestCtx, Measurement, TreeCtx};
 use crate::input_event::Event;
 use crate::layout::{LayoutInput, LayoutOutput};
 use crate::text::{IntoTextLayout, TextLayout, TextRun, TextStyle};
-use crate::PaintCtx;
+use crate::{Element, HitTestCtx, Measurement, NodeBuilder, NodeCtx, PaintCtx};
 
 /// A run of styled text.
 pub struct Text {
@@ -26,12 +25,12 @@ impl Text {
     ///
     /// let text = Text::new(text![FontSize(20.0) "Hello, " { FontWeight(FontWeight::BOLD) "world!" }]);
     /// ```
-    pub fn new(text: impl IntoTextLayout) -> ElementBuilder<Text> {
+    pub fn new(text: impl IntoTextLayout) -> NodeBuilder<Text> {
         let paragraph = text.into_text_layout(&TextStyle::default()).inner;
-        ElementBuilder::new(Text { paragraph })
+        NodeBuilder::new(Text { paragraph })
     }
 
-    pub fn set_text(&mut self, cx: &TreeCtx, text_style: &TextStyle, text: &[TextRun]) {
+    pub fn set_text(&mut self, cx: &NodeCtx, text_style: &TextStyle, text: &[TextRun]) {
         let paragraph = TextLayout::new(text_style, text).inner;
         self.paragraph = paragraph;
         cx.mark_needs_layout();
@@ -39,7 +38,7 @@ impl Text {
 }
 
 impl Element for Text {
-    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _tree: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         let _span = trace_span!("Text::measure").entered();
 
         let p = &mut self.paragraph;
@@ -55,16 +54,19 @@ impl Element for Text {
         // (which can lead to a relayout of the text with additional line breaks).
         size = size.ceil();
 
-        eprintln!("Text::measure: {:?} under constraint {:?}", size, layout_input.available.width);
-        
-        let baseline = p.alphabetic_baseline()  as f64;
+        eprintln!(
+            "Text::measure: {:?} under constraint {:?}",
+            size, layout_input.available.width
+        );
+
+        let baseline = p.alphabetic_baseline() as f64;
         Measurement {
             size,
             baseline: Some(baseline),
         }
     }
 
-    fn layout(&mut self, _tree: &TreeCtx, size: Size) {
+    fn layout(&mut self, _tree: &NodeCtx, size: Size) {
         let _span = trace_span!("Text::layout").entered();
         eprintln!("Text::layout: {:?}", size);
         let p = &mut self.paragraph;
@@ -80,5 +82,5 @@ impl Element for Text {
         self.paragraph.paint(ctx.canvas(), position);
     }
 
-    fn event(&mut self, _cx: &TreeCtx, _event: &mut Event) {}
+    fn event(&mut self, _cx: &NodeCtx, _event: &mut Event) {}
 }

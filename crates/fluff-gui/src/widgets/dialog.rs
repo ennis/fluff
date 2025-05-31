@@ -6,7 +6,7 @@ use kyute::event::{wait_event, EmitterKey};
 use kyute::layout::SizeValue;
 use kyute::platform::{PlatformWindowHandle, WindowKind, WindowOptions};
 use kyute::text::IntoTextLayout;
-use kyute::{select, Color, Element, ElementBuilder, EventSource, Window};
+use kyute::{select, Color, Element, NodeBuilder, EventSource, Window};
 
 bitflags! {
     /// Flags for the dialog buttons.
@@ -39,7 +39,7 @@ pub enum DialogResult {
     Button(DialogButtons),
 }
 
-fn dialog_buttons_inner(buttons: DialogButtons, emitter: EmitterKey) -> ElementBuilder<impl Element> {
+fn dialog_buttons_inner(buttons: DialogButtons, emitter: EmitterKey) -> NodeBuilder<impl Element> {
     let mut frame = Frame::new().padding(8.);
     let mut hbox = Flex::row().gap(3.).initial_gap(SizeValue::Stretch);
 
@@ -65,7 +65,7 @@ fn dialog_buttons_inner(buttons: DialogButtons, emitter: EmitterKey) -> ElementB
     frame
 }
 
-pub fn dialog_body(message: impl IntoTextLayout, buttons: DialogButtons) -> ElementBuilder<impl Element> {
+pub fn dialog_body(message: impl IntoTextLayout, buttons: DialogButtons) -> NodeBuilder<impl Element> {
     let mut vbox = Flex::column().gap(SizeValue::Stretch);
     vbox.add_child(
         Frame::new()

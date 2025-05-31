@@ -1,7 +1,6 @@
 //! Gradient editor widget base.
 
-use kyute::Size;
-use kyute::element::prelude::*;
+use kyute::{LayoutInput, Size};
 
 pub struct GradientEditorBase {}
 

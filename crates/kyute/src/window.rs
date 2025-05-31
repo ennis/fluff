@@ -19,10 +19,6 @@ use winit::keyboard::KeyLocation;
 
 use crate::compositor::{Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
-use crate::element::{
-    dispatch_event, get_keyboard_focus, ChangeFlags, ElementAny, FocusedElement, HitTestCtx, IntoElementAny,
-    WeakElementAny,
-};
 use crate::event::{wait_event, EmitterHandle, EmitterKey};
 use crate::input_event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
@@ -30,7 +26,9 @@ use crate::input_event::{
 use crate::layout::{LayoutInput};
 use crate::paint_ctx::paint_root_element;
 use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler, WindowOptions};
-use crate::{application, double_click_time, platform, Color, Element, ElementBuilder, EventSource};
+use crate::{application, double_click_time, platform, Color, Element, NodeBuilder, EventSource, WeakDynNode, RcDynNode, IntoNode};
+use crate::focus::{get_keyboard_focus, FocusedElement};
+use crate::node::{dispatch_event, ChangeFlags};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -105,8 +103,8 @@ struct InputState {
     pointer_buttons: PointerButtons,
     last_click: Option<LastClick>,
     // Result of the previous hit-test
-    last_innermost_hit: Option<WeakElementAny>,
-    last_hits: BTreeSet<WeakElementAny>,
+    last_innermost_hit: Option<WeakDynNode>,
+    last_hits: BTreeSet<WeakDynNode>,
     //prev_hit_test_result: Vec<HitTestEntry>,
 }
 
@@ -191,7 +189,7 @@ pub fn place_popup(
 
 pub(crate) struct WindowInner {
     emitter_handle: EmitterHandle,
-    root: ElementAny,
+    root: RcDynNode,
     /// Previous compositor layers.
     composition: RefCell<Option<Composition>>,
     window: PlatformWindowHandle,
@@ -199,7 +197,7 @@ pub(crate) struct WindowInner {
     cursor_pos: Cell<Point>,
     input_state: RefCell<InputState>,
     /// The widget that is currently capturing pointer events.
-    pointer_capture: RefCell<Option<WeakElementAny>>,
+    pointer_capture: RefCell<Option<WeakDynNode>>,
     background: Cell<Color>,
     active_popup: RefCell<Option<Weak<WindowInner>>>,
     // DEBUGGING
@@ -215,7 +213,7 @@ impl Drop for Window {
 }
 
 impl WindowInner {
-    fn set_pointer_capture(&self, element: WeakElementAny) {
+    fn set_pointer_capture(&self, element: WeakDynNode) {
         //if let Some(element) = element.upgrade() {
         //    self.check_belongs_to_window(element.node());
         //}
@@ -291,10 +289,7 @@ impl WindowInner {
         debug_assert!(event.pointer_event().is_some(), "event must be a pointer event");
 
         let mut input_state = self.input_state.borrow_mut();
-
-        let mut hit_test_ctx = HitTestCtx::new();
-        self.root.hit_test(&mut hit_test_ctx, hit_position);
-        let hits = hit_test_ctx.hits;
+        let hits = self.root.hit_test_root(hit_position);
         let innermost_hit = hits.first().cloned();
         let is_pointer_up = matches!(event, Event::PointerUp(_));
 
@@ -798,7 +793,7 @@ impl WindowHandle {
         }
     }
 
-    pub fn set_pointer_capture(&self, element: WeakElementAny) {
+    pub fn set_pointer_capture(&self, element: WeakDynNode) {
         if let Some(shared) = self.shared.upgrade() {
             shared.set_pointer_capture(element);
         } else {
@@ -849,7 +844,7 @@ impl WindowHandle {
 }
 
 impl Window {
-    pub fn new(options: &WindowOptions, root: ElementBuilder<impl Element>) -> Self {
+    pub fn new(options: &WindowOptions, root: NodeBuilder<impl Element>) -> Self {
         let actual_size = if let Some(size) = options.size {
             size
         } else {
@@ -885,7 +880,7 @@ impl Window {
 
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             emitter_handle,
-            root: root.into_root_element_any(WindowHandle {
+            root: root.into_root_dyn_node(WindowHandle {
                 shared: weak_this.clone(),
                 emitter_key,
             }),
@@ -905,7 +900,7 @@ impl Window {
         Window { shared }
     }
 
-    pub fn set_pointer_capture(&self, element: WeakElementAny) {
+    pub fn set_pointer_capture(&self, element: WeakDynNode) {
         self.shared.set_pointer_capture(element);
     }
 

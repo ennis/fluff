@@ -1,12 +1,10 @@
 use crate::colors;
 use crate::widgets::TEXT_STYLE;
 use kyute::drawing::{BASELINE_CENTER, Image, PlacementExt, vec2};
-use kyute::element::prelude::*;
-use kyute::element::{Measurement, TreeCtx, WeakElement};
 use kyute::elements::{ActivatedEvent, ClickedEvent, HoveredEvent};
 use kyute::kurbo::Vec2;
 use kyute::text::TextLayout;
-use kyute::{ElementState, Event, EventSource, PaintCtx, Point, Size, text};
+use kyute::{ElementState, Event, EventSource, PaintCtx, Point, Size, text, WeakNode, NodeBuilder, NodeCtx, LayoutInput, Measurement, Element, HitTestCtx};
 
 const BUTTON_RADIUS: f64 = 4.;
 const BUTTON_MIN_WIDTH: f64 = 80.;
@@ -17,17 +15,17 @@ const BUTTON_BASELINE: f64 = 16.;
 ///
 /// This element emits the standard events for buttons.
 pub struct Button {
-    weak: WeakElement<Self>,
+    weak: WeakNode<Self>,
     label: TextLayout,
     state: ElementState,
 }
 
 impl Button {
     /// Creates a new button with the specified label.
-    pub fn new(label: impl Into<String>) -> ElementBuilder<Button> {
+    pub fn new(label: impl Into<String>) -> NodeBuilder<Button> {
         let label = label.into();
         let label = TextLayout::new(&TEXT_STYLE, text!["{label}"]);
-        ElementBuilder::new_cyclic(|weak| Button {
+        NodeBuilder::new_cyclic(|weak| Button {
             weak,
             label,
             state: ElementState::default(),
@@ -43,7 +41,7 @@ impl EventSource for Button {
 }*/
 
 impl Element for Button {
-    fn measure(&mut self, cx: &TreeCtx, input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, cx: &NodeCtx, input: &LayoutInput) -> Measurement {
         // layout label with available space, but don't go below the minimum width
         self.label
             .layout(input.available.width.max(BUTTON_MIN_WIDTH));
@@ -56,7 +54,7 @@ impl Element for Button {
         }
     }
 
-    fn layout(&mut self, cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, cx: &NodeCtx, size: Size) {
         self.label.layout(size.width - 20.);
     }
 
@@ -98,7 +96,7 @@ impl Element for Button {
         ctx.draw_text_layout(pos, &self.label);
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
         let repaint = match event {
             Event::PointerDown(_) => {
                 self.state.set_active(true);

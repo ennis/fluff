@@ -2,7 +2,7 @@
 use graal::ClearColorValue;
 use kurbo::{Line, Point, Size};
 use kyute::compositor::ColorType;
-use kyute::element::{HitTestCtx, Measurement, TreeCtx};
+use kyute::{HitTestCtx, Measurement, NodeCtx};
 use kyute::elements::Frame;
 use kyute::layout::{LayoutInput};
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
@@ -27,20 +27,14 @@ impl CustomSwapChainElement {
 }
 
 impl Element for CustomSwapChainElement {
-    fn measure(&mut self, tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, tree: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         // use the available space
-        Size::new(
-            layout_input.width.available().unwrap_or_default(),
-            layout_input.height.available().unwrap_or_default(),
-        ).into()
+        layout_input.available.into()
     }
 
-    fn layout(&mut self, tree: &TreeCtx, size: Size) {
-        
-        
+    fn layout(&mut self, tree: &NodeCtx, size: Size) {
         // convert to real pixels
-        // FIXME: get the scale factor. It's not available currently in the layout context.
-        
+       
         // TODO: We can't convert to real pixels during layout since we don't know the scale factor.
         //       At the moment, the scale factor (DPI) is only known during painting. 
         //       Either perform layout while knowing the target DPI, or move the creation of the

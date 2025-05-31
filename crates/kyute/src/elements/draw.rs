@@ -1,8 +1,7 @@
 //! Immediate drawing widget.
 use crate::element::prelude::*;
-use crate::element::{Measurement, TreeCtx};
 use crate::layout::{LayoutInput, LayoutOutput};
-use crate::{Event, PaintCtx};
+use crate::{Element, NodeData, Event, HitTestCtx, Measurement, NodeBuilder, NodeCtx, PaintCtx};
 use kurbo::{Point, Size};
 
 /// Represents a visual on the screen.
@@ -24,7 +23,7 @@ pub trait Visual {
 
     /// Called when an event is sent to this element.
     #[allow(unused_variables)]
-    fn event(&mut self, ctx: &mut ElementCtx, event: &mut Event) {}
+    fn event(&mut self, ctx: &mut NodeData, event: &mut Event) {}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -41,8 +40,8 @@ where
     V: Visual + 'static,
 {
     /// Creates a new draw element with the specified visual.
-    pub fn new(visual: V) -> ElementBuilder<Self> {
-        ElementBuilder::new(Self {
+    pub fn new(visual: V) -> NodeBuilder<Self> {
+        NodeBuilder::new(Self {
             //draw_subscription: Default::default(),
             width: None,
             height: None,
@@ -52,19 +51,19 @@ where
     }
 
     /// Specifies a fixed width for this element.
-    pub fn width(mut self: ElementBuilder<Self>, width: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn width(mut self: NodeBuilder<Self>, width: impl Into<f64>) -> NodeBuilder<Self> {
         self.width = Some(width.into());
         self
     }
 
     /// Specifies a fixed height for this element.
-    pub fn height(mut self: ElementBuilder<Self>, height: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn height(mut self: NodeBuilder<Self>, height: impl Into<f64>) -> NodeBuilder<Self> {
         self.height = Some(height.into());
         self
     }
 
     /// Specifies the baseline of this element.
-    pub fn baseline(mut self: ElementBuilder<Self>, baseline: impl Into<f64>) -> ElementBuilder<Self> {
+    pub fn baseline(mut self: NodeBuilder<Self>, baseline: impl Into<f64>) -> NodeBuilder<Self> {
         self.baseline = baseline.into();
         self
     }
@@ -74,11 +73,11 @@ impl<V> Element for Draw<V>
 where
     V: Visual + 'static,
 {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         self.visual.layout(layout_input)
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size) {
         self.visual.layout(&LayoutInput {
             available: size.into(),
         });
@@ -105,7 +104,7 @@ where
         //});
     }
 
-    fn event(&mut self, _ectx: &TreeCtx, _event: &mut Event) {
+    fn event(&mut self, _ectx: &NodeCtx, _event: &mut Event) {
         //self.visual.event(&mut self.ctx, event);
     }
 }

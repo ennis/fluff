@@ -1,6 +1,6 @@
 //! Macro to create styled text runs.
 
-use crate::element::{ElementRc, IntoElementAny, WeakElementAny};
+use crate::{IntoNode, RcNode, WeakDynNode};
 use crate::elements::text::Text;
 use crate::text::StyleProperty;
 use crate::window::WindowHandle;
@@ -227,13 +227,13 @@ macro_rules! text {
     text! [ FontSize(20.0) "Hello, world!" { FontWeight() "test" } ];
 }*/
 
-impl<const N: usize> IntoElementAny for &[TextRun<'_>; N] {
+impl<const N: usize> IntoNode for &[TextRun<'_>; N] {
     type Element = Text;
-    fn into_element(self, parent: WeakElementAny) -> ElementRc<Text> {
-        Text::new(self).into_element(parent)
+    fn into_node(self, parent: WeakDynNode) -> RcNode<Text> {
+        Text::new(self).into_node(parent)
     }
 
-    fn into_root_element(self, parent_window: WindowHandle) -> ElementRc<Self::Element> {
-        Text::new(self).into_root_element(parent_window)
+    fn into_root_node(self, parent_window: WindowHandle) -> RcNode<Self::Element> {
+        Text::new(self).into_root_node(parent_window)
     }
 }

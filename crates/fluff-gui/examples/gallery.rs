@@ -7,10 +7,10 @@ use fluff_gui::widgets::spinner::{SpinnerBase, SpinnerOptions};
 use fluff_gui::widgets::uniform_grid::UniformGrid;
 use kyute::drawing::rgb;
 use kyute::elements::{Flex, Frame};
-use kyute::{IntoElementAny, Size, Window, application, select};
+use kyute::{IntoNode, Size, Window, application, select};
 use kyute::platform::WindowOptions;
 
-fn random_colored_square() -> impl IntoElementAny {
+fn random_colored_square() -> impl IntoNode {
     let color = rgb(rand::random(), rand::random(), rand::random());
     Frame::new()
         .background_color(color)

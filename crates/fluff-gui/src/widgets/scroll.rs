@@ -1,10 +1,8 @@
 //! Scroll views.
 
 use crate::colors::{SCROLL_BAR, SCROLL_BAR_BACKGROUND};
-use kyute::element::prelude::*;
-use kyute::element::{Measurement, TreeCtx};
 use kyute::layout::Axis;
-use kyute::{Point, Rect, Size};
+use kyute::{Element, Event, HitTestCtx, LayoutInput, Measurement, NodeBuilder, NodeCtx, PaintCtx, Point, Rect, Size};
 //const SCROLL_BAR_WIDTH: f64 = 18.0;
 //const SCROLL_BAR_BUTTON_SIZE: f64 = 18.0;
 
@@ -81,8 +79,8 @@ enum ScrollbarPart {
 }
 
 impl ScrollBarBase {
-    pub fn horizontal() -> ElementBuilder<Self> {
-        ElementBuilder::new_cyclic(|_weak| ScrollBarBase {
+    pub fn horizontal() -> NodeBuilder<Self> {
+        NodeBuilder::new_cyclic(|_weak| ScrollBarBase {
             direction: Axis::Horizontal,
             cross_size: 12.,
             thumb_pos: 0.0,
@@ -92,8 +90,8 @@ impl ScrollBarBase {
         })
     }
 
-    pub fn vertical() -> ElementBuilder<Self> {
-        ElementBuilder::new_cyclic(|_weak| ScrollBarBase {
+    pub fn vertical() -> NodeBuilder<Self> {
+        NodeBuilder::new_cyclic(|_weak| ScrollBarBase {
             direction: Axis::Vertical,
             cross_size: 12.,
             thumb_pos: 0.0,
@@ -103,7 +101,7 @@ impl ScrollBarBase {
         })
     }
 
-    pub fn thumb_size(mut self: ElementBuilder<Self>, size: f64) -> ElementBuilder<Self> {
+    pub fn thumb_size(mut self: NodeBuilder<Self>, size: f64) -> NodeBuilder<Self> {
         self.thumb_size = size;
         self
     }
@@ -151,7 +149,7 @@ impl ScrollBarBase {
 }
 
 impl Element for ScrollBarBase {
-    fn measure(&mut self, _cx: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _cx: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         let size = match self.direction {
             Axis::Vertical => Size::new(self.cross_size, layout_input.available.height),
             Axis::Horizontal => Size::new(layout_input.available.width, self.cross_size),
@@ -159,7 +157,7 @@ impl Element for ScrollBarBase {
         size.into()
     }
 
-    fn layout(&mut self, _cx: &TreeCtx, size: Size) {
+    fn layout(&mut self, _cx: &NodeCtx, size: Size) {
         self.track_length = match self.direction {
             Axis::Vertical => size.height,
             Axis::Horizontal => size.width,
@@ -201,7 +199,7 @@ impl Element for ScrollBarBase {
         ctx.fill_rect(thumb_rect, SCROLL_BAR);
     }
 
-    fn event(&mut self, cx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, cx: &NodeCtx, event: &mut Event) {
         let bounds = cx.bounds();
 
         match event {

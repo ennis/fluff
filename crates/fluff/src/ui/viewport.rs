@@ -2,10 +2,9 @@
 use crate::data::viewport::ViewportEvent;
 use crate::gpu;
 use kyute::compositor::ColorType;
-use kyute::element::{ElementBuilder, HitTestCtx, Measurement, TreeCtx};
 use kyute::layout::LayoutInput;
 use kyute::platform::windows::{DxgiVulkanInteropImage, DxgiVulkanInteropSwapChain};
-use kyute::{Element, Event, PaintCtx, Point, Size};
+use kyute::{Element, Event, HitTestCtx, Measurement, NodeBuilder, NodeCtx, PaintCtx, Point, Size};
 use std::rc::Rc;
 
 const DEFAULT_SIZE: Size = Size::new(500., 500.);
@@ -29,8 +28,8 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    pub fn new(data: ViewportModel) -> ElementBuilder<Self> {
-        let this = ElementBuilder::new(Viewport { data: data.clone(), swap_chain: None });
+    pub fn new(data: ViewportModel) -> NodeBuilder<Self> {
+        let this = NodeBuilder::new(Viewport { data: data.clone(), swap_chain: None });
         
         this.connect(&*data, |_this, cx, event: &ViewportEvent| {
             match event {
@@ -47,7 +46,7 @@ impl Viewport {
 }
 
 impl Element for Viewport {
-    fn measure(&mut self, _tree: &TreeCtx, layout_input: &LayoutInput) -> Measurement {
+    fn measure(&mut self, _tree: &NodeCtx, layout_input: &LayoutInput) -> Measurement {
         // take all the available space
         let mut width = layout_input.available.width;
         if !width.is_finite() {
@@ -60,7 +59,7 @@ impl Element for Viewport {
         Size::new(width, height).into()
     }
 
-    fn layout(&mut self, tree: &TreeCtx, size: Size)  {
+    fn layout(&mut self, tree: &NodeCtx, size: Size)  {
         // Create the swap chain
         // TODO scale factor
         let width = size.width as u32;
@@ -105,7 +104,7 @@ impl Element for Viewport {
         gpu::device().cleanup();
     }
 
-    fn event(&mut self, ctx: &TreeCtx, event: &mut Event) {
+    fn event(&mut self, ctx: &NodeCtx, event: &mut Event) {
         // handle events
     }
 }
