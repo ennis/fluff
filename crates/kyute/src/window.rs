@@ -20,15 +20,17 @@ use winit::keyboard::KeyLocation;
 use crate::compositor::{Composition, CompositionBuilder};
 use crate::drawing::ToSkia;
 use crate::event::{wait_event, EmitterHandle, EmitterKey};
+use crate::focus::{get_keyboard_focus, FocusedElement};
 use crate::input_event::{
     key_event_to_key_code, Event, PointerButton, PointerButtons, PointerEvent, ScrollDelta, WheelEvent,
 };
-use crate::layout::{LayoutInput};
-use crate::paint_ctx::paint_root_element;
+use crate::layout::LayoutInput;
+use crate::node::{dispatch_event, ChangeFlags, Root};
 use crate::platform::{Monitor, PlatformWindowHandle, WindowHandler, WindowOptions};
-use crate::{application, double_click_time, platform, Color, Element, NodeBuilder, EventSource, WeakDynNode, RcDynNode, IntoNode};
-use crate::focus::{get_keyboard_focus, FocusedElement};
-use crate::node::{dispatch_event, ChangeFlags};
+use crate::{
+    application, double_click_time, platform, Color, Element, EventSource, IntoNode, NodeBuilder, RcDynNode,
+    WeakDynNode,
+};
 
 fn draw_crosshair(canvas: &skia_safe::Canvas, pos: Point) {
     let mut paint = skia_safe::Paint::default();
@@ -189,7 +191,7 @@ pub fn place_popup(
 
 pub(crate) struct WindowInner {
     emitter_handle: EmitterHandle,
-    root: RcDynNode,
+    root: Root,
     /// Previous compositor layers.
     composition: RefCell<Option<Composition>>,
     window: PlatformWindowHandle,
@@ -289,7 +291,7 @@ impl WindowInner {
         debug_assert!(event.pointer_event().is_some(), "event must be a pointer event");
 
         let mut input_state = self.input_state.borrow_mut();
-        let hits = self.root.hit_test_root(hit_position);
+        let hits = self.root.hit_test(hit_position);
         let innermost_hit = hits.first().cloned();
         let is_pointer_up = matches!(event, Event::PointerUp(_));
 
@@ -668,20 +670,20 @@ impl WindowInner {
         // Layout the root element if necessary
         // (i.e. if the root element layout is dirty or if the window size has changed).
         if self.needs_layout.replace(false) || root_change_flags.contains(ChangeFlags::LAYOUT) {
-            let size = self.root.measure_root(&LayoutInput { available: client_area });
-            let _geom = self.root.layout_root(size.size);
+            let size = self.root.measure(client_area);
+            let _geom = self.root.layout(size.size);
         }
 
         {
-            let mut composition_builder =
+            let mut comp_builder =
                 CompositionBuilder::new(scale_factor, client_area.to_rect(), self.composition.take());
-            composition_builder.canvas().clear(self.background.get().to_skia());
+            comp_builder.canvas().clear(self.background.get().to_skia());
 
-            paint_root_element(&self.root, &mut composition_builder);
+            self.root.paint(&mut comp_builder);
 
             // **** DEBUGGING ****
             draw_crosshair(
-                composition_builder.picture_recorder().recording_canvas().unwrap(),
+                comp_builder.picture_recorder().recording_canvas().unwrap(),
                 self.cursor_pos.get(),
             );
 
@@ -693,7 +695,7 @@ impl WindowInner {
                 //);
             }
 
-            let composition = composition_builder.finish();
+            let composition = comp_builder.finish();
             composition.render_to_window(&self.window);
             self.composition.replace(Some(composition));
         }
@@ -880,10 +882,13 @@ impl Window {
 
         let shared = Rc::new_cyclic(|weak_this| WindowInner {
             emitter_handle,
-            root: root.into_root_dyn_node(WindowHandle {
-                shared: weak_this.clone(),
-                emitter_key,
-            }),
+            root: Root::new(
+                root,
+                WindowHandle {
+                    shared: weak_this.clone(),
+                    emitter_key,
+                },
+            ),
             window: platform_window.clone(),
             hidden_before_first_draw: Cell::new(true),
             cursor_pos: Cell::new(Default::default()),
@@ -896,6 +901,8 @@ impl Window {
             composition: RefCell::new(None),
         });
 
+        // The double indirection (Box<Rc<>>) is unfortunate but necessary to keep
+        // PlatformWindowHandle free of generics.
         platform_window.set_handler(Box::new(shared.clone()));
         Window { shared }
     }

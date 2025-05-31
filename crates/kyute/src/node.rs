@@ -15,6 +15,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, UniqueRc, Weak};
 use std::{fmt, mem, ptr};
 use typed_arena::Arena;
+use crate::compositor::CompositionBuilder;
 
 bitflags! {
     #[derive(Copy, Clone, Default)]
@@ -452,17 +453,6 @@ impl RcDynNode {
         )
     }
 
-    pub fn measure_root(&self, layout_input: &LayoutInput) -> Measurement {
-        let ref mut inner = *self.borrow_mut();
-        inner.measure(
-            &NodeCtx {
-                parent: None,
-                this: &self.0.data,
-            },
-            layout_input,
-        )
-    }
-
     /// Invokes layout on this element and its children, recursively.
     fn layout_inner(&self, parent: Option<&NodeCtx>, size: Size) {
         let ctx = &self.0.data;
@@ -474,11 +464,6 @@ impl RcDynNode {
             baseline: None,
         });
         inner.layout(&child_tree, size);
-        ctx.geometry.set(LayoutOutput {
-            width: size.width,
-            height: size.height,
-            baseline: None,
-        });
         let mut f = ctx.change_flags.get();
         f.remove(ChangeFlags::LAYOUT);
         ctx.change_flags.set(f);
@@ -486,10 +471,6 @@ impl RcDynNode {
 
     pub fn layout(&self, tree: &NodeCtx, size: Size) {
         self.layout_inner(Some(tree), size)
-    }
-
-    pub fn layout_root(&self, size: Size) {
-        self.layout_inner(None, size)
     }
 
     /// Returns the list of children of this element.
@@ -515,16 +496,6 @@ impl RcDynNode {
         ctx.bounds = old_bounds;
         //ctx.transform = prev_transform;
         hit
-    }
-
-    /// Performs hit-testing on a root element.
-    pub fn hit_test_root(&self, point: Point) -> Vec<WeakDynNode> {
-        let mut hit_test_ctx = HitTestCtx {
-            hits: Vec::new(),
-            bounds: Rect::ZERO,
-        };
-        self.hit_test(&mut hit_test_ctx, point);
-        hit_test_ctx.hits
     }
 
     pub(crate) fn send_event(&self, tree: &NodeCtx, event: &mut Event) {
@@ -942,6 +913,83 @@ impl<T: Element> IntoNode for NodeBuilder<T> {
 
     fn into_root_dyn_node(self, parent_window: WindowHandle) -> RcDynNode {
         self.into_root_node(parent_window).as_dyn()
+    }
+}
+
+/// Represents the root of a UI tree.
+///
+/// This manages the root node of a UI tree, and by extension, also manages a complete UI tree
+/// attached to a window.
+///
+/// This type provides the entry points to measure, layout, and paint the UI tree,
+/// as well as to dispatch events.
+pub struct Root {
+    /// The root element.
+    root: RcDynNode,
+}
+
+impl Root {
+    /// Creates a new UI root attached to the specified window.
+    pub fn new(root: impl IntoNode, window: WindowHandle) -> Self {
+        Root {
+            root: root.into_root_dyn_node(window),
+        }
+    }
+
+    /// Returns the root node.
+    pub fn root(&self) -> &RcDynNode {
+        &self.root
+    }
+
+    /// Measures the root node under the specified available size.
+    pub fn measure(&self, available: Size) -> Measurement {
+        let ref mut element = *self.root.borrow_mut();
+        element.measure(
+            &NodeCtx {
+                parent: None,
+                this: &self.root.data(),
+            },
+            &LayoutInput { available },
+        )
+    }
+
+    /// Sets the size of the root node, and lays out the UI tree.
+    pub fn layout(&self, size: Size) {
+        self.root.layout_inner(None, size)
+    }
+
+    /// Paints the UI tree.
+    pub fn paint(&self, composition_builder: &mut CompositionBuilder) {
+        with_tree_ctx(&self.root, |element, tree| {
+            // clear the paint dirty flag
+            let mut f = tree.change_flags.get();
+            f.remove(ChangeFlags::PAINT);
+            tree.change_flags.set(f);
+
+            let mut ctx = PaintCtx::new(tree, composition_builder);
+            element.borrow_mut().paint(&mut ctx);
+        })
+    }
+
+    /// Returns the change flags of the root node.
+    pub fn change_flags(&self) -> ChangeFlags {
+        self.root.change_flags()
+    }
+
+
+
+    /// Hit-tests the UI tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - the point in logical window coordinates to hit-test
+    pub fn hit_test(&self, point: Point) -> Vec<WeakDynNode> {
+        let mut ctx = HitTestCtx {
+            hits: Vec::new(),
+            bounds: Rect::ZERO,
+        };
+        self.root.hit_test(&mut ctx, point);
+        ctx.hits
     }
 }
 

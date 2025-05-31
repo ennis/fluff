@@ -185,7 +185,7 @@ impl Composition {
     }
 }
 
-/// Records compositor commands.
+/// Records compositor commands and manages painting contexts to paint into compositor layers.
 ///
 /// # Notes
 ///

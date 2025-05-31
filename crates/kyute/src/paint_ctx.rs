@@ -4,8 +4,10 @@ use crate::text::{TextLayout, TextRun, TextStyle};
 use crate::{Color, NodeCtx, RcDynNode};
 use kurbo::{Affine, BezPath, Insets, Line, PathEl, Point, Rect, RoundedRect, Vec2};
 use skia_safe::PaintStyle;
-use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 use crate::node::{with_tree_ctx, ChangeFlags};
+
+#[cfg(windows)]
+use windows::Win32::Graphics::Dxgi::IDXGISwapChain3;
 
 /// Paint context.
 /// 
@@ -26,16 +28,6 @@ pub struct PaintCtx<'a> {
     //surface: Option<DrawableSurface>,
 }
 
-pub fn paint_root_element(element: &RcDynNode, composition_builder: &mut CompositionBuilder) {
-    with_tree_ctx(element, |element, tree| {
-        let mut f = tree.change_flags.get();
-        f.remove(ChangeFlags::PAINT);
-        tree.change_flags.set(f);
-
-        let mut ctx = PaintCtx::new(tree, composition_builder);
-        element.borrow_mut().paint(&mut ctx);
-    })
-}
 
 impl<'a> PaintCtx<'a> {
     /// Creates a new paint context.
