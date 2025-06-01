@@ -1,27 +1,15 @@
+use crate::debug::init_debug_state;
 use crate::event::maintain_subscription_map;
 use crate::platform::{run_event_loop, wake_event_loop, EventLoopWakeReason, TimerToken};
-use crate::{app_backend, init_application, platform, teardown_application};
-use anyhow::Context;
+use crate::{init_application, platform, teardown_application};
 use futures::executor::{LocalPool, LocalSpawner};
 use futures::future::{abortable, AbortHandle};
 use futures::task::LocalSpawnExt;
-use scoped_tls::scoped_thread_local;
 use slotmap::SlotMap;
-use smallvec::SmallVec;
-use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
-use std::future::{poll_fn, Future};
-use std::rc::{Rc, Weak};
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
-use std::sync::OnceLock;
-use std::task::{Poll, Waker};
+use std::cell::{OnceCell, RefCell};
+use std::future::Future;
 use std::time::{Duration, Instant};
 use tracy_client::set_thread_name;
-use winit::event::{Event, StartCause};
-use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
-use winit::window::WindowId;
-
 //--------------------------------------------------------------------------------------------------
 
 struct AppState {
@@ -222,7 +210,16 @@ pub fn run(initial_future: impl Future<Output = ()> + 'static) -> Result<(), any
     // initialize main-thread-local app state
     AppState::init(local_pool.spawner());
 
-    run_event_loop(local_pool, initial_future)?;
+    let true_initial_future = async move {
+        // We can't call `show_debug_window` before entering the event loop,
+        // because it requires the event loop to be running to create the window.
+        // Thus, we call it here as part of the initial future.
+        #[cfg(debug_assertions)]
+        init_debug_state();
+        initial_future.await;
+    };
+
+    run_event_loop(local_pool, true_initial_future)?;
 
     teardown_application();
 

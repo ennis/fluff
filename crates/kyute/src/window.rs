@@ -204,7 +204,7 @@ pub(crate) struct WindowInner {
     active_popup: RefCell<Option<Weak<WindowInner>>>,
     // DEBUGGING
     last_kb_event: RefCell<Option<KeyboardEvent>>,
-    /// Flag indicating that the element tree of this window should be laid out again.
+    /// Forces a relayout and repaint of the window.
     needs_layout: Cell<bool>,
 }
 
@@ -238,6 +238,7 @@ impl WindowInner {
     ///
     /// Currently, it just sends it to the focused element, or drops it if there's no focused element.
     fn dispatch_keyboard_event(&self, mut event: Event) {
+        
         // Send the event to the element that has the focus.
 
         // FIXME: we assume that the element that has the focus is contained within this window's
@@ -682,10 +683,13 @@ impl WindowInner {
             self.root.paint(&mut comp_builder);
 
             // **** DEBUGGING ****
-            draw_crosshair(
-                comp_builder.picture_recorder().recording_canvas().unwrap(),
-                self.cursor_pos.get(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                draw_crosshair(
+                    comp_builder.canvas(),
+                    self.cursor_pos.get(),
+                );
+            }
 
             if let Some(_event) = &*self.last_kb_event.borrow() {
                 //draw_text_blob(
@@ -724,15 +728,15 @@ impl WindowInner {
 }
 
 impl WindowHandler for Rc<WindowInner> {
-    fn event(&self, event: &WindowEvent) {
+    fn event(&self, _window: PlatformWindowHandle, event: &WindowEvent) {
         self.dispatch_window_event(event);
     }
 
-    fn redraw(&self) {
+    fn redraw(&self, _window: PlatformWindowHandle) {
         self.do_redraw();
     }
 
-    fn request_redraw(&self) {
+    fn request_redraw(&self, _window: PlatformWindowHandle) {
         self.window.request_redraw();
     }
 }

@@ -13,12 +13,12 @@ pub use self::windows::*;
 /// Handler for window events.
 pub trait WindowHandler {
     /// Called by the event loop when a window event is received that targets this window.
-    fn event(&self, event: &winit::event::WindowEvent);
+    fn event(&self, window: PlatformWindowHandle, event: &winit::event::WindowEvent);
 
     /// Redraws the window.
-    fn redraw(&self);
+    fn redraw(&self, window: PlatformWindowHandle);
 
-    fn request_redraw(&self);
+    fn request_redraw(&self, window: PlatformWindowHandle);
 }
 
 /// Reason for waking  the event loop.

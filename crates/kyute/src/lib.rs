@@ -24,6 +24,7 @@ pub mod window;
 mod node;
 mod element;
 mod focus;
+mod debug;
 //pub mod model;
 
 // reexports

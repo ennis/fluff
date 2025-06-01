@@ -227,7 +227,6 @@ impl<'a> LexerExt<'a> for Lexer<'a> {
     }
 }
 
-/// FIXME this is useless, need to convert to line/column format, and impl Error
 #[derive(Debug)]
 struct SyntaxError {
     range: Range<usize>,

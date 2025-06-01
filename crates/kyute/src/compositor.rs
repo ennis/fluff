@@ -156,7 +156,6 @@ impl Composition {
                 Layer::NativeSwapChain { swap_chain, .. } => {
                     window.attach_swap_chain(id, swap_chain.clone());
                 }
-                // TODO: external swap chains
                 _ => {}
             }
         }

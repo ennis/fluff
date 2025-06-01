@@ -175,11 +175,11 @@ impl DrawSurface {
         }
 
 
-        // FIXME this is not the right way to do frame pacing when there are multiple swap chains,
-        //       because each swap chain in the compositor tree will wait for the compositor
-        //       (thus, if there are N layers, the window will take N compositor frames to update!).
-        //       The correct way to do this is to use the compositor's frame pacing mechanism.
-        //       (https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock)
+        // this is not the right way to do frame pacing when there are multiple swap chains,
+        // because each swap chain in the compositor tree will wait for the compositor
+        // (thus, if there are N layers, the window will take N compositor frames to update!).
+        // The correct way to do this is to use the compositor's frame pacing mechanism.
+        // (https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock)
         //self.wait_for_presentation();
     }
 }
@@ -209,10 +209,10 @@ impl<'a> Drop for DrawSurfaceContext<'a> {
 ///
 /// The following preconditions must be met:
 ///
-/// * `format`, `width`, and `height` should have the values specified when the texture was created
-/// * the texture should not be multi-sampled
-/// * the texture should have a single mip level
-/// * the texture should be in the `D3D12_RESOURCE_STATE_COMMON` state
+/// - `format`, `width`, and `height` should have the values specified when the texture was created
+/// - the texture should not be multi-sampled
+/// - the texture should have a single mip level
+/// - the texture should be in the `D3D12_RESOURCE_STATE_COMMON` state
 ///
 unsafe fn create_skia_surface_for_d3d12_texture(
     texture_resource: ID3D12Resource,

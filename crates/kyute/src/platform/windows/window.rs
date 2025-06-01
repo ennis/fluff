@@ -9,6 +9,7 @@ use slotmap::SecondaryMap;
 use std::cell::{Ref, RefCell};
 use std::ffi::c_void;
 use std::fmt;
+use std::hash::Hash;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
@@ -52,6 +53,21 @@ impl fmt::Debug for PlatformWindowHandle {
         } else {
             write!(f, "(dropped window)")
         }
+    }
+}
+
+impl PartialEq for PlatformWindowHandle {
+    fn eq(&self, other: &Self) -> bool {
+        // Two PlatformWindowHandles are equal if they point to the same window state.
+        self.state.ptr_eq(&other.state)
+    }
+}
+
+impl Eq for PlatformWindowHandle {}
+
+impl Hash for PlatformWindowHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.state.as_ptr().hash(state);
     }
 }
 
@@ -575,7 +591,10 @@ pub(super) fn handle_window_event(id: WindowId, event: winit::event::WindowEvent
     let window = find_window_by_id(id);
     if let Some(window) = window {
         if let Some(handler) = window.handler.borrow().as_ref() {
-            handler.event(&event);
+            let handle = PlatformWindowHandle {
+                state: Rc::downgrade(&window),
+            };
+            handler.event(handle, &event);
         }
     } else {
         warn!("Window event for unknown window: {:?}", event);

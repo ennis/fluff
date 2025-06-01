@@ -103,12 +103,14 @@ impl Color {
         })
     }
 
-    /// TODO documentation
+    /// Creates a new color from 8-bit integer (0-255) RGB values.
+    ///
+    /// Alpha is set to 1.0.
     pub const fn from_rgb_u8(red: u8, green: u8, blue: u8) -> Color {
         Color::new((red as f32) / 255.0, (green as f32) / 255.0, (blue as f32) / 255.0, 1.0)
     }
 
-    /// TODO documentation
+    /// Converts this color to 8-bit integer (0-255) RGBA values.
     pub const fn to_rgba_u8(&self) -> (u8, u8, u8, u8) {
         (
             (self.0.color.red * 255.0) as u8,
@@ -118,12 +120,12 @@ impl Color {
         )
     }
 
-    /// TODO documentation
+    /// Converts this color to RGBA floating-point values in the range `[0.0, 1.0]`.
     pub const fn to_rgba(&self) -> (f32, f32, f32, f32) {
         (self.0.color.red, self.0.color.green, self.0.color.blue, self.0.alpha)
     }
 
-    /// TODO documentation
+    /// Creates a new color from 8-bit integer (0-255) RGBA values.
     pub const fn from_rgba_u8(red: u8, green: u8, blue: u8, alpha: u8) -> Color {
         Color::new(
             (red as f32) / 255.0,
@@ -133,17 +135,17 @@ impl Color {
         )
     }
 
-    /// TODO documentation
+    /// Lightens the color by a specified amount.
     pub fn lighten(&self, amount: f32) -> Color {
         Color(self.0.lighten(amount))
     }
 
-    /// TODO documentation
+    /// Darkens the color by a specified amount.
     pub fn darken(&self, amount: f32) -> Color {
         Color(self.0.darken(amount))
     }
 
-    /// TODO documentation
+    /// Returns the hexadecimal code of this color.
     pub fn to_hex(&self) -> String {
         match self.to_rgba_u8() {
             (r, g, b, 255) => {
@@ -155,7 +157,7 @@ impl Color {
         }
     }
 
-    /// Creates a new color from an hex code.
+    /// Creates a new color from hexadecimal color syntax.
     pub const fn from_hex(hex: &str) -> Color {
         match Self::try_from_hex(hex) {
             Ok(color) => color,
@@ -165,7 +167,7 @@ impl Color {
         }
     }
 
-    /// Creates a new color from an hex code.
+    /// Creates a new color from a hex code.
     pub const fn try_from_hex(hex: &str) -> Result<Color, ColorParseError> {
         match hex.as_bytes() {
             // #RRGGBB, RRGGBB

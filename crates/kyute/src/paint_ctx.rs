@@ -29,6 +29,14 @@ pub struct PaintCtx<'a> {
 }
 
 
+impl<'a> std::ops::Deref for PaintCtx<'a> {
+    type Target = NodeCtx<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        self.tree
+    }
+}
+
 impl<'a> PaintCtx<'a> {
     /// Creates a new paint context.
     pub(crate) fn new(ctx: &'a NodeCtx<'a>, comp_builder: &'a mut CompositionBuilder) -> PaintCtx<'a> {
@@ -225,6 +233,7 @@ impl<'a> PaintCtx<'a> {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Drawing methods
+    // TODO this should not be part of PaintCtx as it is not specific to elements 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     pub fn clear(&mut self, color: Color) {
